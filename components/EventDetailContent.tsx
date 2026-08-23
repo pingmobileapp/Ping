@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -106,6 +106,11 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
 
   const myInvitee = invitees.find((inv) => inv.user_id === session?.user?.id) || null;
   const isHost = event?.host_id === session?.user?.id;
+  const unclaimedCount = items.filter(
+    (item) => item.item_claims.reduce((sum, c) => sum + c.quantity, 0) < item.quantity_needed
+  ).length;
+  const scrollRef = useRef<ScrollView>(null);
+  const itemsSectionY = useRef(0);
 
   // Invitees texted via the host's own Messages app (see NonAppInviteQueue)
   // have no reliable "was it actually sent" signal - closing that flow with
@@ -410,6 +415,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
         behavior={variant === 'page' && Platform.OS === 'ios' ? 'padding' : undefined}
       >
       <ScrollView
+        ref={scrollRef}
         style={variant === 'modal' ? styles.containerModal : styles.containerPage}
         contentContainerStyle={{ paddingBottom: 60 }}
         showsVerticalScrollIndicator={false}
@@ -529,13 +535,25 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
         </View>
 
         {isHost && pendingSmsInvitees.length > 0 && (
-          <TouchableOpacity style={styles.smsReminderBanner} onPress={() => setSmsQueueVisible(true)}>
-            <Text style={styles.smsReminderText}>
+          <TouchableOpacity style={styles.actionBanner} onPress={() => setSmsQueueVisible(true)}>
+            <Text style={styles.actionBannerText}>
               {pendingSmsInvitees.length === 1
                 ? `${pendingSmsInvitees[0].name} still needs a text invite`
                 : `${pendingSmsInvitees.length} people still need a text invite`}
             </Text>
-            <Text style={styles.smsReminderAction}>Send now</Text>
+            <Text style={styles.actionBannerAction}>Send now</Text>
+          </TouchableOpacity>
+        )}
+
+        {!isHost && myInvitee && myInvitee.rsvp_status !== 'declined' && unclaimedCount > 0 && (
+          <TouchableOpacity
+            style={styles.actionBanner}
+            onPress={() => scrollRef.current?.scrollTo({ y: itemsSectionY.current - 12, animated: true })}
+          >
+            <Text style={styles.actionBannerText}>
+              🛒 {unclaimedCount === 1 ? '1 item still needs someone' : `${unclaimedCount} items still need someone`}
+            </Text>
+            <Text style={styles.actionBannerAction}>View</Text>
           </TouchableOpacity>
         )}
 
@@ -571,7 +589,10 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
         </View>
 
         {(items.length > 0 || isHost) && (
-        <View style={styles.itemsSection}>
+        <View
+          style={styles.itemsSection}
+          onLayout={(e) => { itemsSectionY.current = e.nativeEvent.layout.y; }}
+        >
           {(items.length > 0 || addingItem) && (
             <Text style={styles.sectionLabel}>What to bring</Text>
           )}
@@ -845,7 +866,7 @@ const styles = StyleSheet.create({
   rsvpButtonTextSelected: { color: colors.textOnPrimary },
   notInvitedText: { color: colors.textMuted, fontSize: 14, fontStyle: 'italic' },
   summarySection: { marginTop: 28 },
-  smsReminderBanner: {
+  actionBanner: {
     marginTop: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -855,8 +876,8 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 14,
   },
-  smsReminderText: { flex: 1, color: colors.textPrimary, fontSize: 14, fontWeight: '600', marginRight: 12 },
-  smsReminderAction: { color: colors.primary, fontSize: 14, fontWeight: '700' },
+  actionBannerText: { flex: 1, color: colors.textPrimary, fontSize: 14, fontWeight: '600', marginRight: 12 },
+  actionBannerAction: { color: colors.primary, fontSize: 14, fontWeight: '700' },
   guestList: { marginTop: 12, gap: 10 },
   guestRow: {
     flexDirection: 'row',
