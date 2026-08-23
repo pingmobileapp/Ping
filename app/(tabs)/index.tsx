@@ -87,6 +87,7 @@ export default function HomeScreen() {
   const [phoneBannerDismissed, setPhoneBannerDismissed] = useState(false);
   const [events, setEvents] = useState<PingEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [eventsLoadError, setEventsLoadError] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [fabMenuVisible, setFabMenuVisible] = useState(false);
   const [personalItemModalVisible, setPersonalItemModalVisible] = useState(false);
@@ -223,6 +224,7 @@ export default function HomeScreen() {
 
     if (inviteError) {
       console.error("Error fetching invited events:", inviteError);
+      setEventsLoadError(true);
       return;
     }
 
@@ -238,6 +240,7 @@ export default function HomeScreen() {
 
     if (invitedEventIds.length === 0) {
       setEvents([]);
+      setEventsLoadError(false);
       return;
     }
 
@@ -254,9 +257,11 @@ export default function HomeScreen() {
 
     if (error) {
       console.error("Error fetching events:", error);
+      setEventsLoadError(true);
       return;
     }
     setEvents(data as PingEvent[]);
+    setEventsLoadError(false);
   }, [session?.user?.id]);
 
   useEffect(() => {
@@ -1096,6 +1101,16 @@ export default function HomeScreen() {
         >
           <View style={styles.handleSpacer} />
           {renderListHeader("Upcoming")}
+          {eventsLoadError && (
+            <TouchableOpacity
+              style={styles.errorPromptRow}
+              onPress={() => fetchEvents()}
+            >
+              <Text style={styles.errorPromptText}>
+                ⚠️ Couldn't load your Pings — tap to retry
+              </Text>
+            </TouchableOpacity>
+          )}
           {calendarPermission === "undetermined" &&
             !showDraftsOnly &&
             !showDeclinedOnly && (
@@ -1449,6 +1464,13 @@ const styles = StyleSheet.create({
   },
   calendarPromptText: { color: colors.primaryDark, fontSize: 13 },
   phonePromptDismiss: { color: colors.textMuted, fontSize: 13, paddingLeft: 12 },
+  errorPromptRow: {
+    marginHorizontal: 20,
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  errorPromptText: { color: colors.danger, fontSize: 13, fontWeight: "600" },
   emptyText: {
     color: colors.textMuted,
     textAlign: "center",
