@@ -18,7 +18,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { Calendar } from "react-native-calendars";
+import { Calendar, Timeline } from "react-native-calendars";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   Extrapolation,
@@ -30,6 +30,7 @@ import Animated, {
   withSpring,
 } from "react-native-reanimated";
 import AddPersonalItemModal from "../../components/AddPersonalItemModal";
+import CalendarHeaderRow from "../../components/CalendarHeaderRow";
 import CompactEventRow from "../../components/CompactEventRow";
 import CompactGroupRow, { PingGroup } from "../../components/CompactGroupRow";
 import CreateEventModal from "../../components/CreateEventModal";
@@ -40,10 +41,12 @@ import GroupChatModal from "../../components/GroupChatModal";
 import PingLogoMenu from "../../components/PingLogoMenu";
 import ProfileMenu from "../../components/ProfileMenu";
 import ScheduleReviewModal from "../../components/ScheduleReviewModal";
+import WeekAllDayStrip from "../../components/WeekAllDayStrip";
 import { useAuth } from "../../lib/AuthContext";
 import { useNotificationsContext } from "../../lib/NotificationsContext";
 import { calendarTheme, colors } from "../../lib/theme";
-import { eachDayKeyInRange } from "../../lib/eventDate";
+import { eachDayKeyInRange, formatWeekRangeLabel } from "../../lib/eventDate";
+import { buildWeekTimelineEvents, buildWeekAllDayItems } from "../../lib/weekTimeline";
 import {
   CalendarPermissionStatus,
   ExternalEvent,
@@ -72,6 +75,14 @@ const toDateKey = (date: Date) => {
 // above it.
 const MIN_TOP_INSET = 52;
 const HANDLE_HEIGHT = 28;
+// Week view's fixed-height budget within calendarWrapper - by construction,
+// not measurement, so calFullHeight (captured once, in Month mode) stays
+// valid when toggled to Week mode without any new onLayout/remeasuring.
+// CalendarHeaderRow occupies MIN_TOP_INSET in both modes (it's the same
+// component either way); these three make up the rest of Week mode's body.
+const TIMELINE_LEFT_INSET = 50;
+const DAY_LABEL_ROW_HEIGHT = 36;
+const ALL_DAY_ROW_HEIGHT = 32;
 // How much room to leave above the FAB when the handle is parked at its
 // lowest resting position.
 const FAB_CLEARANCE = 110;
@@ -134,6 +145,41 @@ export default function HomeScreen() {
   const changeMonth = (delta: number) => {
     setVisibleMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + delta, 1));
     setCalendarSyncKey((k) => k + 1);
+  };
+
+  const [viewMode, setViewMode] = useState<"month" | "week">("month");
+  const startOfWeek = (d: Date) => {
+    const r = new Date(d);
+    r.setHours(0, 0, 0, 0);
+    r.setDate(r.getDate() - r.getDay());
+    return r;
+  };
+  const [visibleWeekStart, setVisibleWeekStart] = useState(() => startOfWeek(new Date()));
+  const changeWeek = (delta: number) => {
+    setVisibleWeekStart((prev) => {
+      const next = new Date(prev);
+      next.setDate(next.getDate() + delta * 7);
+      return next;
+    });
+  };
+  const onSelectMonth = () => setViewMode("month");
+  // Strongest signal of "what the user's looking at" first: an explicitly
+  // picked day, then today (if the month view is already showing the
+  // current month), then just the visible month's start - avoids jumping
+  // back to today's week if they'd already paged Month view elsewhere.
+  const onSelectWeek = () => {
+    const today = new Date();
+    const anchor = selectedDate
+      ? (() => {
+          const [y, m, d] = selectedDate.split("-").map(Number);
+          return new Date(y, m - 1, d);
+        })()
+      : visibleMonth.getFullYear() === today.getFullYear() &&
+          visibleMonth.getMonth() === today.getMonth()
+        ? today
+        : visibleMonth;
+    setVisibleWeekStart(startOfWeek(anchor));
+    setViewMode("week");
   };
   const [showDraftsOnly, setShowDraftsOnly] = useState(false);
   const [showDeclinedOnly, setShowDeclinedOnly] = useState(false);
@@ -447,6 +493,21 @@ export default function HomeScreen() {
     setDetailVisible(true);
   };
 
+  // Shared by Week view's timed blocks (Timeline's onEventPress) and its
+  // all-day chip strip - same ping-/ext- id prefixes upcomingListItems
+  // already uses, routed to the exact handlers the Upcoming list uses for
+  // the same two item kinds.
+  const handleWeekItemPress = (item: { id?: string }) => {
+    if (!item.id) return;
+    if (item.id.startsWith("ping-")) {
+      const p = declinedFilteredEvents.find((e) => e.id === item.id!.slice(5));
+      if (p) openEvent(p);
+    } else if (item.id.startsWith("ext-")) {
+      const ext = externalEvents.find((e) => e.id === item.id!.slice(4));
+      if (ext?.editable) setEditingPersonalEvent(ext);
+    }
+  };
+
   // Declined events are hidden from the calendar/lists by default (nothing
   // to act on there anymore) but never actually removed - toggling
   // showDeclinedOnly swaps to showing just those, so changing your mind is
@@ -457,6 +518,39 @@ export default function HomeScreen() {
       return showDeclinedOnly ? isDeclined : !isDeclined;
     });
   }, [events, myRsvpByEvent, showDeclinedOnly]);
+
+  // Same event set the month grid marks (declined-filtered Pings, non-
+  // hidden external items) - Week view is another way of looking at the
+  // calendar, not the filtered Upcoming list, so it doesn't respect the
+  // Drafts/Declined/Pings Only/Hidden list toggles.
+  const visibleExternalEvents = useMemo(
+    () => externalEvents.filter((e) => !hiddenEventIds.has(e.id)),
+    [externalEvents, hiddenEventIds],
+  );
+  const weekDates = useMemo(
+    () =>
+      Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(visibleWeekStart);
+        d.setDate(d.getDate() + i);
+        return toDateKey(d);
+      }),
+    [visibleWeekStart],
+  );
+  const weekTimelineEvents = useMemo(
+    () => buildWeekTimelineEvents(visibleWeekStart, declinedFilteredEvents, visibleExternalEvents),
+    [visibleWeekStart, declinedFilteredEvents, visibleExternalEvents],
+  );
+  const weekAllDayItems = useMemo(
+    () => buildWeekAllDayItems(visibleWeekStart, declinedFilteredEvents, visibleExternalEvents),
+    [visibleWeekStart, declinedFilteredEvents, visibleExternalEvents],
+  );
+  // Calendar's own built-in header (title + arrows) is hidden below in
+  // favor of CalendarHeaderRow (needs room for the Month/Week toggle too) -
+  // this recreates just the title text it would otherwise have shown.
+  const monthLabel = visibleMonth.toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
 
   const markedDates = useMemo(() => {
     const marks: Record<string, any> = {};
@@ -1095,24 +1189,88 @@ export default function HomeScreen() {
 
       <View style={styles.contentArea} onLayout={handleContentLayout}>
         <View style={styles.calendarWrapper} onLayout={handleCalendarLayout}>
-          <Calendar
-            key={calendarSyncKey}
-            current={toDateKey(visibleMonth)}
-            onDayPress={onDayPress}
-            onMonthChange={(month) =>
-              setVisibleMonth(new Date(month.year, month.month - 1, 1))
-            }
-            markedDates={markedDates}
-            markingType="custom"
-            theme={calendarTheme}
-            style={styles.calendar}
-            enableSwipeMonths
-            renderArrow={(direction: "left" | "right") => (
-              <Text style={styles.calendarArrow}>
-                {direction === "left" ? "‹" : "›"}
-              </Text>
-            )}
-          />
+          <View style={styles.calendarHeaderRow}>
+            <CalendarHeaderRow
+              title={viewMode === "month" ? monthLabel : formatWeekRangeLabel(visibleWeekStart)}
+              onPrev={() => (viewMode === "month" ? changeMonth(-1) : changeWeek(-1))}
+              onNext={() => (viewMode === "month" ? changeMonth(1) : changeWeek(1))}
+              viewMode={viewMode}
+              onSelectMonth={onSelectMonth}
+              onSelectWeek={onSelectWeek}
+            />
+          </View>
+          {viewMode === "month" ? (
+            <Calendar
+              key={calendarSyncKey}
+              current={toDateKey(visibleMonth)}
+              onDayPress={onDayPress}
+              onMonthChange={(month) =>
+                setVisibleMonth(new Date(month.year, month.month - 1, 1))
+              }
+              markedDates={markedDates}
+              markingType="custom"
+              theme={calendarTheme}
+              style={styles.calendar}
+              enableSwipeMonths
+              hideArrows
+              customHeaderTitle={<View />}
+            />
+          ) : (
+            <View
+              style={{ height: Math.max(0, (calFullHeight ?? 0) - MIN_TOP_INSET) }}
+            >
+              <View style={styles.weekDayLabelRow}>
+                <View style={{ width: TIMELINE_LEFT_INSET }} />
+                {weekDates.map((key, i) => {
+                  const d = new Date(visibleWeekStart);
+                  d.setDate(d.getDate() + i);
+                  const isToday = key === toDateKey(new Date());
+                  return (
+                    <View key={key} style={styles.weekDayLabelCell}>
+                      <Text style={styles.weekDayLabelDow}>
+                        {d.toLocaleDateString(undefined, { weekday: "short" })}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.weekDayLabelNum,
+                          isToday && styles.weekDayLabelNumToday,
+                        ]}
+                      >
+                        {d.getDate()}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+              <WeekAllDayStrip
+                weekStart={visibleWeekStart}
+                items={weekAllDayItems}
+                leftInset={TIMELINE_LEFT_INSET}
+                onPress={handleWeekItemPress}
+              />
+              <View
+                style={{
+                  height: Math.max(
+                    0,
+                    (calFullHeight ?? 0) -
+                      MIN_TOP_INSET -
+                      DAY_LABEL_ROW_HEIGHT -
+                      ALL_DAY_ROW_HEIGHT,
+                  ),
+                }}
+              >
+                <Timeline
+                  date={weekDates}
+                  numberOfDays={7}
+                  events={weekTimelineEvents}
+                  timelineLeftInset={TIMELINE_LEFT_INSET}
+                  scrollToNow
+                  showNowIndicator
+                  onEventPress={handleWeekItemPress}
+                />
+              </View>
+            </View>
+          )}
         </View>
 
         <Animated.View
@@ -1409,12 +1567,21 @@ const styles = StyleSheet.create({
   contentArea: { flex: 1, position: "relative", overflow: "hidden" },
   calendarWrapper: {},
   calendar: { borderBottomWidth: 1, borderBottomColor: colors.divider },
-  calendarArrow: {
-    color: colors.primary,
-    fontSize: 28,
-    fontWeight: "700",
-    paddingHorizontal: 8,
+  // Fixed to MIN_TOP_INSET so it's exactly the height that stays visible
+  // when the Upcoming sheet is dragged all the way up, in both Month and
+  // Week mode - see the note on MIN_TOP_INSET above.
+  calendarHeaderRow: { height: MIN_TOP_INSET },
+  weekDayLabelRow: {
+    height: DAY_LABEL_ROW_HEIGHT,
+    flexDirection: "row",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
   },
+  weekDayLabelCell: { flex: 1, alignItems: "center" },
+  weekDayLabelDow: { color: colors.textSecondary, fontSize: 11, fontWeight: "600" },
+  weekDayLabelNum: { color: colors.textPrimary, fontSize: 13, fontWeight: "700" },
+  weekDayLabelNumToday: { color: colors.primary },
   // Cards sheet: rises to cover the calendar as you drag up; pinned right
   // under it at rest. Reserves handleSpacer at the top so its content
   // doesn't render under the independently-floating handle.

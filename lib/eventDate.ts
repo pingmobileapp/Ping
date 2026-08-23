@@ -51,6 +51,20 @@ export function formatEventTime(eventDate: string, isAllDay?: boolean | null, en
   return `${startLabel} – ${endLabel}`;
 }
 
+// Week view's header title - "Aug 23 – 29" within one month, "Aug 30 – Sep 5"
+// across a month boundary. weekStart is always the Sunday of the visible week.
+export function formatWeekRangeLabel(weekStart: Date): string {
+  const end = new Date(weekStart);
+  end.setDate(end.getDate() + 6);
+  const sameMonth = weekStart.getMonth() === end.getMonth() && weekStart.getFullYear() === end.getFullYear();
+  const startLabel = weekStart.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const endLabel = end.toLocaleDateString(
+    undefined,
+    sameMonth ? { day: 'numeric' } : { month: 'short', day: 'numeric' }
+  );
+  return `${startLabel} – ${endLabel}`;
+}
+
 // Every YYYY-MM-DD key from start to end (inclusive) - used to shade each
 // day of a multi-day event on the calendar.
 export function eachDayKeyInRange(startKey: string, endKey: string): string[] {
