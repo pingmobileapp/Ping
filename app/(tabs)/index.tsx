@@ -47,6 +47,7 @@ import { eachDayKeyInRange } from "../../lib/eventDate";
 import {
   CalendarPermissionStatus,
   ExternalEvent,
+  deleteCalendarEvent,
   getCalendarPermissionStatus,
   getUpcomingExternalEvents,
   requestCalendarAccess,
@@ -98,6 +99,10 @@ export default function HomeScreen() {
     endDate: Date;
     isAllDay: boolean;
   } | null>(null);
+  // The personal/synced calendar item being replaced by the Ping just
+  // created from it - cleaned up in handleCreated once that succeeds, so
+  // it doesn't keep showing up alongside its own replacement.
+  const [convertSource, setConvertSource] = useState<{ id: string; isPersonal: boolean } | null>(null);
   const [scanningSchedule, setScanningSchedule] = useState(false);
   const [scheduleReviewEvents, setScheduleReviewEvents] = useState<ExtractedEvent[] | null>(null);
   const [justCreatedId, setJustCreatedId] = useState<string | null>(null);
@@ -375,6 +380,7 @@ export default function HomeScreen() {
       endDate: new Date(event.endDate),
       isAllDay: event.allDay,
     });
+    setConvertSource({ id: event.id, isPersonal: event.isPersonal });
     setModalVisible(true);
   };
 
@@ -404,6 +410,20 @@ export default function HomeScreen() {
   const handleCreated = async (status: "sent" | "draft") => {
     setModalVisible(false);
     setConvertPrefill(null);
+    if (convertSource) {
+      const source = convertSource;
+      setConvertSource(null);
+      try {
+        if (source.isPersonal) {
+          await deleteCalendarEvent(source.id);
+        } else {
+          setHiddenEventIds(await hideEvent(source.id));
+        }
+        await fetchExternalEvents();
+      } catch (err) {
+        console.error("Error cleaning up converted calendar item:", err);
+      }
+    }
     await fetchEvents();
     setEvents((current) => {
       const newest = [...current].sort(
@@ -1313,6 +1333,7 @@ export default function HomeScreen() {
         onClose={() => {
           setModalVisible(false);
           setConvertPrefill(null);
+          setConvertSource(null);
         }}
         onCreated={handleCreated}
         initialDate={selectedDate}
