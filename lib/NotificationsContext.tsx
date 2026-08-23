@@ -174,8 +174,17 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
     };
 
     const responseSub = Notifications.addNotificationResponseReceivedListener(handleResponse);
+    // getLastNotificationResponseAsync returns whatever notification response
+    // was received most recently, full stop - not "since last checked." Left
+    // uncleared, the very first notification someone ever taps gets replayed
+    // through handleResponse on every cold start from then on, reopening
+    // that same old event (often flipped to the Message Board side) with no
+    // relation to whatever they're actually doing at the time.
     Notifications.getLastNotificationResponseAsync().then((response) => {
-      if (response) handleResponse(response);
+      if (response) {
+        handleResponse(response);
+        Notifications.clearLastNotificationResponseAsync();
+      }
     });
 
     return () => {
