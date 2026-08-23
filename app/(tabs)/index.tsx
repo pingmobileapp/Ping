@@ -697,7 +697,7 @@ export default function HomeScreen() {
     }
 
     const monthScoped =
-      !selectedDate && !showDraftsOnly && !showDeclinedOnly
+      !selectedDate && !showDraftsOnly && !showDeclinedOnly && !showPingsOnly
         ? visibleEvents.filter((e) =>
             inVisibleMonth(
               new Date(e.event_date),
