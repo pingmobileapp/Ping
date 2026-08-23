@@ -31,7 +31,7 @@ export function useProfilePhone(userId?: string | null) {
     refresh().finally(() => setLoading(false));
   }, [refresh]);
 
-  return { hasPhone: !!phone, shouldPrompt: !phone && !dismissed, loading, refresh };
+  return { hasPhone: !!phone, shouldPrompt: !loading && !phone && !dismissed, loading, refresh };
 }
 
 export async function dismissProfilePrompt(userId: string): Promise<void> {

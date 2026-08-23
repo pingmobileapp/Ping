@@ -83,7 +83,7 @@ const CROSSFADE_BAND = 16;
 export default function HomeScreen() {
   const router = useRouter();
   const { session } = useAuth();
-  const { shouldPrompt: shouldPromptPhone } = useProfilePhone(session?.user?.id);
+  const { shouldPrompt: shouldPromptPhone, refresh: refreshProfilePhone } = useProfilePhone(session?.user?.id);
   const [phoneBannerDismissed, setPhoneBannerDismissed] = useState(false);
   const [events, setEvents] = useState<PingEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -179,7 +179,11 @@ export default function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       refreshNotifications();
-    }, [refreshNotifications]),
+      // Picks up a phone number saved from Settings without needing a full
+      // app relaunch - useProfilePhone only fetches once on mount otherwise,
+      // so returning to Home kept showing the banner even after adding one.
+      refreshProfilePhone();
+    }, [refreshNotifications, refreshProfilePhone]),
   );
 
   // Notifications, the invite popup's "View full details", and any other
