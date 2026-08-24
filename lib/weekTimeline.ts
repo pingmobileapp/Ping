@@ -16,6 +16,33 @@ const toDayKey = (d: Date): string => `${d.getFullYear()}-${pad(d.getMonth() + 1
 
 const inWeek = (d: Date, weekStart: Date, weekEnd: Date) => d >= weekStart && d < weekEnd;
 
+// Timeline buckets every event into a single day-column by its start time
+// alone (groupBy on the date part of `start`) and just lets the block's
+// height run past the bottom of that column for anything longer than what's
+// left in the day - an overnight event doesn't continue into the next
+// day's column, it just runs off the bottom of the first one and vanishes.
+// Splitting into one segment per calendar day it actually touches (each
+// clipped to that day's 00:00-23:59:59, except the true start/end) is what
+// makes it read as continuing into the next column instead.
+const splitByDay = (start: Date, end: Date): { start: Date; end: Date }[] => {
+  const segments: { start: Date; end: Date }[] = [];
+  let segStart = start;
+  while (true) {
+    const dayEnd = new Date(segStart);
+    dayEnd.setHours(23, 59, 59, 999);
+    if (end <= dayEnd) {
+      segments.push({ start: segStart, end });
+      break;
+    }
+    segments.push({ start: segStart, end: dayEnd });
+    const nextDayStart = new Date(segStart);
+    nextDayStart.setDate(nextDayStart.getDate() + 1);
+    nextDayStart.setHours(0, 0, 0, 0);
+    segStart = nextDayStart;
+  }
+  return segments;
+};
+
 // No stored link ties a Ping to a same-named entry someone's synced
 // calendar independently picked up (e.g. a family calendar invite for the
 // same real-world gathering) - a Ping and an external item are treated as
@@ -48,35 +75,39 @@ export function buildWeekTimelineEvents(
   for (const p of pings) {
     if (p.is_all_day) continue;
     const start = new Date(p.event_date);
-    if (!inWeek(start, weekStart, weekEnd)) continue;
-    pingTimedEntries.push({ title: p.title, start });
     // Matches CreateEventModal's own default duration when no end is set.
     const end = p.end_date ? new Date(p.end_date) : new Date(start.getTime() + 60 * 60000);
-    events.push({
-      id: `ping-${p.id}`,
-      start: toTimelineDateTime(start),
-      end: toTimelineDateTime(end),
-      title: p.title,
-      color: colors.primary,
-    });
+    pingTimedEntries.push({ title: p.title, start });
+    for (const seg of splitByDay(start, end)) {
+      if (!inWeek(seg.start, weekStart, weekEnd)) continue;
+      events.push({
+        id: `ping-${p.id}`,
+        start: toTimelineDateTime(seg.start),
+        end: toTimelineDateTime(seg.end),
+        title: p.title,
+        color: colors.primary,
+      });
+    }
   }
 
   for (const e of external) {
     if (e.allDay) continue;
-    if (!inWeek(e.startDate, weekStart, weekEnd)) continue;
     const duplicatesPing = pingTimedEntries.some(
       (p) =>
         titlesLikelyMatch(p.title, e.title) &&
         Math.abs(p.start.getTime() - e.startDate.getTime()) <= MATCH_WINDOW_MS,
     );
     if (duplicatesPing) continue;
-    events.push({
-      id: `ext-${e.id}`,
-      start: toTimelineDateTime(e.startDate),
-      end: toTimelineDateTime(e.endDate),
-      title: e.title,
-      color: colors.textMuted,
-    });
+    for (const seg of splitByDay(e.startDate, e.endDate)) {
+      if (!inWeek(seg.start, weekStart, weekEnd)) continue;
+      events.push({
+        id: `ext-${e.id}`,
+        start: toTimelineDateTime(seg.start),
+        end: toTimelineDateTime(seg.end),
+        title: e.title,
+        color: colors.textMuted,
+      });
+    }
   }
 
   return events;
