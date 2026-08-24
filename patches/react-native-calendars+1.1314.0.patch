@@ -1,0 +1,25 @@
+diff --git a/node_modules/react-native-calendars/src/timeline/Packer.js b/node_modules/react-native-calendars/src/timeline/Packer.js
+index ba99d93..e369f56 100644
+--- a/node_modules/react-native-calendars/src/timeline/Packer.js
++++ b/node_modules/react-native-calendars/src/timeline/Packer.js
+@@ -1,7 +1,7 @@
+ import inRange from 'lodash/inRange';
+ import XDate from 'xdate';
+ import constants from '../commons/constants';
+-export const HOUR_BLOCK_HEIGHT = 100;
++export const HOUR_BLOCK_HEIGHT = 60;
+ const OVERLAP_EVENTS_SPACINGS = 10;
+ const RIGHT_EDGE_SPACING = 10;
+ function buildEvent(event, left, width, { dayStart = 0, hourBlockHeight = HOUR_BLOCK_HEIGHT }) {
+diff --git a/node_modules/react-native-calendars/src/timeline/TimelineHours.js b/node_modules/react-native-calendars/src/timeline/TimelineHours.js
+index 38f76e5..18afd79 100644
+--- a/node_modules/react-native-calendars/src/timeline/TimelineHours.js
++++ b/node_modules/react-native-calendars/src/timeline/TimelineHours.js
+@@ -68,7 +68,6 @@ const TimelineHours = (props) => {
+               {timeText}
+             </Text>
+             {time === start ? null : (<View key={`line${time}`} testID={`${testID}.${time}.line`} style={[styles.line, { top: offset * index, width: dimensionWidth - EVENT_DIFF, left: timelineLeftInset - 16 }]}/>)}
+-            {<View key={`lineHalf${time}`} testID={`${testID}.${time}.lineHalf`} style={[styles.line, { top: offset * (index + 0.5), width: dimensionWidth - EVENT_DIFF, left: timelineLeftInset - 16 }]}/>}
+           </React.Fragment>);
+         })}
+       {times(numberOfDays, (index) => <View key={index} style={[styles.verticalLine, { right: (index + 1) * width / numberOfDays }]}/>)}
