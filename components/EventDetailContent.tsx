@@ -109,6 +109,13 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
   const unclaimedCount = items.filter(
     (item) => item.item_claims.reduce((sum, c) => sum + c.quantity, 0) < item.quantity_needed
   ).length;
+  // unclaimedCount alone missed the actual point of the banner: it only
+  // asks "does the event still need someone" - if other guests already
+  // filled every item, this stayed 0 even for a guest who personally never
+  // claimed anything, so they never got nudged. This tracks that instead.
+  const myClaimedAnything = items.some((item) =>
+    item.item_claims.some((c) => c.invitee_id === myInvitee?.id)
+  );
   const scrollRef = useRef<ScrollView>(null);
   const itemsSectionY = useRef(0);
 
@@ -545,13 +552,15 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
           </TouchableOpacity>
         )}
 
-        {myInvitee && myInvitee.rsvp_status !== 'declined' && unclaimedCount > 0 && (
+        {myInvitee && myInvitee.rsvp_status !== 'declined' && items.length > 0 && !myClaimedAnything && (
           <TouchableOpacity
             style={styles.actionBanner}
             onPress={() => scrollRef.current?.scrollTo({ y: itemsSectionY.current - 12, animated: true })}
           >
             <Text style={styles.actionBannerText}>
-              🛒 {unclaimedCount === 1 ? '1 item still needs someone' : `${unclaimedCount} items still need someone`}
+              {unclaimedCount > 0
+                ? `🛒 ${unclaimedCount === 1 ? '1 item still needs someone' : `${unclaimedCount} items still need someone`}`
+                : "🛒 You haven't picked something to bring yet"}
             </Text>
             <Text style={styles.actionBannerAction}>View</Text>
           </TouchableOpacity>
