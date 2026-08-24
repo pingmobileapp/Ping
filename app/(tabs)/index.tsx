@@ -47,6 +47,7 @@ import { useNotificationsContext } from "../../lib/NotificationsContext";
 import { calendarTheme, colors } from "../../lib/theme";
 import { eachDayKeyInRange, formatWeekRangeLabel } from "../../lib/eventDate";
 import { buildDayColumns, buildAllDayColumns } from "../../lib/weekTimeline";
+import { externalItemDuplicatesPing } from "../../lib/eventDedup";
 import {
   CalendarPermissionStatus,
   ExternalEvent,
@@ -758,11 +759,20 @@ export default function HomeScreen() {
 
     if (showDraftsOnly || showDeclinedOnly || showPingsOnly) return pingItems;
 
+    // Same rule Week view uses (lib/eventDedup.ts) - no stored link ties a
+    // Ping to a same-named entry someone's synced calendar independently
+    // picked up for the same real-world gathering, so both used to show up
+    // here as separate rows. Compared against monthScoped (not all of
+    // visibleEvents) since that's exactly the set of Pings actually being
+    // shown alongside these external items.
+    const pingEntriesForDedup = monthScoped.map((e) => ({ title: e.title, start: new Date(e.event_date) }));
     const dayFiltered = (
       selectedDate
         ? externalEvents.filter((e) => toDateKey(e.startDate) === selectedDate)
         : externalEvents.filter((e) => inVisibleMonth(e.startDate, null))
-    ).filter((e) => !hiddenEventIds.has(e.id));
+    )
+      .filter((e) => !hiddenEventIds.has(e.id))
+      .filter((e) => !externalItemDuplicatesPing(pingEntriesForDedup, { title: e.title, start: e.startDate }));
 
     const externalItems: UpcomingListItem[] = dayFiltered.map((e) => ({
       kind: "external",
