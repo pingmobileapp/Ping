@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Modal, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Image } from 'react-native';
+import { Alert, Modal, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Image } from 'react-native';
 import { supabase } from '../supabase';
 import { useAuth } from '../lib/AuthContext';
 import { colors, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
@@ -121,6 +121,23 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
     };
   }, [eventId, session?.user?.id, runConflictCheck]);
 
+  // A tappable version of what the Week view's calendar-item taps already
+  // show (see handleWeekItemPress in app/(tabs)/index.tsx) - a quick
+  // read-only peek, not a navigation, so it doesn't add another moving
+  // part to this popup's already-fragile "open something else from here"
+  // interactions.
+  const showConflictDetails = (item: CalendarConflict) => {
+    const dateLabel = item.startDate.toLocaleDateString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    });
+    const timeLabel = item.allDay
+      ? 'All day'
+      : `${item.startDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })} – ${item.endDate.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
+    Alert.alert(item.title, `${dateLabel} · ${timeLabel}`);
+  };
+
   const handleEnableCalendar = async () => {
     const granted = await requestCalendarAccess();
     if (!granted) {
@@ -181,9 +198,11 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
               )}
               {conflictState.kind === 'clear' && <Text style={styles.conflictClear}>No conflicts on your calendar</Text>}
               {conflictState.kind === 'conflicts' && (
-                <Text style={styles.conflictWarning}>
-                  ⚠️ You have another event around this time — {conflictState.items[0].title}
-                </Text>
+                <TouchableOpacity onPress={() => showConflictDetails(conflictState.items[0])}>
+                  <Text style={styles.conflictWarning}>
+                    ⚠️ You have another event around this time — {conflictState.items[0].title}
+                  </Text>
+                </TouchableOpacity>
               )}
 
               <View style={styles.rsvpRow}>

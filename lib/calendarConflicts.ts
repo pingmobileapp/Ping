@@ -6,6 +6,8 @@ export type CalendarPermissionStatus = 'granted' | 'denied' | 'undetermined';
 export type CalendarConflict = {
   title: string;
   startDate: Date;
+  endDate: Date;
+  allDay: boolean;
 };
 
 const CONFLICT_WINDOW_BEFORE_MINUTES = 30;
@@ -68,7 +70,12 @@ export async function findConflicts(eventDate: Date): Promise<CalendarConflict[]
 
   return events
     .filter((e) => e.title)
-    .map((e) => ({ title: e.title, startDate: new Date(e.startDate) }));
+    .map((e) => ({
+      title: e.title,
+      startDate: new Date(e.startDate),
+      endDate: new Date(e.endDate),
+      allDay: !!e.allDay,
+    }));
 }
 
 // Only call once permission is confirmed granted — this never prompts.
