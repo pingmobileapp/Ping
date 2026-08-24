@@ -16,6 +16,20 @@ const toDayKey = (d: Date): string => `${d.getFullYear()}-${pad(d.getMonth() + 1
 
 const inWeek = (d: Date, weekStart: Date, weekEnd: Date) => d >= weekStart && d < weekEnd;
 
+// No stored link ties a Ping to a same-named entry someone's synced
+// calendar independently picked up (e.g. a family calendar invite for the
+// same real-world gathering) - a Ping and an external item are treated as
+// the same event, and the external one dropped, when their titles are a
+// reasonably close match and they start within 90 minutes of each other.
+const normalizeTitle = (t: string) => t.trim().toLowerCase();
+const titlesLikelyMatch = (a: string, b: string) => {
+  const na = normalizeTitle(a);
+  const nb = normalizeTitle(b);
+  if (!na || !nb) return false;
+  return na === nb || na.startsWith(nb) || nb.startsWith(na);
+};
+const MATCH_WINDOW_MS = 90 * 60000;
+
 // Timeline has no all-day semantics of its own - an all-day item placed on
 // the hourly grid would render as a misleading full-day block, so those are
 // excluded here and routed to buildWeekAllDayItems (a separate chip strip)
@@ -29,11 +43,13 @@ export function buildWeekTimelineEvents(
   weekEnd.setDate(weekEnd.getDate() + 7);
 
   const events: TimelineEvent[] = [];
+  const pingTimedEntries: { title: string; start: Date }[] = [];
 
   for (const p of pings) {
     if (p.is_all_day) continue;
     const start = new Date(p.event_date);
     if (!inWeek(start, weekStart, weekEnd)) continue;
+    pingTimedEntries.push({ title: p.title, start });
     // Matches CreateEventModal's own default duration when no end is set.
     const end = p.end_date ? new Date(p.end_date) : new Date(start.getTime() + 60 * 60000);
     events.push({
@@ -48,6 +64,12 @@ export function buildWeekTimelineEvents(
   for (const e of external) {
     if (e.allDay) continue;
     if (!inWeek(e.startDate, weekStart, weekEnd)) continue;
+    const duplicatesPing = pingTimedEntries.some(
+      (p) =>
+        titlesLikelyMatch(p.title, e.title) &&
+        Math.abs(p.start.getTime() - e.startDate.getTime()) <= MATCH_WINDOW_MS,
+    );
+    if (duplicatesPing) continue;
     events.push({
       id: `ext-${e.id}`,
       start: toTimelineDateTime(e.startDate),
@@ -69,18 +91,25 @@ export function buildWeekAllDayItems(
   weekEnd.setDate(weekEnd.getDate() + 7);
 
   const items: AllDayItem[] = [];
+  const pingAllDayEntries: { title: string; dayKey: string }[] = [];
 
   for (const p of pings) {
     if (!p.is_all_day) continue;
     const start = new Date(p.event_date);
     if (!inWeek(start, weekStart, weekEnd)) continue;
+    pingAllDayEntries.push({ title: p.title, dayKey: toDayKey(start) });
     items.push({ id: `ping-${p.id}`, title: p.title, dayKey: toDayKey(start) });
   }
 
   for (const e of external) {
     if (!e.allDay) continue;
     if (!inWeek(e.startDate, weekStart, weekEnd)) continue;
-    items.push({ id: `ext-${e.id}`, title: e.title, dayKey: toDayKey(e.startDate) });
+    const dayKey = toDayKey(e.startDate);
+    const duplicatesPing = pingAllDayEntries.some(
+      (p) => p.dayKey === dayKey && titlesLikelyMatch(p.title, e.title),
+    );
+    if (duplicatesPing) continue;
+    items.push({ id: `ext-${e.id}`, title: e.title, dayKey });
   }
 
   return items;
