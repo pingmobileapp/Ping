@@ -497,14 +497,35 @@ export default function HomeScreen() {
   // all-day chip strip - same ping-/ext- id prefixes upcomingListItems
   // already uses, routed to the exact handlers the Upcoming list uses for
   // the same two item kinds.
+  const formatExternalEventTime = (ext: ExternalEvent) => {
+    const dateLabel = ext.startDate.toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+    if (ext.allDay) return `${dateLabel} · All day`;
+    const startLabel = ext.startDate.toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const endLabel = ext.endDate.toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    return `${dateLabel} · ${startLabel} – ${endLabel}`;
+  };
+
   const handleWeekItemPress = (item: { id?: string }) => {
     if (!item.id) return;
     if (item.id.startsWith("ping-")) {
       const p = declinedFilteredEvents.find((e) => e.id === item.id!.slice(5));
       if (p) openEvent(p);
     } else if (item.id.startsWith("ext-")) {
+      // A tap here reads as "what is this", not "let me edit this" - unlike
+      // the Upcoming list's explicit pencil icon, so this shows a read-only
+      // peek instead of opening the edit form.
       const ext = externalEvents.find((e) => e.id === item.id!.slice(4));
-      if (ext?.editable) setEditingPersonalEvent(ext);
+      if (ext) Alert.alert(ext.title, formatExternalEventTime(ext));
     }
   };
 
@@ -914,6 +935,21 @@ export default function HomeScreen() {
       }
     });
 
+  // Timeline (unlike Calendar's enableSwipeMonths) has no swipe-between-
+  // pages gesture of its own - same activeOffsetX/failOffsetY approach as
+  // monthSwipe above, scoped to just the hourly grid so it coexists with
+  // Timeline's own vertical scroll and event taps.
+  const weekSwipe = Gesture.Pan()
+    .activeOffsetX([-20, 20])
+    .failOffsetY([-10, 10])
+    .onEnd((e) => {
+      if (e.translationX <= -40) {
+        runOnJS(changeWeek)(1);
+      } else if (e.translationX >= 40) {
+        runOnJS(changeWeek)(-1);
+      }
+    });
+
   // Lets the "Messages" menu link snap the handle straight to the bottom
   // resting point, revealing the Message Board the same way a manual drag
   // would — teaches people where the feature lives.
@@ -1248,28 +1284,30 @@ export default function HomeScreen() {
                 leftInset={TIMELINE_LEFT_INSET}
                 onPress={handleWeekItemPress}
               />
-              <View
-                style={{
-                  height: Math.max(
-                    0,
-                    (calFullHeight ?? 0) -
-                      MIN_TOP_INSET -
-                      DAY_LABEL_ROW_HEIGHT -
-                      ALL_DAY_ROW_HEIGHT,
-                  ),
-                }}
-              >
-                <Timeline
-                  date={weekDates}
-                  numberOfDays={7}
-                  events={weekTimelineEvents}
-                  timelineLeftInset={TIMELINE_LEFT_INSET}
-                  scrollToNow
-                  showNowIndicator
-                  format24h={false}
-                  onEventPress={handleWeekItemPress}
-                />
-              </View>
+              <GestureDetector gesture={weekSwipe}>
+                <View
+                  style={{
+                    height: Math.max(
+                      0,
+                      (calFullHeight ?? 0) -
+                        MIN_TOP_INSET -
+                        DAY_LABEL_ROW_HEIGHT -
+                        ALL_DAY_ROW_HEIGHT,
+                    ),
+                  }}
+                >
+                  <Timeline
+                    date={weekDates}
+                    numberOfDays={7}
+                    events={weekTimelineEvents}
+                    timelineLeftInset={TIMELINE_LEFT_INSET}
+                    scrollToNow
+                    showNowIndicator
+                    format24h={false}
+                    onEventPress={handleWeekItemPress}
+                  />
+                </View>
+              </GestureDetector>
             </View>
           )}
         </View>
