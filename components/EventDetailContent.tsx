@@ -545,7 +545,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
           </TouchableOpacity>
         )}
 
-        {!isHost && myInvitee && myInvitee.rsvp_status !== 'declined' && unclaimedCount > 0 && (
+        {myInvitee && myInvitee.rsvp_status !== 'declined' && unclaimedCount > 0 && (
           <TouchableOpacity
             style={styles.actionBanner}
             onPress={() => scrollRef.current?.scrollTo({ y: itemsSectionY.current - 12, animated: true })}
