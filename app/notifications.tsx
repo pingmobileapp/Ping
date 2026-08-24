@@ -57,10 +57,10 @@ export default function NotificationsScreen() {
     markRead(n.id);
     if (n.group_id) {
       openGroupChat(n.group_id);
-      router.dismissTo('/');
+      if (router.canDismiss()) router.dismissTo('/');
     } else if (n.event_id) {
       openEventModal(n.event_id, n.type === 'message');
-      router.dismissTo('/');
+      if (router.canDismiss()) router.dismissTo('/');
     }
   };
 
@@ -99,7 +99,7 @@ export default function NotificationsScreen() {
                   snippet={{ senderName: 'Invited', body: 'Tap to respond', createdAt: '' }}
                   onPress={() => {
                     openEventModal(p.event_id);
-                    router.dismissTo('/');
+                    if (router.canDismiss()) router.dismissTo('/');
                   }}
                 />
               ))}

@@ -22,8 +22,16 @@ function InvitePopupHost() {
         // dismissTo, not push - returns to the existing Home screen
         // instead of mounting a second instance of it (push('/') here was
         // implicated in a real crash - see app/notifications.tsx for the
-        // full explanation).
-        router.dismissTo('/');
+        // full explanation). But this popup is a global overlay, not tied
+        // to any one screen - it can appear while already sitting on Home
+        // with nothing pushed on top, and calling dismissTo('/') with
+        // nothing to dismiss was implicated in a real freeze during family
+        // testing. canDismiss() guards that: pendingEventModal alone is
+        // enough for Home's own effect to show the detail modal in place
+        // when we're already there, no navigation needed.
+        if (router.canDismiss()) {
+          router.dismissTo('/');
+        }
       }}
     />
   );
