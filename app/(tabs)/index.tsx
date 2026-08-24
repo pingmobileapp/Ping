@@ -228,6 +228,15 @@ export default function HomeScreen() {
     clearGroupChat,
   } = useNotificationsContext();
 
+  // visibleEvents' "is this event in the past" cutoff reads this instead of
+  // calling Date.now() directly inside that useMemo - a plain Date.now()
+  // call only gets re-evaluated when declinedFilteredEvents/selectedDate/
+  // showDraftsOnly change, so an event that was still upcoming when the
+  // list last computed kept showing as upcoming indefinitely if the app
+  // just sat open/backgrounded without any of those changing (a real
+  // report: a 7pm event was still showing the next morning).
+  const [now, setNow] = useState(() => Date.now());
+
   useFocusEffect(
     useCallback(() => {
       refreshNotifications();
@@ -235,8 +244,17 @@ export default function HomeScreen() {
       // app relaunch - useProfilePhone only fetches once on mount otherwise,
       // so returning to Home kept showing the banner even after adding one.
       refreshProfilePhone();
+      // Catches the common case (app backgrounded, then reopened) right
+      // away - the interval below is just a backstop for a long
+      // continuous foreground session.
+      setNow(Date.now());
     }, [refreshNotifications, refreshProfilePhone]),
   );
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 5 * 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Notifications, the invite popup's "View full details", and any other
   // in-app trigger all funnel through this instead of each pushing their
@@ -673,11 +691,11 @@ export default function HomeScreen() {
       result = result.filter(
         (e) =>
           e.status === "draft" ||
-          new Date(e.end_date || e.event_date).getTime() >= Date.now(),
+          new Date(e.end_date || e.event_date).getTime() >= now,
       );
     }
     return result;
-  }, [declinedFilteredEvents, selectedDate, showDraftsOnly]);
+  }, [declinedFilteredEvents, selectedDate, showDraftsOnly, now]);
 
   // Only the Upcoming list (not the Message Board, calendar dots, or drafts
   // view) mixes in phone-calendar events - they're not real Ping events, so
