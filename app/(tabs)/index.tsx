@@ -18,7 +18,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { Calendar, Timeline } from "react-native-calendars";
+import { Calendar } from "react-native-calendars";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   Extrapolation,
@@ -41,12 +41,12 @@ import GroupChatModal from "../../components/GroupChatModal";
 import PingLogoMenu from "../../components/PingLogoMenu";
 import ProfileMenu from "../../components/ProfileMenu";
 import ScheduleReviewModal from "../../components/ScheduleReviewModal";
-import WeekAllDayStrip from "../../components/WeekAllDayStrip";
+import WeekGrid, { WeekGridHandle } from "../../components/WeekGrid";
 import { useAuth } from "../../lib/AuthContext";
 import { useNotificationsContext } from "../../lib/NotificationsContext";
 import { calendarTheme, colors } from "../../lib/theme";
 import { eachDayKeyInRange, formatWeekRangeLabel } from "../../lib/eventDate";
-import { buildWeekTimelineEvents, buildWeekAllDayItems } from "../../lib/weekTimeline";
+import { buildDayColumns, buildAllDayColumns } from "../../lib/weekTimeline";
 import {
   CalendarPermissionStatus,
   ExternalEvent,
@@ -75,14 +75,6 @@ const toDateKey = (date: Date) => {
 // above it.
 const MIN_TOP_INSET = 52;
 const HANDLE_HEIGHT = 28;
-// Week view's fixed-height budget within calendarWrapper - by construction,
-// not measurement, so calFullHeight (captured once, in Month mode) stays
-// valid when toggled to Week mode without any new onLayout/remeasuring.
-// CalendarHeaderRow occupies MIN_TOP_INSET in both modes (it's the same
-// component either way); these three make up the rest of Week mode's body.
-const TIMELINE_LEFT_INSET = 50;
-const DAY_LABEL_ROW_HEIGHT = 36;
-const ALL_DAY_ROW_HEIGHT = 32;
 // How much room to leave above the FAB when the handle is parked at its
 // lowest resting position.
 const FAB_CLEARANCE = 110;
@@ -155,13 +147,14 @@ export default function HomeScreen() {
     return r;
   };
   const [visibleWeekStart, setVisibleWeekStart] = useState(() => startOfWeek(new Date()));
-  const changeWeek = (delta: number) => {
-    setVisibleWeekStart((prev) => {
-      const next = new Date(prev);
-      next.setDate(next.getDate() + delta * 7);
-      return next;
-    });
-  };
+  // Where WeekGrid's pre-rendered day range is centered - set once when
+  // entering Week mode, NOT updated by scrolling (visibleWeekStart is the
+  // one that tracks scroll position, for the header title). Keeping these
+  // separate avoids a feedback loop: if the range start moved every time
+  // the visible week changed, WeekGrid would re-derive a new range (and
+  // reset its scroll position) on every scroll event.
+  const [weekGridAnchor, setWeekGridAnchor] = useState(() => startOfWeek(new Date()));
+  const weekGridRef = useRef<WeekGridHandle>(null);
   const onSelectMonth = () => setViewMode("month");
   // Strongest signal of "what the user's looking at" first: an explicitly
   // picked day, then today (if the month view is already showing the
@@ -178,7 +171,9 @@ export default function HomeScreen() {
           visibleMonth.getMonth() === today.getMonth()
         ? today
         : visibleMonth;
-    setVisibleWeekStart(startOfWeek(anchor));
+    const anchorWeekStart = startOfWeek(anchor);
+    setVisibleWeekStart(anchorWeekStart);
+    setWeekGridAnchor(anchorWeekStart);
     setViewMode("week");
   };
   const [showDraftsOnly, setShowDraftsOnly] = useState(false);
@@ -533,16 +528,15 @@ export default function HomeScreen() {
     return `${dateLabel} · ${startLabel} – ${endLabel}`;
   };
 
-  const handleWeekItemPress = (item: { id?: string }) => {
-    if (!item.id) return;
-    if (item.id.startsWith("ping-")) {
-      const p = declinedFilteredEvents.find((e) => e.id === item.id!.slice(5));
+  const handleWeekItemPress = (id: string) => {
+    if (id.startsWith("ping-")) {
+      const p = declinedFilteredEvents.find((e) => e.id === id.slice(5));
       if (p) openEvent(p);
-    } else if (item.id.startsWith("ext-")) {
+    } else if (id.startsWith("ext-")) {
       // A tap here reads as "what is this", not "let me edit this" - unlike
       // the Upcoming list's explicit pencil icon, so this shows a read-only
       // peek instead of opening the edit form.
-      const ext = externalEvents.find((e) => e.id === item.id!.slice(4));
+      const ext = externalEvents.find((e) => e.id === id.slice(4));
       if (ext) Alert.alert(ext.title, formatExternalEventTime(ext));
     }
   };
@@ -566,22 +560,32 @@ export default function HomeScreen() {
     () => externalEvents.filter((e) => !hiddenEventIds.has(e.id)),
     [externalEvents, hiddenEventIds],
   );
-  const weekDates = useMemo(
-    () =>
-      Array.from({ length: 7 }, (_, i) => {
-        const d = new Date(visibleWeekStart);
-        d.setDate(d.getDate() + i);
-        return toDateKey(d);
-      }),
-    [visibleWeekStart],
+  // WeekGrid's pre-rendered day range: a fixed 8-week (56-day) window
+  // rather than infinite-scroll pagination (real added complexity - list
+  // virtualization, re-centering to avoid unbounded growth - not worth it
+  // for a calendar people mostly look at a few weeks around "now").
+  // Scrolling past either edge just stops, an honest disclosed limit
+  // rather than a silent bug. Centered-ish on weekGridAnchor, biased
+  // slightly forward since people look ahead more than back.
+  const WEEK_GRID_DAY_COUNT = 56;
+  const WEEK_GRID_LOOKBACK_DAYS = 21;
+  const weekGridRangeStart = useMemo(() => {
+    const d = new Date(weekGridAnchor);
+    d.setDate(d.getDate() - WEEK_GRID_LOOKBACK_DAYS);
+    return d;
+  }, [weekGridAnchor]);
+  const weekGridRangeEnd = useMemo(() => {
+    const d = new Date(weekGridRangeStart);
+    d.setDate(d.getDate() + WEEK_GRID_DAY_COUNT);
+    return d;
+  }, [weekGridRangeStart]);
+  const weekDayColumns = useMemo(
+    () => buildDayColumns(weekGridRangeStart, weekGridRangeEnd, declinedFilteredEvents, visibleExternalEvents),
+    [weekGridRangeStart, weekGridRangeEnd, declinedFilteredEvents, visibleExternalEvents],
   );
-  const weekTimelineEvents = useMemo(
-    () => buildWeekTimelineEvents(visibleWeekStart, declinedFilteredEvents, visibleExternalEvents),
-    [visibleWeekStart, declinedFilteredEvents, visibleExternalEvents],
-  );
-  const weekAllDayItems = useMemo(
-    () => buildWeekAllDayItems(visibleWeekStart, declinedFilteredEvents, visibleExternalEvents),
-    [visibleWeekStart, declinedFilteredEvents, visibleExternalEvents],
+  const weekAllDayColumns = useMemo(
+    () => buildAllDayColumns(weekGridRangeStart, weekGridRangeEnd, declinedFilteredEvents, visibleExternalEvents),
+    [weekGridRangeStart, weekGridRangeEnd, declinedFilteredEvents, visibleExternalEvents],
   );
   // Calendar's own built-in header (title + arrows) is hidden below in
   // favor of CalendarHeaderRow (needs room for the Month/Week toggle too) -
@@ -953,21 +957,6 @@ export default function HomeScreen() {
       }
     });
 
-  // Timeline (unlike Calendar's enableSwipeMonths) has no swipe-between-
-  // pages gesture of its own - same activeOffsetX/failOffsetY approach as
-  // monthSwipe above, scoped to just the hourly grid so it coexists with
-  // Timeline's own vertical scroll and event taps.
-  const weekSwipe = Gesture.Pan()
-    .activeOffsetX([-20, 20])
-    .failOffsetY([-10, 10])
-    .onEnd((e) => {
-      if (e.translationX <= -40) {
-        runOnJS(changeWeek)(1);
-      } else if (e.translationX >= 40) {
-        runOnJS(changeWeek)(-1);
-      }
-    });
-
   // Lets the "Messages" menu link snap the handle straight to the bottom
   // resting point, revealing the Message Board the same way a manual drag
   // would — teaches people where the feature lives.
@@ -1246,8 +1235,8 @@ export default function HomeScreen() {
           <View style={styles.calendarHeaderRow}>
             <CalendarHeaderRow
               title={viewMode === "month" ? monthLabel : formatWeekRangeLabel(visibleWeekStart)}
-              onPrev={() => (viewMode === "month" ? changeMonth(-1) : changeWeek(-1))}
-              onNext={() => (viewMode === "month" ? changeMonth(1) : changeWeek(1))}
+              onPrev={() => (viewMode === "month" ? changeMonth(-1) : weekGridRef.current?.scrollByDays(-7))}
+              onNext={() => (viewMode === "month" ? changeMonth(1) : weekGridRef.current?.scrollByDays(7))}
               viewMode={viewMode}
               onSelectMonth={onSelectMonth}
               onSelectWeek={onSelectWeek}
@@ -1270,63 +1259,17 @@ export default function HomeScreen() {
               customHeaderTitle={<View />}
             />
           ) : (
-            <View
-              style={{ height: Math.max(0, (calFullHeight ?? 0) - MIN_TOP_INSET) }}
-            >
-              <View style={styles.weekDayLabelRow}>
-                <View style={{ width: TIMELINE_LEFT_INSET }} />
-                {weekDates.map((key, i) => {
-                  const d = new Date(visibleWeekStart);
-                  d.setDate(d.getDate() + i);
-                  const isToday = key === toDateKey(new Date());
-                  return (
-                    <View key={key} style={styles.weekDayLabelCell}>
-                      <Text style={styles.weekDayLabelDow}>
-                        {d.toLocaleDateString(undefined, { weekday: "short" })}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.weekDayLabelNum,
-                          isToday && styles.weekDayLabelNumToday,
-                        ]}
-                      >
-                        {d.getDate()}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-              <WeekAllDayStrip
-                weekStart={visibleWeekStart}
-                items={weekAllDayItems}
-                leftInset={TIMELINE_LEFT_INSET}
-                onPress={handleWeekItemPress}
-              />
-              <GestureDetector gesture={weekSwipe}>
-                <View
-                  style={{
-                    height: Math.max(
-                      0,
-                      (calFullHeight ?? 0) -
-                        MIN_TOP_INSET -
-                        DAY_LABEL_ROW_HEIGHT -
-                        ALL_DAY_ROW_HEIGHT,
-                    ),
-                  }}
-                >
-                  <Timeline
-                    date={weekDates}
-                    numberOfDays={7}
-                    events={weekTimelineEvents}
-                    timelineLeftInset={TIMELINE_LEFT_INSET}
-                    scrollToNow
-                    showNowIndicator
-                    format24h={false}
-                    onEventPress={handleWeekItemPress}
-                  />
-                </View>
-              </GestureDetector>
-            </View>
+            <WeekGrid
+              ref={weekGridRef}
+              rangeStart={weekGridRangeStart}
+              dayCount={WEEK_GRID_DAY_COUNT}
+              initialDayIndex={WEEK_GRID_LOOKBACK_DAYS}
+              eventsByDay={weekDayColumns}
+              allDayByDay={weekAllDayColumns}
+              height={Math.max(0, (calFullHeight ?? 0) - MIN_TOP_INSET)}
+              onEventPress={handleWeekItemPress}
+              onVisibleWeekChange={setVisibleWeekStart}
+            />
           )}
         </View>
 
@@ -1628,17 +1571,6 @@ const styles = StyleSheet.create({
   // when the Upcoming sheet is dragged all the way up, in both Month and
   // Week mode - see the note on MIN_TOP_INSET above.
   calendarHeaderRow: { height: MIN_TOP_INSET },
-  weekDayLabelRow: {
-    height: DAY_LABEL_ROW_HEIGHT,
-    flexDirection: "row",
-    alignItems: "center",
-    borderBottomWidth: 1,
-    borderBottomColor: colors.divider,
-  },
-  weekDayLabelCell: { flex: 1, alignItems: "center" },
-  weekDayLabelDow: { color: colors.textSecondary, fontSize: 11, fontWeight: "600" },
-  weekDayLabelNum: { color: colors.textPrimary, fontSize: 13, fontWeight: "700" },
-  weekDayLabelNumToday: { color: colors.primary },
   // Cards sheet: rises to cover the calendar as you drag up; pinned right
   // under it at rest. Reserves handleSpacer at the top so its content
   // doesn't render under the independently-floating handle.

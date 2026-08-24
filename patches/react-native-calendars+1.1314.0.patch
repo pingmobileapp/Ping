@@ -1,3 +1,16 @@
+diff --git a/node_modules/react-native-calendars/src/timeline/Packer.d.ts b/node_modules/react-native-calendars/src/timeline/Packer.d.ts
+index 7becbbc..0534fc8 100644
+--- a/node_modules/react-native-calendars/src/timeline/Packer.d.ts
++++ b/node_modules/react-native-calendars/src/timeline/Packer.d.ts
+@@ -15,7 +15,7 @@ interface UnavailableHoursOptions {
+     dayStart: number;
+     dayEnd: number;
+ }
+-export declare const HOUR_BLOCK_HEIGHT = 100;
++export declare const HOUR_BLOCK_HEIGHT = 60;
+ export declare function populateEvents(_events: Event[], populateOptions: PopulateOptions): PackedEvent[];
+ export declare function buildUnavailableHoursBlocks(unavailableHours: UnavailableHours[] | undefined, options: UnavailableHoursOptions): ({
+     top: number;
 diff --git a/node_modules/react-native-calendars/src/timeline/Packer.js b/node_modules/react-native-calendars/src/timeline/Packer.js
 index ba99d93..e369f56 100644
 --- a/node_modules/react-native-calendars/src/timeline/Packer.js
