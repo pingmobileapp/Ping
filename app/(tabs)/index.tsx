@@ -1266,6 +1266,7 @@ export default function HomeScreen() {
                   timelineLeftInset={TIMELINE_LEFT_INSET}
                   scrollToNow
                   showNowIndicator
+                  format24h={false}
                   onEventPress={handleWeekItemPress}
                 />
               </View>

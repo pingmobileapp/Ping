@@ -25,13 +25,19 @@ export default function CalendarHeaderRow({ title, onPrev, onNext, viewMode, onS
       <TouchableOpacity onPress={onPrev} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
         <Text style={styles.arrow}>‹</Text>
       </TouchableOpacity>
-      <Text style={styles.title} numberOfLines={1}>{title}</Text>
-      <View style={styles.toggle}>
-        <TouchableOpacity onPress={onSelectMonth} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
-          <Text style={[styles.toggleGlyph, viewMode === 'month' && styles.toggleGlyphActive]}>▦</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={onSelectWeek} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
+      {/* Each gap is its own flex:1 zone, so the toggle inside it centers
+          halfway between the arrow and the title regardless of title
+          width - not flush against the arrow, where it's easy to fat-
+          finger the arrow instead (the original complaint this fixes). */}
+      <View style={styles.gap}>
+        <TouchableOpacity onPress={onSelectWeek} hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}>
           <Text style={[styles.toggleGlyph, viewMode === 'week' && styles.toggleGlyphActive]}>▥</Text>
+        </TouchableOpacity>
+      </View>
+      <Text style={styles.title} numberOfLines={1}>{title}</Text>
+      <View style={styles.gap}>
+        <TouchableOpacity onPress={onSelectMonth} hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}>
+          <Text style={[styles.toggleGlyph, viewMode === 'month' && styles.toggleGlyphActive]}>▦</Text>
         </TouchableOpacity>
       </View>
       <TouchableOpacity onPress={onNext} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
@@ -45,13 +51,12 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: 8,
     height: '100%',
   },
   arrow: { color: colors.primary, fontSize: 28, fontWeight: '700', paddingHorizontal: 8 },
-  title: { flex: 1, textAlign: 'center', color: colors.textPrimary, fontSize: 16, fontWeight: '700' },
-  toggle: { flexDirection: 'row', gap: 10, marginHorizontal: 6 },
+  gap: { flex: 1, alignItems: 'center' },
+  title: { textAlign: 'center', color: colors.textPrimary, fontSize: 16, fontWeight: '700' },
   toggleGlyph: { fontSize: 18, color: colors.textSecondary },
   toggleGlyphActive: { color: colors.primary },
 });
