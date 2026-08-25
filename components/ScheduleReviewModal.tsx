@@ -236,6 +236,7 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
       return;
     }
 
+    Alert.alert('Added', `${selectedRows.length} event${selectedRows.length === 1 ? '' : 's'} added to your calendar.`);
     onSaved();
   };
 
@@ -390,7 +391,12 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
 
 const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(43,43,43,0.4)' },
-  card: { backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: '85%' },
+  // height, not maxHeight - a flex:1 child (the FlatList below) can't
+  // expand to fill space in an ancestor whose own height is just "however
+  // tall its content happens to be" (maxHeight only caps that, it doesn't
+  // give Yoga a real number to size flex:1 against), so the list collapsed
+  // to zero height and the event rows never rendered.
+  card: { height: '85%', backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: 'center', marginBottom: 12 },
   header: { fontSize: 20, fontWeight: '700', color: colors.textPrimary },
   subheader: { color: colors.textSecondary, fontSize: 13, marginTop: 4, marginBottom: 12, lineHeight: 18 },

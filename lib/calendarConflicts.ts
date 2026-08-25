@@ -13,10 +13,16 @@ export type CalendarConflict = {
 const CONFLICT_WINDOW_BEFORE_MINUTES = 30;
 const CONFLICT_WINDOW_AFTER_MINUTES = 90;
 // Bounds how far ahead the Upcoming list pulls in phone-calendar events -
-// unlike Ping events (a handful of family plans), a phone calendar can hold
-// hundreds of recurring entries indefinitely, so this keeps the list from
-// filling up with things a year out.
+// unlike Ping events (a handful of family plans), a synced external
+// calendar can hold hundreds of recurring entries indefinitely, so this
+// keeps the list from filling up with things a year out.
 const UPCOMING_WINDOW_DAYS = 60;
+// Ping's own dedicated calendar (see getOrCreatePingCalendarId) only ever
+// holds what the user explicitly added through Ping - personal items and
+// Scan a Schedule imports - so it can't balloon the way a synced calendar
+// can, and a season-long schedule (sports, school) routinely runs past the
+// 60-day window above. Queried separately with this much longer window.
+const PING_CALENDAR_WINDOW_DAYS = 365;
 
 export type ExternalEvent = {
   id: string;
@@ -83,19 +89,23 @@ export async function findConflicts(eventDate: Date): Promise<CalendarConflict[]
 // alongside Ping events without needing to leave the app.
 export async function getUpcomingExternalEvents(): Promise<ExternalEvent[]> {
   const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
-  const calendarIds = calendars.map((c) => c.id);
-  if (calendarIds.length === 0) return [];
-  const pingCalendarIds = new Set(
-    calendars.filter((c) => c.title === PING_CALENDAR_TITLE).map((c) => c.id)
-  );
+  if (calendars.length === 0) return [];
+  const pingCalendarIdList = calendars.filter((c) => c.title === PING_CALENDAR_TITLE).map((c) => c.id);
+  const otherCalendarIdList = calendars.filter((c) => c.title !== PING_CALENDAR_TITLE).map((c) => c.id);
+  const pingCalendarIds = new Set(pingCalendarIdList);
   const writableCalendarIds = new Set(
     calendars.filter((c) => c.allowsModifications).map((c) => c.id)
   );
 
   const windowStart = new Date();
   const windowEnd = new Date(windowStart.getTime() + UPCOMING_WINDOW_DAYS * 24 * 60 * 60000);
+  const pingWindowEnd = new Date(windowStart.getTime() + PING_CALENDAR_WINDOW_DAYS * 24 * 60 * 60000);
 
-  const events = await Calendar.getEventsAsync(calendarIds, windowStart, windowEnd);
+  const [otherEvents, pingEvents] = await Promise.all([
+    otherCalendarIdList.length ? Calendar.getEventsAsync(otherCalendarIdList, windowStart, windowEnd) : Promise.resolve([]),
+    pingCalendarIdList.length ? Calendar.getEventsAsync(pingCalendarIdList, windowStart, pingWindowEnd) : Promise.resolve([]),
+  ]);
+  const events = [...otherEvents, ...pingEvents];
 
   return events
     .filter((e) => e.title)
