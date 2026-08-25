@@ -42,6 +42,7 @@ type EventDetail = {
   status: 'sent' | 'draft';
   description: string | null;
   recurrence_id: string | null;
+  group_id: string | null;
 };
 
 type InviteeRow = {
@@ -93,6 +94,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
   const [event, setEvent] = useState<EventDetail | null>(null);
   const [hostProfile, setHostProfile] = useState<HostProfile | null>(null);
   const [coHosts, setCoHosts] = useState<CoHostRow[]>([]);
+  const [groupName, setGroupName] = useState<string | null>(null);
   const [invitees, setInvitees] = useState<InviteeRow[]>([]);
   const [items, setItems] = useState<ItemRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -188,6 +190,13 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
       setHostProfile((hostData as HostProfile) || null);
     } else {
       setHostProfile(null);
+    }
+
+    if (eventData?.group_id) {
+      const { data: groupData } = await supabase.from('groups').select('name').eq('id', eventData.group_id).maybeSingle();
+      setGroupName(groupData?.name || null);
+    } else {
+      setGroupName(null);
     }
   }, [eventId]);
 
@@ -476,6 +485,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
 
         <Text style={styles.title}>{event.title}</Text>
         {!!event.recurrence_id && <Text style={styles.meta}>↻ Part of a repeating series</Text>}
+        {!!groupName && <Text style={styles.meta}>Part of the {groupName} group</Text>}
         <Text style={styles.meta}>{dateLabel}</Text>
         <Text style={styles.meta}>{timeLabel}</Text>
         {!!event.location && <Text style={styles.meta}>{event.location}</Text>}
@@ -814,6 +824,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
             status: event.status,
             description: event.description,
             recurrence_id: event.recurrence_id,
+            group_id: event.group_id,
           } as EditableEvent
         }
         onClose={() => setEditModalVisible(false)}

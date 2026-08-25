@@ -56,6 +56,7 @@ export type EditableEvent = {
   status: 'sent' | 'draft';
   description: string | null;
   recurrence_id: string | null;
+  group_id: string | null;
 };
 
 type Props = {
@@ -105,6 +106,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   // your own contacts, so a selected shared group can't get silently
   // dropped from the invite.
   const [groupsLoading, setGroupsLoading] = useState(false);
+  const [taggedGroupName, setTaggedGroupName] = useState<string | null>(null);
   const [favoriteContactIds, setFavoriteContactIds] = useState<string[]>([]);
   const [showAllContacts, setShowAllContacts] = useState(false);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -203,9 +205,22 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       setShowAllContacts(false);
       setItems([]);
       setCoHosts([]);
+      setTaggedGroupName(null);
 
       if (session?.user?.id) {
         loadContactsAndGroups();
+      }
+
+      // Group tagging only happens at creation (see CreateEventModal) -
+      // this is a read-only note, not part of the editable Groups chip
+      // section below (which is still just for inviting more people).
+      if (event.group_id) {
+        supabase
+          .from('groups')
+          .select('name')
+          .eq('id', event.group_id)
+          .maybeSingle()
+          .then(({ data }) => setTaggedGroupName(data?.name || null));
       }
     }
   }, [visible, event?.id]);
@@ -1127,6 +1142,10 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
               // of a series" note. Saving/deleting still asks which
               // occurrences to apply to, below.
               <Text style={styles.recurrenceNote}>↻ Part of a repeating series</Text>
+            )}
+
+            {!!taggedGroupName && (
+              <Text style={styles.recurrenceNote}>Part of the {taggedGroupName} group</Text>
             )}
 
             <Text style={styles.label}>Location</Text>

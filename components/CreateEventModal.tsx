@@ -541,6 +541,11 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
           image_url: imageUrl,
           image_url_full: imageUrlFull,
           recurrence_id: recurrenceId,
+          // Only when exactly one group is selected - inviting from
+          // multiple groups at once stays ambiguous about which one (if
+          // any) "owns" the event, so it's left untagged rather than
+          // guessing.
+          group_id: selectedGroupIds.length === 1 ? selectedGroupIds[0] : null,
         },
       ])
       .select()

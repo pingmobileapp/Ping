@@ -16,6 +16,9 @@ export type PingEvent = {
   // CreateEventModal's batch-create) - every occurrence is otherwise a
   // fully independent row, this is purely a display hint.
   recurrence_id?: string | null;
+  // Set when this Ping was created via a single selected group in
+  // CreateEventModal - lets a group's own screen show its tagged events.
+  group_id?: string | null;
 };
 
 type RsvpStatus = 'pending' | 'accepted' | 'interested' | 'declined';

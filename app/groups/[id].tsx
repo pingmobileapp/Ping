@@ -19,6 +19,8 @@ import { useNotificationsContext } from '../../lib/NotificationsContext';
 import { findOrCreateContact } from '../../lib/phone';
 import { colors } from '../../lib/theme';
 import ImportContactsModal from '../../components/ImportContactsModal';
+import EventCard, { PingEvent } from '../../components/EventCard';
+import EventDetailModal from '../../components/EventDetailModal';
 
 type Contact = { id: string; name: string; phone: string | null; linked_user_id: string | null };
 
@@ -34,6 +36,9 @@ export default function GroupDetailScreen() {
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [memberNames, setMemberNames] = useState<string[]>([]);
   const [allContacts, setAllContacts] = useState<Contact[]>([]);
+  const [groupEvents, setGroupEvents] = useState<PingEvent[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [detailVisible, setDetailVisible] = useState(false);
   const [loading, setLoading] = useState(true);
   const [addingContact, setAddingContact] = useState(false);
   const [newContactName, setNewContactName] = useState('');
@@ -70,7 +75,26 @@ export default function GroupDetailScreen() {
       if (contactsError) console.error('Error fetching contacts:', contactsError);
       setAllContacts(contactsData || []);
     }
+
+    // Pings tagged to this group (see CreateEventModal) - RLS still only
+    // returns ones this viewer is actually host/co-host/invited to, so a
+    // group member who wasn't personally invited to a specific tagged
+    // Ping won't see it just from being in the group.
+    const { data: eventsData, error: eventsError } = await supabase
+      .from('events')
+      .select('id, title, location, event_date, end_date, is_all_day, status, image_url')
+      .eq('group_id', id)
+      .gte('event_date', new Date().toISOString())
+      .order('event_date', { ascending: true })
+      .limit(10);
+    if (eventsError) console.error('Error fetching group events:', eventsError);
+    setGroupEvents((eventsData as PingEvent[]) || []);
   }, [id, session?.user?.id]);
+
+  const openEvent = (event: PingEvent) => {
+    setSelectedEventId(event.id);
+    setDetailVisible(true);
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -227,6 +251,15 @@ export default function GroupDetailScreen() {
         </TouchableOpacity>
       </View>
 
+      {groupEvents.length > 0 && (
+        <View style={styles.eventsSection}>
+          <Text style={[styles.sectionLabel, styles.eventsSectionLabel]}>Upcoming</Text>
+          {groupEvents.map((event) => (
+            <EventCard key={event.id} event={event} onPress={openEvent} />
+          ))}
+        </View>
+      )}
+
       {isOwner ? (
         <View style={styles.sharedRow}>
           <View style={{ flex: 1 }}>
@@ -331,6 +364,12 @@ export default function GroupDetailScreen() {
         onClose={() => setImportVisible(false)}
         onImported={handleImported}
       />
+
+      <EventDetailModal
+        visible={detailVisible}
+        eventId={selectedEventId}
+        onClose={() => setDetailVisible(false)}
+      />
     </View>
     </KeyboardAvoidingView>
   );
@@ -376,6 +415,11 @@ const styles = StyleSheet.create({
   sharedTitle: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
   sharedSubtitle: { color: colors.textSecondary, fontSize: 12, marginTop: 2 },
   sectionLabel: { color: colors.textSecondary, fontSize: 13, marginTop: 16, marginBottom: 8, textTransform: 'uppercase' },
+  // EventCard has its own marginHorizontal:20 (meant for an edge-to-edge
+  // list) - this screen's container already has paddingHorizontal:20, so
+  // the section itself cancels that out to avoid a doubled 40px inset.
+  eventsSection: { marginHorizontal: -20 },
+  eventsSectionLabel: { marginHorizontal: 20 },
   importRow: {
     backgroundColor: colors.surfaceAlt,
     borderRadius: 10,
