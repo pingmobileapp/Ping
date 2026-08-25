@@ -204,6 +204,8 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
     }
 
     const failedKeys: string[] = [];
+    let lastError: unknown = null;
+    let addedCount = 0;
     for (const row of selectedRows) {
       try {
         const allDay = !row.startTime;
@@ -218,8 +220,10 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
           if (end.getTime() <= start.getTime()) end = new Date(start.getTime() + 60 * 60000);
         }
         await createPersonalCalendarEvent(row.title, start, end, allDay);
+        addedCount += 1;
       } catch (err) {
-        console.error('Error creating event from schedule scan:', err);
+        console.error('Error creating event from schedule scan:', row.title, err);
+        lastError = err;
         failedKeys.push(row.key);
       }
     }
@@ -228,9 +232,10 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
 
     if (failedKeys.length > 0) {
       const failedTitles = rows.filter((r) => failedKeys.includes(r.key)).map((r) => r.title);
+      const reason = lastError instanceof Error ? lastError.message : String(lastError);
       Alert.alert(
         'Some events could not be added',
-        `Everything else was added. These failed, so they're still here to try again: ${failedTitles.join(', ')}`
+        `${addedCount} added. These failed (${reason}), so they're still here to try again: ${failedTitles.join(', ')}`
       );
       setRows((prev) => prev.filter((r) => failedKeys.includes(r.key)));
       return;

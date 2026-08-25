@@ -120,15 +120,29 @@ export async function getUpcomingExternalEvents(): Promise<ExternalEvent[]> {
     }));
 }
 
+// Cached once resolved so a batch of creates (Scan a Schedule can add
+// several at once) reuses the same id instead of re-querying/re-deriving
+// it before every single event - besides the redundant work, re-running
+// the "does a Ping calendar already exist" lookup on every call is exactly
+// the kind of repeated call that's fragile against a calendar list that
+// hasn't settled yet right after creating it (see the batch-loss bug this
+// was added for).
+let cachedPingCalendarId: string | null = null;
+
 // Personal items get their own dedicated device calendar (created once,
 // lazily) rather than landing in whatever the user's default calendar is -
 // that's what makes an event "Ping's to edit" unambiguous later (see
 // isPersonal above), and it keeps these out of the user's own iCloud/Gmail
 // calendar clutter too.
 async function getOrCreatePingCalendarId(): Promise<string> {
+  if (cachedPingCalendarId) return cachedPingCalendarId;
+
   const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
   const existing = calendars.find((c) => c.title === PING_CALENDAR_TITLE && c.allowsModifications);
-  if (existing) return existing.id;
+  if (existing) {
+    cachedPingCalendarId = existing.id;
+    return existing.id;
+  }
 
   // The OS's notion of "default calendar" is very often a synced work/
   // school/Google account, and iOS refuses to create a new calendar under
@@ -148,7 +162,7 @@ async function getOrCreatePingCalendarId(): Promise<string> {
 
   for (const source of sources) {
     try {
-      return await Calendar.createCalendarAsync({
+      const id = await Calendar.createCalendarAsync({
         title: PING_CALENDAR_TITLE,
         color: '#5DADE2',
         entityType: Calendar.EntityTypes.EVENT,
@@ -158,6 +172,8 @@ async function getOrCreatePingCalendarId(): Promise<string> {
         ownerAccount: source.name ?? 'personal',
         accessLevel: Calendar.CalendarAccessLevel.OWNER,
       });
+      cachedPingCalendarId = id;
+      return id;
     } catch (err) {
       console.error('Could not create Ping calendar under source', source, err);
     }
@@ -166,7 +182,10 @@ async function getOrCreatePingCalendarId(): Promise<string> {
   // Every source refused a new calendar - fall back to writing straight
   // into any calendar that already accepts new events, so the save itself
   // still succeeds even though this particular item won't be tagged as
-  // Ping's own (isPersonal) until a Ping calendar can be created.
+  // Ping's own (isPersonal) until a Ping calendar can be created. Not
+  // cached - a real Ping calendar may become creatable later (e.g. after
+  // the transient failure that led here clears), and this fallback isn't
+  // guaranteed stable enough to keep reusing blindly.
   const fallback = calendars.find((c) => c.allowsModifications);
   if (fallback) return fallback.id;
   throw new Error('No writable calendar available on this device.');
