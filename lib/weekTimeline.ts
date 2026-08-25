@@ -7,7 +7,58 @@ export type AllDayItem = { id: string; title: string; dayKey: string };
 // startMinutes/endMinutes are minutes since that day's midnight - directly
 // usable as top = (startMinutes/60) * HOUR_BLOCK_HEIGHT, matching the same
 // math react-native-calendars' own Packer.js uses.
-export type DayColumnEvent = { id: string; title: string; startMinutes: number; endMinutes: number; color?: string };
+// stackIndex/stackSize place same-time events as a cascade of offset cards
+// (see packDayEvents) rather than fully overlapping - stackIndex is this
+// event's position in that cascade, stackSize how many cards are in it.
+export type DayColumnEvent = {
+  id: string;
+  title: string;
+  startMinutes: number;
+  endMinutes: number;
+  color?: string;
+  stackIndex: number;
+  stackSize: number;
+};
+
+type RawDayEvent = Omit<DayColumnEvent, 'stackIndex' | 'stackSize'>;
+
+const eventsOverlap = (a: RawDayEvent, b: RawDayEvent) => a.endMinutes > b.startMinutes && a.startMinutes < b.endMinutes;
+
+// Same grouping approach as react-native-calendars' own Packer.js
+// (populateEvents): sweep events in start order, placing each into the
+// first "lane" whose last event it doesn't overlap, starting a fresh group
+// once a gap opens up with nothing still running. Ported rather than
+// reused directly because Packer operates on absolute Date start/end and
+// computes its own top/height in pixels - this only needs the lane
+// assignment, against the startMinutes/endMinutes WeekGrid already works
+// in, so a card cascade (see WeekGrid's rendering) can be built from it.
+export function packDayEvents(dayEvents: RawDayEvent[]): DayColumnEvent[] {
+  const sorted = [...dayEvents].sort((a, b) => a.startMinutes - b.startMinutes || a.endMinutes - b.endMinutes);
+  const packed: DayColumnEvent[] = [];
+  let lanes: RawDayEvent[][] = [];
+  let groupEnd: number | null = null;
+
+  const flush = () => {
+    lanes.forEach((lane, laneIndex) => {
+      lane.forEach((ev) => packed.push({ ...ev, stackIndex: laneIndex, stackSize: lanes.length }));
+    });
+  };
+
+  for (const ev of sorted) {
+    if (groupEnd !== null && ev.startMinutes >= groupEnd) {
+      flush();
+      lanes = [];
+      groupEnd = null;
+    }
+    const lane = lanes.find((l) => !eventsOverlap(l[l.length - 1], ev));
+    if (lane) lane.push(ev);
+    else lanes.push([ev]);
+    groupEnd = groupEnd === null ? ev.endMinutes : Math.max(groupEnd, ev.endMinutes);
+  }
+  if (lanes.length > 0) flush();
+
+  return packed;
+}
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -49,14 +100,14 @@ export function buildDayColumns(
   pings: PingEvent[],
   external: ExternalEvent[]
 ): Record<string, DayColumnEvent[]> {
-  const columns: Record<string, DayColumnEvent[]> = {};
+  const rawColumns: Record<string, RawDayEvent[]> = {};
   const pingTimedEntries: { title: string; start: Date }[] = [];
 
   const pushSegment = (seg: { start: Date; end: Date }, id: string, title: string, color: string) => {
     const dayKey = toDayKey(seg.start);
     const startMinutes = seg.start.getHours() * 60 + seg.start.getMinutes();
     const endMinutes = startMinutes + (seg.end.getTime() - seg.start.getTime()) / 60000;
-    (columns[dayKey] ||= []).push({ id, title, startMinutes, endMinutes, color });
+    (rawColumns[dayKey] ||= []).push({ id, title, startMinutes, endMinutes, color });
   };
 
   for (const p of pings) {
@@ -80,6 +131,10 @@ export function buildDayColumns(
     }
   }
 
+  const columns: Record<string, DayColumnEvent[]> = {};
+  for (const dayKey of Object.keys(rawColumns)) {
+    columns[dayKey] = packDayEvents(rawColumns[dayKey]);
+  }
   return columns;
 }
 

@@ -16,6 +16,9 @@ const TIMELINE_LEFT_INSET = 50;
 const DAY_LABEL_ROW_HEIGHT = 36;
 const ALL_DAY_ROW_HEIGHT = 32;
 const GRID_HEIGHT = 24 * HOUR_BLOCK_HEIGHT;
+// How far each card in a same-time cascade is nudged right of the one
+// behind it - see the stackIndex/stackSize comment where it's used below.
+const STACK_OFFSET = 10;
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const toDayKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -234,24 +237,36 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                         <View style={styles.nowDot} />
                       </View>
                     )}
-                    {dayEvents.map((ev, i) => (
-                      <TouchableOpacity
-                        key={`${ev.id}-${i}`}
-                        style={[
-                          styles.eventBlock,
-                          {
-                            top: (ev.startMinutes / 60) * HOUR_BLOCK_HEIGHT,
-                            height: Math.max(18, ((ev.endMinutes - ev.startMinutes) / 60) * HOUR_BLOCK_HEIGHT),
-                            backgroundColor: ev.color || colors.primary,
-                          },
-                        ]}
-                        onPress={() => onEventPress(ev.id)}
-                      >
-                        <Text style={styles.eventBlockText} numberOfLines={2}>
-                          {ev.title}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
+                    {dayEvents.map((ev, i) => {
+                      // Same-time events cascade as offset cards rather than
+                      // fully overlapping - each later card in the stack is
+                      // nudged right so the ones behind it still show their
+                      // edge (where they start/end), and sits on top via
+                      // render order (later siblings win touch priority in
+                      // RN for overlapping absolutely-positioned views).
+                      const offset = ev.stackIndex * STACK_OFFSET;
+                      return (
+                        <TouchableOpacity
+                          key={`${ev.id}-${i}`}
+                          style={[
+                            styles.eventBlock,
+                            {
+                              top: (ev.startMinutes / 60) * HOUR_BLOCK_HEIGHT,
+                              height: Math.max(18, ((ev.endMinutes - ev.startMinutes) / 60) * HOUR_BLOCK_HEIGHT),
+                              left: 2 + offset,
+                              right: Math.max(2, 2 + (ev.stackSize - 1 - ev.stackIndex) * STACK_OFFSET),
+                              backgroundColor: ev.color || colors.primary,
+                              zIndex: ev.stackIndex,
+                            },
+                          ]}
+                          onPress={() => onEventPress(ev.id)}
+                        >
+                          <Text style={styles.eventBlockText} numberOfLines={2}>
+                            {ev.title}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
                 );
               })}
@@ -280,6 +295,21 @@ const styles = StyleSheet.create({
   hourLine: { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: colors.divider },
   nowLine: { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: colors.danger, flexDirection: 'row', alignItems: 'center' },
   nowDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.danger, marginLeft: -4 },
-  eventBlock: { position: 'absolute', left: 2, right: 2, borderRadius: 6, padding: 4, overflow: 'hidden' },
+  eventBlock: {
+    position: 'absolute',
+    borderRadius: 6,
+    padding: 4,
+    overflow: 'hidden',
+    // A visible seam between cascaded cards - without it, two same-color
+    // cards butted up against each other read as one oddly-shaped block
+    // rather than two separate ones.
+    borderWidth: 1,
+    borderColor: colors.background,
+    shadowColor: colors.textPrimary,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.25,
+    shadowRadius: 2,
+    elevation: 2,
+  },
   eventBlockText: { color: colors.textOnPrimary, fontSize: 11, fontWeight: '600' },
 });
