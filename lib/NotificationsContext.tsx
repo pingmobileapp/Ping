@@ -16,16 +16,17 @@ const QUICK_RSVP_ACTIONS: Record<string, Exclude<RsvpStatus, 'pending'>> = {
 // Interested/Decline quick-actions instead of opening the InvitePopup -
 // looks up the same data the popup would have already had loaded.
 async function submitQuickRsvp(eventId: string, userId: string, status: Exclude<RsvpStatus, 'pending'>) {
-  const [{ data: eventRow }, { data: inviteeRow }, { data: profile }] = await Promise.all([
+  const [{ data: eventRow }, { data: inviteeRow }, { data: profile }, { data: coHostRows }] = await Promise.all([
     supabase.from('events').select('title, host_id').eq('id', eventId).maybeSingle(),
     supabase.from('invitees').select('id').eq('event_id', eventId).eq('user_id', userId).maybeSingle(),
     supabase.from('profiles').select('full_name, email').eq('id', userId).maybeSingle(),
+    supabase.from('event_hosts').select('user_id').eq('event_id', eventId),
   ]);
   if (!eventRow) return;
 
   await submitRsvp({
     eventId,
-    hostId: eventRow.host_id,
+    hostIds: [eventRow.host_id, ...(coHostRows || []).map((r) => r.user_id)].filter((id): id is string => !!id),
     eventTitle: eventRow.title,
     userId,
     myInviteeId: inviteeRow?.id || null,

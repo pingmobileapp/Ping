@@ -51,6 +51,7 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
   const [loading, setLoading] = useState(false);
   const [event, setEvent] = useState<PopupEvent | null>(null);
   const [hostName, setHostName] = useState('Someone');
+  const [coHostIds, setCoHostIds] = useState<string[]>([]);
   const [myInviteeId, setMyInviteeId] = useState<string | null>(null);
   const [selected, setSelected] = useState<RsvpChoice | null>(null);
   const [responding, setResponding] = useState(false);
@@ -79,19 +80,21 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
     setConflictState({ kind: 'loading' });
 
     (async () => {
-      const [{ data: eventData, error: eventError }, { data: inviteeData, error: inviteeError }] = await Promise.all([
-        supabase
-          .from('events')
-          .select('id, title, location, event_date, end_date, is_all_day, host_id, image_url')
-          .eq('id', eventId)
-          .single(),
-        supabase
-          .from('invitees')
-          .select('id, rsvp_status')
-          .eq('event_id', eventId)
-          .eq('user_id', session.user.id)
-          .maybeSingle(),
-      ]);
+      const [{ data: eventData, error: eventError }, { data: inviteeData, error: inviteeError }, { data: coHostData }] =
+        await Promise.all([
+          supabase
+            .from('events')
+            .select('id, title, location, event_date, end_date, is_all_day, host_id, image_url')
+            .eq('id', eventId)
+            .single(),
+          supabase
+            .from('invitees')
+            .select('id, rsvp_status')
+            .eq('event_id', eventId)
+            .eq('user_id', session.user.id)
+            .maybeSingle(),
+          supabase.from('event_hosts').select('user_id').eq('event_id', eventId),
+        ]);
 
       if (eventError) console.error('Error fetching event for popup:', eventError);
       if (inviteeError) console.error('Error fetching invitee for popup:', inviteeError);
@@ -99,6 +102,7 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
 
       setEvent((eventData as PopupEvent) || null);
       setMyInviteeId(inviteeData?.id || null);
+      setCoHostIds((coHostData || []).map((r) => r.user_id));
 
       if (eventData?.host_id) {
         const { data: hostProfile } = await supabase
@@ -154,7 +158,7 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
 
     await submitRsvp({
       eventId: event.id,
-      hostId: event.host_id,
+      hostIds: [event.host_id, ...coHostIds].filter((id): id is string => !!id),
       eventTitle: event.title,
       userId: session.user.id,
       myInviteeId,

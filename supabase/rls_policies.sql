@@ -42,6 +42,13 @@
 -- Helper functions (SECURITY DEFINER - see note above)
 -- ============================================================
 
+-- A co-host (event_hosts) has identical full permissions to the primary
+-- host (host_id) everywhere this function gates - every other table's
+-- policy below already routes through this function rather than
+-- inlining host_id, so this one change is what grants co-hosts full
+-- permissions on invitees/items/item_claims/messages with no other
+-- policy edits needed. events' own policies are the one exception - see
+-- the comment above them for why.
 create or replace function public.is_event_host(p_event_id uuid, p_user_id uuid)
 returns boolean
 language sql
@@ -52,6 +59,9 @@ as $$
   select exists (
     select 1 from public.events
     where events.id = p_event_id and events.host_id = p_user_id
+  ) or exists (
+    select 1 from public.event_hosts
+    where event_hosts.event_id = p_event_id and event_hosts.user_id = p_user_id
   );
 $$;
 
@@ -150,20 +160,26 @@ create policy profiles_update_own
 -- ============================================================
 alter table public.events enable row level security;
 
--- Deliberately NOT using is_event_member() here. is_event_host() is
--- SECURITY DEFINER and queries events itself - calling it from events'
--- own SELECT policy makes it self-referencing, and that self-query does
--- not reliably see the row's own INSERT within the same statement. That
--- broke `insert ... returning` (PostgREST's default) with a spurious
--- "new row violates row-level security policy" even when host_id
--- correctly matched auth.uid(). host_id is already a column on the row
--- being evaluated, so the host check doesn't need a subquery at all -
--- only the invitee check genuinely needs to look at a different table.
+-- Deliberately NOT using is_event_member()/is_event_host() here.
+-- is_event_host() is SECURITY DEFINER and queries events itself -
+-- calling it from events' own SELECT policy makes it self-referencing,
+-- and that self-query does not reliably see the row's own INSERT within
+-- the same statement. That broke `insert ... returning` (PostgREST's
+-- default) with a spurious "new row violates row-level security policy"
+-- even when host_id correctly matched auth.uid(). host_id is already a
+-- column on the row being evaluated, so the host check doesn't need a
+-- subquery at all. The co-host check below queries event_hosts directly
+-- (not through is_event_host()) for the same reason - only the invitee
+-- check genuinely needs to look at a different table.
 drop policy if exists events_select_host_or_invitee on public.events;
 create policy events_select_host_or_invitee
   on public.events for select
   to authenticated
-  using (host_id = auth.uid() or public.is_event_invitee(id, auth.uid()));
+  using (
+    host_id = auth.uid()
+    or exists (select 1 from public.event_hosts where event_hosts.event_id = events.id and event_hosts.user_id = auth.uid())
+    or public.is_event_invitee(id, auth.uid())
+  );
 
 drop policy if exists events_insert_own on public.events;
 create policy events_insert_own
@@ -175,14 +191,53 @@ drop policy if exists events_update_own on public.events;
 create policy events_update_own
   on public.events for update
   to authenticated
-  using (host_id = auth.uid())
-  with check (host_id = auth.uid());
+  using (
+    host_id = auth.uid()
+    or exists (select 1 from public.event_hosts where event_hosts.event_id = events.id and event_hosts.user_id = auth.uid())
+  )
+  with check (
+    host_id = auth.uid()
+    or exists (select 1 from public.event_hosts where event_hosts.event_id = events.id and event_hosts.user_id = auth.uid())
+  );
 
 drop policy if exists events_delete_own on public.events;
 create policy events_delete_own
   on public.events for delete
   to authenticated
-  using (host_id = auth.uid());
+  using (
+    host_id = auth.uid()
+    or exists (select 1 from public.event_hosts where event_hosts.event_id = events.id and event_hosts.user_id = auth.uid())
+  );
+
+-- ============================================================
+-- event_hosts (co-hosts - full permissions, same as host_id, added
+-- directly by an existing host/co-host with no accept step - see
+-- supabase/event_hosts.sql for the table definition)
+-- ============================================================
+alter table public.event_hosts enable row level security;
+
+drop policy if exists event_hosts_select_member on public.event_hosts;
+create policy event_hosts_select_member
+  on public.event_hosts for select
+  to authenticated
+  using (public.is_event_member(event_id, auth.uid()));
+
+-- Any existing host or co-host can add another - matches "full
+-- permissions" (a co-host isn't second-class, they can grow the host
+-- list too).
+drop policy if exists event_hosts_insert_host on public.event_hosts;
+create policy event_hosts_insert_host
+  on public.event_hosts for insert
+  to authenticated
+  with check (public.is_event_host(event_id, auth.uid()));
+
+-- A host/co-host can remove another co-host, and a co-host can remove
+-- themselves (leave).
+drop policy if exists event_hosts_delete_host_or_self on public.event_hosts;
+create policy event_hosts_delete_host_or_self
+  on public.event_hosts for delete
+  to authenticated
+  using (public.is_event_host(event_id, auth.uid()) or user_id = auth.uid());
 
 -- ============================================================
 -- invitees

@@ -26,6 +26,7 @@ import { uploadEventImage, uploadEventImageFull } from '../lib/imageUpload';
 import { pickEventImage } from '../lib/imagePicker';
 import { colors, cardFrameGradient, calendarTheme, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
 import { isMultiDayEvent } from '../lib/eventDate';
+import { displayName } from '../lib/displayName';
 import { notify } from '../lib/notify';
 import ImportContactsModal from './ImportContactsModal';
 import ImageCropModal from './ImageCropModal';
@@ -119,6 +120,11 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   const [queueContacts, setQueueContacts] = useState<QueueContact[]>([]);
   const [queueVisible, setQueueVisible] = useState(false);
 
+  // Written straight to the database as they're added/removed, same as
+  // items below - the event already exists, so there's no "queue until
+  // save" step needed the way CreateEventModal has to.
+  const [coHosts, setCoHosts] = useState<{ userId: string; name: string }[]>([]);
+
   const [items, setItems] = useState<{ id: string; name: string; qty: string; allowCustom: boolean }[]>([]);
   const [newItemName, setNewItemName] = useState('');
   const [newItemQty, setNewItemQty] = useState('1');
@@ -196,6 +202,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       setExcludedGroupMemberIds([]);
       setShowAllContacts(false);
       setItems([]);
+      setCoHosts([]);
 
       if (session?.user?.id) {
         loadContactsAndGroups();
@@ -294,6 +301,15 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
           allowCustom: it.allow_custom,
         }))
       );
+
+      const { data: coHostData, error: coHostError } = await supabase
+        .from('event_hosts')
+        .select('user_id, profiles(full_name, email)')
+        .eq('event_id', event.id);
+      if (coHostError) console.error('Error loading co-hosts:', coHostError);
+      setCoHosts(
+        ((coHostData as any[]) || []).map((r) => ({ userId: r.user_id, name: displayName(r.profiles) }))
+      );
     }
 
     setGroupsLoading(false);
@@ -347,6 +363,62 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       return;
     }
     setItems((prev) => prev.filter((it) => it.id !== itemId));
+  };
+
+  // Grants full host permissions immediately, no accept step - re-checks
+  // the contact's account link first (same reasoning as re-checking
+  // before inviting a regular guest), since a co-host has no SMS-fallback
+  // path if the link is stale.
+  const addCoHost = async (contact: Contact) => {
+    if (!event) return;
+    const healed = await healContactLink(supabase, contact);
+    if (!healed?.linked_user_id) {
+      Alert.alert('Not on Ping yet', `${contact.name} needs a Ping account before they can be a co-host.`);
+      return;
+    }
+
+    const { error: hostError } = await supabase
+      .from('event_hosts')
+      .insert([{ event_id: event.id, user_id: healed.linked_user_id }]);
+    if (hostError) {
+      console.error('Error adding co-host:', hostError);
+      Alert.alert('Error', 'Could not add that co-host.');
+      return;
+    }
+
+    // A co-host who wasn't already invited needs an invitee row too, same
+    // as the primary host's - homepage visibility depends on having one.
+    if (!existingInviteeContactIds.has(contact.id)) {
+      const { error: inviteError } = await supabase.from('invitees').insert([
+        {
+          event_id: event.id,
+          contact_id: contact.id,
+          user_id: healed.linked_user_id,
+          rsvp_status: 'accepted',
+          invited_via: 'app',
+          responded_at: new Date().toISOString(),
+        },
+      ]);
+      if (inviteError) console.error('Error creating co-host invitee row:', inviteError);
+      else setExistingInviteeContactIds((prev) => new Set(prev).add(contact.id));
+    }
+
+    setCoHosts((prev) => [...prev, { userId: healed.linked_user_id!, name: contact.name }]);
+  };
+
+  const removeCoHost = async (userId: string) => {
+    if (!event) return;
+    const { error } = await supabase
+      .from('event_hosts')
+      .delete()
+      .eq('event_id', event.id)
+      .eq('user_id', userId);
+    if (error) {
+      console.error('Error removing co-host:', error);
+      Alert.alert('Error', 'Could not remove that co-host.');
+      return;
+    }
+    setCoHosts((prev) => prev.filter((c) => c.userId !== userId));
   };
 
   // Approximation used only for the Save button's label - handleSave
@@ -846,6 +918,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
           await supabase.from('items').delete().in('event_id', eventIds);
           await supabase.from('messages').delete().in('event_id', eventIds);
           await supabase.from('invitees').delete().in('event_id', eventIds);
+          await supabase.from('event_hosts').delete().in('event_id', eventIds);
 
           const { error } = await supabase.from('events').delete().in('id', eventIds);
           if (error) throw error;
@@ -1186,6 +1259,33 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
                       <Text style={styles.addContactButtonText}>Add</Text>
                     </TouchableOpacity>
                   </View>
+                )}
+
+                {(coHosts.length > 0 || contacts.some((c) => c.linked_user_id)) && (
+                  <>
+                    <Text style={styles.label}>Co-hosts</Text>
+                    <Text style={styles.helperText}>
+                      Full permissions to edit, delete, invite, and manage items - same as you.
+                    </Text>
+                    {coHosts.length > 0 && (
+                      <View style={styles.chipRow}>
+                        {coHosts.map((c) => (
+                          <TouchableOpacity key={c.userId} style={[styles.chip, styles.chipSelected]} onPress={() => removeCoHost(c.userId)}>
+                            <Text style={styles.chipTextSelected}>{c.name} ✕</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
+                    <View style={styles.chipRow}>
+                      {contacts
+                        .filter((c) => c.linked_user_id && !coHosts.some((h) => h.userId === c.linked_user_id))
+                        .map((c) => (
+                          <TouchableOpacity key={c.id} style={styles.chip} onPress={() => addCoHost(c)}>
+                            <Text style={styles.chipText}>+ {c.name}</Text>
+                          </TouchableOpacity>
+                        ))}
+                    </View>
+                  </>
                 )}
 
                 <Text style={styles.label}>What to bring</Text>

@@ -55,6 +55,7 @@ type InviteeRow = {
 };
 
 type HostProfile = { full_name: string | null; email: string | null; avatar_url: string | null };
+type CoHostRow = { user_id: string; profiles: HostProfile | null };
 
 type ClaimRow = { id: string; invitee_id: string; quantity: number; note: string | null };
 
@@ -91,6 +92,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
 
   const [event, setEvent] = useState<EventDetail | null>(null);
   const [hostProfile, setHostProfile] = useState<HostProfile | null>(null);
+  const [coHosts, setCoHosts] = useState<CoHostRow[]>([]);
   const [invitees, setInvitees] = useState<InviteeRow[]>([]);
   const [items, setItems] = useState<ItemRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,7 +108,11 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
   const [smsQueueVisible, setSmsQueueVisible] = useState(false);
 
   const myInvitee = invitees.find((inv) => inv.user_id === session?.user?.id) || null;
-  const isHost = event?.host_id === session?.user?.id;
+  const coHostIds = coHosts.map((c) => c.user_id);
+  const isHost = event?.host_id === session?.user?.id || coHostIds.includes(session?.user?.id || '');
+  // Every host - primary or co-host - for notifications that should reach
+  // whoever's actually responsible for the event, not just event.host_id.
+  const allHostIds = [event?.host_id, ...coHostIds].filter((id): id is string => !!id);
   const unclaimedCount = items.filter(
     (item) => item.item_claims.reduce((sum, c) => sum + c.quantity, 0) < item.quantity_needed
   ).length;
@@ -144,26 +150,33 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
   };
 
   const fetchData = useCallback(async () => {
-    const [{ data: eventData, error: eventError }, { data: inviteeData, error: inviteeError }, { data: itemData, error: itemError }] =
-      await Promise.all([
-        supabase.from('events').select('*').eq('id', eventId).single(),
-        supabase
-          .from('invitees')
-          .select('id, user_id, rsvp_status, reminder_minutes_before, invited_via, profiles(full_name, email, avatar_url), contacts(name, phone)')
-          .eq('event_id', eventId),
-        supabase
-          .from('items')
-          .select('id, name, quantity_needed, allow_custom, item_claims(id, invitee_id, quantity, note)')
-          .eq('event_id', eventId),
-      ]);
+    const [
+      { data: eventData, error: eventError },
+      { data: inviteeData, error: inviteeError },
+      { data: itemData, error: itemError },
+      { data: coHostData, error: coHostError },
+    ] = await Promise.all([
+      supabase.from('events').select('*').eq('id', eventId).single(),
+      supabase
+        .from('invitees')
+        .select('id, user_id, rsvp_status, reminder_minutes_before, invited_via, profiles(full_name, email, avatar_url), contacts(name, phone)')
+        .eq('event_id', eventId),
+      supabase
+        .from('items')
+        .select('id, name, quantity_needed, allow_custom, item_claims(id, invitee_id, quantity, note)')
+        .eq('event_id', eventId),
+      supabase.from('event_hosts').select('user_id, profiles(full_name, email, avatar_url)').eq('event_id', eventId),
+    ]);
 
     if (eventError) console.error('Error fetching event:', eventError);
     if (inviteeError) console.error('Error fetching invitees:', inviteeError);
     if (itemError) console.error('Error fetching items:', itemError);
+    if (coHostError) console.error('Error fetching co-hosts:', coHostError);
 
     setEvent(eventData as EventDetail);
     setInvitees((inviteeData as any[]) || []);
     setItems((itemData as any[]) || []);
+    setCoHosts((coHostData as any[]) || []);
 
     if (eventData?.host_id) {
       const { data: hostData, error: hostError } = await supabase
@@ -213,7 +226,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
 
     await submitRsvp({
       eventId,
-      hostId: event.host_id,
+      hostIds: allHostIds,
       eventTitle: event.title,
       userId: session.user.id,
       myInviteeId: myInvitee?.id || null,
@@ -379,8 +392,8 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
       if (error) console.error('Error creating claim:', error);
     }
 
-    if (nextQty > prevQty && !isHost && event?.host_id) {
-      await notify([event.host_id], 'Item claimed', `${myName()} claimed "${item.name}" for ${event.title}`, {
+    if (nextQty > prevQty && !isHost && event && allHostIds.length > 0) {
+      await notify(allHostIds, 'Item claimed', `${myName()} claimed "${item.name}" for ${event.title}`, {
         eventId,
         type: 'item_claimed',
       });
@@ -472,7 +485,14 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
           <View style={styles.hostRow}>
             <Avatar url={hostProfile.avatar_url} name={displayName(hostProfile)} size={22} />
             <Text style={styles.hostText}>
-              Added by {isHost ? 'you' : displayName(hostProfile)}
+              {coHosts.length > 0
+                ? `Hosted by ${[
+                    event.host_id === session?.user?.id ? 'you' : displayName(hostProfile),
+                    ...coHosts.map((c) =>
+                      c.user_id === session?.user?.id ? 'you' : displayName(c.profiles)
+                    ),
+                  ].join(', ')}`
+                : `Added by ${isHost ? 'you' : displayName(hostProfile)}`}
             </Text>
           </View>
         )}
@@ -586,6 +606,9 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
                 <View style={styles.guestIdentity}>
                   <Avatar url={inv.profiles?.avatar_url} name={inviteeName(inv)} size={28} />
                   <Text style={styles.guestName}>{inviteeName(inv)}</Text>
+                  {!!inv.user_id && coHostIds.includes(inv.user_id) && (
+                    <Text style={styles.coHostBadge}>Co-host</Text>
+                  )}
                 </View>
                 <View style={styles.guestStatusRow}>
                   <Text style={[styles.guestStatus, styles[`status_${inv.rsvp_status}` as const]]}>
@@ -901,6 +924,17 @@ const styles = StyleSheet.create({
   },
   guestIdentity: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
   guestName: { color: colors.textPrimary, fontSize: 15, flexShrink: 1 },
+  coHostBadge: {
+    color: colors.primary,
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    borderWidth: 1,
+    borderColor: colors.primary,
+    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
   guestStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   guestStatus: { fontSize: 13, fontWeight: '600', textTransform: 'capitalize' },
   guestStatusEditIcon: { fontSize: 12, color: colors.textMuted },

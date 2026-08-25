@@ -94,6 +94,10 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
   const [showAllContacts, setShowAllContacts] = useState(false);
   const [groups, setGroups] = useState<Group[]>([]);
   const [selectedContactIds, setSelectedContactIds] = useState<string[]>([]);
+  // Co-hosts get full host permissions, added directly with no accept
+  // step - restricted to contacts already linked to a real Ping account,
+  // since they need to actually be able to log in and use them.
+  const [selectedCoHostIds, setSelectedCoHostIds] = useState<string[]>([]);
   const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
   const [excludedGroupMemberIds, setExcludedGroupMemberIds] = useState<string[]>([]);
   const [addingContact, setAddingContact] = useState(false);
@@ -279,6 +283,10 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
     setSelectedGroupIds((prev) => (prev.includes(id) ? prev.filter((g) => g !== id) : [...prev, id]));
   };
 
+  const toggleCoHost = (id: string) => {
+    setSelectedCoHostIds((prev) => (prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]));
+  };
+
   const toggleGroupMember = (contactId: string) => {
     setExcludedGroupMemberIds((prev) =>
       prev.includes(contactId) ? prev.filter((id) => id !== contactId) : [...prev, contactId]
@@ -372,6 +380,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
     }
     setRecurrence(null);
     setSelectedContactIds([]);
+    setSelectedCoHostIds([]);
     setSelectedGroupIds([]);
     setExcludedGroupMemberIds([]);
     setIsPublic(false);
@@ -447,7 +456,13 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
         .map((m) => m.contactId)
         .filter((cid) => !excludedGroupMemberIds.includes(cid))
     );
-    const allIds = Array.from(new Set([...selectedContactIds, ...fromGroups]));
+    // Co-hosts already get their own accepted invitee row (see
+    // createOccurrence) - excluded here so picking someone as both a
+    // co-host and a regular invitee can't create two invitee rows for
+    // the same person on the same event.
+    const allIds = Array.from(
+      new Set([...selectedContactIds, ...fromGroups].filter((cid) => !selectedCoHostIds.includes(cid)))
+    );
 
     const seenPhones = new Set<string>();
     const deduped: string[] = [];
@@ -518,6 +533,38 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
       },
     ]);
     if (hostInviteError) console.error('Error creating host invitee row:', hostInviteError);
+
+    if (selectedCoHostIds.length > 0) {
+      // Re-check each co-host's account link right before granting them
+      // full permissions — same re-check-before-invite pattern used for
+      // regular invitees below, but a co-host has no SMS-fallback path,
+      // so a stale/broken link just means that person doesn't become a
+      // co-host on this occurrence rather than silently mis-targeting.
+      const healedCoHosts = await Promise.all(
+        selectedCoHostIds.map(async (cid) => {
+          const contact = contacts.find((c) => c.id === cid);
+          return contact ? healContactLink(supabase, contact) : contact;
+        })
+      );
+      const coHostUserIds = healedCoHosts.map((c) => c?.linked_user_id).filter((id): id is string => !!id);
+      if (coHostUserIds.length > 0) {
+        const { error: eventHostsError } = await supabase
+          .from('event_hosts')
+          .insert(coHostUserIds.map((uid) => ({ event_id: eventRow.id, user_id: uid })));
+        if (eventHostsError) console.error('Error adding co-hosts:', eventHostsError);
+
+        const { error: coHostInviteError } = await supabase.from('invitees').insert(
+          coHostUserIds.map((uid) => ({
+            event_id: eventRow.id,
+            user_id: uid,
+            rsvp_status: 'accepted',
+            invited_via: 'app',
+            responded_at: new Date().toISOString(),
+          }))
+        );
+        if (coHostInviteError) console.error('Error creating co-host invitee rows:', coHostInviteError);
+      }
+    }
 
     if (items.length > 0) {
       const { error: itemsError } = await supabase.from('items').insert(
@@ -968,6 +1015,30 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
 
             {contacts.length === 0 && groups.length === 0 && !addingContact && (
               <Text style={styles.helperText}>No contacts yet — tap "+ New" or import from your phone.</Text>
+            )}
+
+            {contacts.some((c) => c.linked_user_id) && (
+              <>
+                <Text style={styles.label}>Co-hosts</Text>
+                <Text style={styles.helperText}>
+                  Full permissions to edit, delete, invite, and manage items - same as you.
+                </Text>
+                <View style={styles.chipRow}>
+                  {contacts
+                    .filter((c) => c.linked_user_id)
+                    .map((c) => (
+                      <TouchableOpacity
+                        key={c.id}
+                        style={[styles.chip, selectedCoHostIds.includes(c.id) && styles.chipSelected]}
+                        onPress={() => toggleCoHost(c.id)}
+                      >
+                        <Text style={[styles.chipText, selectedCoHostIds.includes(c.id) && styles.chipTextSelected]}>
+                          {c.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                </View>
+              </>
             )}
 
             <Text style={styles.label}>What to bring</Text>

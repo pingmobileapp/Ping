@@ -5,7 +5,8 @@ export type RsvpStatus = 'pending' | 'accepted' | 'declined' | 'interested';
 
 type SubmitRsvpOptions = {
   eventId: string;
-  hostId: string | null;
+  // Every host - primary and co-hosts - who should hear about this RSVP.
+  hostIds: string[];
   eventTitle: string;
   userId: string;
   myInviteeId: string | null;
@@ -16,7 +17,7 @@ type SubmitRsvpOptions = {
 // Shared by EventDetailContent's RSVP row and InvitePopup so both surfaces
 // mutate `invitees` the same way and never drift out of sync.
 export async function submitRsvp(opts: SubmitRsvpOptions): Promise<string | null> {
-  const { eventId, hostId, eventTitle, userId, myInviteeId, responderName, status } = opts;
+  const { eventId, hostIds, eventTitle, userId, myInviteeId, responderName, status } = opts;
 
   let inviteeId = myInviteeId;
 
@@ -49,9 +50,10 @@ export async function submitRsvp(opts: SubmitRsvpOptions): Promise<string | null
     if (releaseError) console.error('Error releasing claims:', releaseError);
   }
 
-  if (hostId && hostId !== userId) {
+  const recipientHostIds = hostIds.filter((id) => id !== userId);
+  if (recipientHostIds.length > 0) {
     const statusLabel = status === 'accepted' ? 'accepted' : status === 'declined' ? 'declined' : 'is interested in';
-    await notify([hostId], 'RSVP update', `${responderName} ${statusLabel} ${eventTitle}`, {
+    await notify(recipientHostIds, 'RSVP update', `${responderName} ${statusLabel} ${eventTitle}`, {
       eventId,
       type: 'rsvp_update',
     });

@@ -88,6 +88,17 @@ serve(async (req) => {
       await step('delete hosted events', admin.from('events').delete().in('id', hostedEventIds));
     }
 
+    // Co-host membership on events someone else primarily hosts - the
+    // event and its other hosts/invitees survive, only this user's own
+    // access is revoked. (Co-host rows on this user's own hosted events
+    // are already gone via that delete's cascade above; deleting by
+    // user_id here is a no-op for those, not a duplicate risk.)
+    // event_hosts.user_id references profiles with no cascade, so this
+    // has to happen before the profile delete below or that step would
+    // fail with a foreign key violation for anyone who still co-hosts
+    // something.
+    await step('delete co-host memberships', admin.from('event_hosts').delete().eq('user_id', uid));
+
     // Reactions and messages this user sent on things they don't own -
     // messages on their own hosted events are already gone above.
     await step('delete message reactions', admin.from('message_reactions').delete().eq('user_id', uid));
