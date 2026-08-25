@@ -240,11 +240,14 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                     {dayEvents.map((ev, i) => {
                       // Same-time events cascade as offset cards rather than
                       // fully overlapping - each later card in the stack is
-                      // nudged right so the ones behind it still show their
-                      // edge (where they start/end), and sits on top via
-                      // render order (later siblings win touch priority in
-                      // RN for overlapping absolutely-positioned views).
-                      const offset = ev.stackIndex * STACK_OFFSET;
+                      // nudged right so the one(s) behind it still show
+                      // their left edge (where they start), and sits on top
+                      // via render order (later siblings win touch priority
+                      // in RN for overlapping absolutely-positioned views).
+                      // The right edge stays fixed for every card rather
+                      // than also pulling in with stackIndex, so it's a
+                      // simple cascade of same-width cards, not a split
+                      // into narrower side-by-side lanes.
                       return (
                         <TouchableOpacity
                           key={`${ev.id}-${i}`}
@@ -253,8 +256,8 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                             {
                               top: (ev.startMinutes / 60) * HOUR_BLOCK_HEIGHT,
                               height: Math.max(18, ((ev.endMinutes - ev.startMinutes) / 60) * HOUR_BLOCK_HEIGHT),
-                              left: 2 + offset,
-                              right: Math.max(2, 2 + (ev.stackSize - 1 - ev.stackIndex) * STACK_OFFSET),
+                              left: 2 + ev.stackIndex * STACK_OFFSET,
+                              right: 2,
                               backgroundColor: ev.color || colors.primary,
                               zIndex: ev.stackIndex,
                             },

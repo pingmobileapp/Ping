@@ -7,9 +7,11 @@ export type AllDayItem = { id: string; title: string; dayKey: string };
 // startMinutes/endMinutes are minutes since that day's midnight - directly
 // usable as top = (startMinutes/60) * HOUR_BLOCK_HEIGHT, matching the same
 // math react-native-calendars' own Packer.js uses.
-// stackIndex/stackSize place same-time events as a cascade of offset cards
-// (see packDayEvents) rather than fully overlapping - stackIndex is this
-// event's position in that cascade, stackSize how many cards are in it.
+// stackIndex is how many other events this one overlaps that already came
+// before it (see packDayEvents) - WeekGrid nudges each one right by
+// stackIndex steps so overlapping events cascade into view as offset
+// cards instead of stacking flush on top of each other, all still full-
+// width rather than split into side-by-side lanes.
 export type DayColumnEvent = {
   id: string;
   title: string;
@@ -17,47 +19,29 @@ export type DayColumnEvent = {
   endMinutes: number;
   color?: string;
   stackIndex: number;
-  stackSize: number;
 };
 
-type RawDayEvent = Omit<DayColumnEvent, 'stackIndex' | 'stackSize'>;
+type RawDayEvent = Omit<DayColumnEvent, 'stackIndex'>;
 
 const eventsOverlap = (a: RawDayEvent, b: RawDayEvent) => a.endMinutes > b.startMinutes && a.startMinutes < b.endMinutes;
 
-// Same grouping approach as react-native-calendars' own Packer.js
-// (populateEvents): sweep events in start order, placing each into the
-// first "lane" whose last event it doesn't overlap, starting a fresh group
-// once a gap opens up with nothing still running. Ported rather than
-// reused directly because Packer operates on absolute Date start/end and
-// computes its own top/height in pixels - this only needs the lane
-// assignment, against the startMinutes/endMinutes WeekGrid already works
-// in, so a card cascade (see WeekGrid's rendering) can be built from it.
+// For each event (in start order), stackIndex is how many still-running
+// earlier events it overlaps - the count that determines how far right
+// WeekGrid nudges its card. Deliberately not lane/interval-graph packing
+// (which would also split cards into narrower side-by-side columns) - the
+// desired look is a simple cascade of same-width offset cards.
 export function packDayEvents(dayEvents: RawDayEvent[]): DayColumnEvent[] {
   const sorted = [...dayEvents].sort((a, b) => a.startMinutes - b.startMinutes || a.endMinutes - b.endMinutes);
-  const packed: DayColumnEvent[] = [];
-  let lanes: RawDayEvent[][] = [];
-  let groupEnd: number | null = null;
+  const active: RawDayEvent[] = [];
 
-  const flush = () => {
-    lanes.forEach((lane, laneIndex) => {
-      lane.forEach((ev) => packed.push({ ...ev, stackIndex: laneIndex, stackSize: lanes.length }));
-    });
-  };
-
-  for (const ev of sorted) {
-    if (groupEnd !== null && ev.startMinutes >= groupEnd) {
-      flush();
-      lanes = [];
-      groupEnd = null;
+  return sorted.map((ev) => {
+    for (let i = active.length - 1; i >= 0; i--) {
+      if (!eventsOverlap(active[i], ev)) active.splice(i, 1);
     }
-    const lane = lanes.find((l) => !eventsOverlap(l[l.length - 1], ev));
-    if (lane) lane.push(ev);
-    else lanes.push([ev]);
-    groupEnd = groupEnd === null ? ev.endMinutes : Math.max(groupEnd, ev.endMinutes);
-  }
-  if (lanes.length > 0) flush();
-
-  return packed;
+    const stackIndex = active.length;
+    active.push(ev);
+    return { ...ev, stackIndex };
+  });
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
