@@ -43,6 +43,10 @@ export type ExternalEvent = {
   // event wherever it's synced from (Google, iCloud, a shared family
   // calendar) - it's not private to Ping the way a personal item is.
   editable: boolean;
+  // Free-text notes, with PING_NOTE_MARKER already stripped out (see
+  // stripMarker) - that marker is Ping's own bookkeeping, not something a
+  // user should see or be able to edit into oblivion.
+  details: string;
 };
 
 const PING_CALENDAR_TITLE = 'Ping';
@@ -52,6 +56,19 @@ const PING_CALENDAR_TITLE = 'Ping';
 // reliable since calendar creation can fail on devices where every synced
 // account refuses new calendars.
 const PING_NOTE_MARKER = 'Added via Ping';
+
+// Strips the marker (and the blank line that separates it from any real
+// details) back out for display/editing - see ExternalEvent.details.
+const stripMarker = (notes?: string | null): string => (notes || '').split(PING_NOTE_MARKER)[0].trim();
+
+// Combines user-entered details with the marker for personal items, so
+// isPersonal detection (see getUpcomingExternalEvents) keeps working
+// without the marker itself ever showing up as if the user typed it.
+const buildNotes = (details: string | undefined, stampMarker: boolean): string | undefined => {
+  const trimmed = details?.trim();
+  if (!stampMarker) return trimmed || undefined;
+  return trimmed ? `${trimmed}\n\n${PING_NOTE_MARKER}` : PING_NOTE_MARKER;
+};
 
 export async function getCalendarPermissionStatus(): Promise<CalendarPermissionStatus> {
   const { status } = await Calendar.getCalendarPermissionsAsync();
@@ -117,6 +134,7 @@ export async function getUpcomingExternalEvents(): Promise<ExternalEvent[]> {
       allDay: !!e.allDay,
       isPersonal: pingCalendarIds.has(e.calendarId) || (e.notes || '').includes(PING_NOTE_MARKER),
       editable: writableCalendarIds.has(e.calendarId),
+      details: stripMarker(e.notes),
     }));
 }
 
@@ -202,10 +220,11 @@ export async function createPersonalCalendarEvent(
   title: string,
   startDate: Date,
   endDate: Date,
-  allDay: boolean
+  allDay: boolean,
+  details?: string
 ): Promise<void> {
   const calendarId = await getOrCreatePingCalendarId();
-  await Calendar.createEventAsync(calendarId, { title, startDate, endDate, allDay, notes: PING_NOTE_MARKER });
+  await Calendar.createEventAsync(calendarId, { title, startDate, endDate, allDay, notes: buildNotes(details, true) });
 }
 
 // Also used to edit calendar events Ping didn't create (anything from the
@@ -221,10 +240,10 @@ export async function updateCalendarEvent(
   startDate: Date,
   endDate: Date,
   allDay: boolean,
-  isPersonal: boolean
+  isPersonal: boolean,
+  details?: string
 ): Promise<void> {
-  const updates: Partial<Calendar.Event> = { title, startDate, endDate, allDay };
-  if (isPersonal) updates.notes = PING_NOTE_MARKER;
+  const updates: Partial<Calendar.Event> = { title, startDate, endDate, allDay, notes: buildNotes(details, isPersonal) };
   await Calendar.updateEventAsync(eventId, updates);
 }
 

@@ -8,6 +8,7 @@ export type ExtractedEvent = {
   startTime: string | null; // HH:mm
   endTime: string | null; // HH:mm
   location: string | null;
+  details: string | null;
   yearInferred: boolean;
   confidence: 'high' | 'low';
 };
@@ -21,6 +22,7 @@ type RawEvent = {
   start_time: string | null;
   end_time: string | null;
   location: string | null;
+  details: string | null;
   year_inferred: boolean;
   confidence: 'high' | 'low';
 };
@@ -55,6 +57,7 @@ export async function extractScheduleEvents(
     startTime: e.start_time,
     endTime: e.end_time,
     location: e.location,
+    details: e.details,
     yearInferred: e.year_inferred,
     confidence: e.confidence,
   }));

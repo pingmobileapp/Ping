@@ -19,13 +19,20 @@ const SCHEMA = {
           },
           end_time: { type: ['string', 'null'], description: '24-hour HH:mm, or null if not stated.' },
           location: { type: ['string', 'null'] },
+          details: {
+            type: ['string', 'null'],
+            description:
+              'Any additional notes tied specifically to this row that are not the title, date, time, or location - ' +
+              'equipment or attire to bring, a coach or contact name, a phone number, an asterisk/footnote next to ' +
+              'this row, parenthetical text, etc. null if there is nothing beyond the basic fields.',
+          },
           year_inferred: {
             type: 'boolean',
             description: 'true if the schedule itself had no year printed and you inferred one.',
           },
           confidence: { type: 'string', enum: ['high', 'low'] },
         },
-        required: ['title', 'date', 'start_time', 'end_time', 'location', 'year_inferred', 'confidence'],
+        required: ['title', 'date', 'start_time', 'end_time', 'location', 'details', 'year_inferred', 'confidence'],
         additionalProperties: false,
       },
     },
@@ -74,8 +81,10 @@ serve(async (req) => {
           `If a row spans multiple dates (e.g. a multi-day tournament "Sept 5-7"), emit one separate event per ` +
           `date rather than one row with a date range - every row must be a single date. If you truly cannot ` +
           `determine any date for a row, still include it with date set to null rather than omitting it. If the ` +
-          `photo contains no readable schedule at all, return an empty events array. Mark confidence "low" on any ` +
-          `row you are genuinely unsure about (blurry text, ambiguous handwriting, a guessed field).`,
+          `photo contains no readable schedule at all, return an empty events array. Capture anything else tied to ` +
+          `a specific row - what to bring, what to wear, a coach/contact name or phone number, a footnote - in ` +
+          `that row's details field rather than dropping it. Mark confidence "low" on any row you are genuinely ` +
+          `unsure about (blurry text, ambiguous handwriting, a guessed field).`,
         tools: [
           {
             name: 'extract_schedule_events',

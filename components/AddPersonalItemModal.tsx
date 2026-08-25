@@ -41,6 +41,7 @@ type PickerTarget = 'start' | 'end';
 // handling, not whether editing is allowed.
 export default function AddPersonalItemModal({ visible, initialDate, editingEvent, onClose, onSaved, onConvertToPing }: Props) {
   const [title, setTitle] = useState('');
+  const [details, setDetails] = useState('');
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState(new Date(Date.now() + 60 * 60000));
   const [isAllDay, setIsAllDay] = useState(false);
@@ -84,6 +85,7 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
 
     if (editingEvent) {
       setTitle(editingEvent.title);
+      setDetails(editingEvent.details);
       setStartDate(new Date(editingEvent.startDate));
       setEndDate(new Date(editingEvent.endDate));
       setIsAllDay(editingEvent.allDay);
@@ -91,6 +93,7 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
     }
 
     setTitle('');
+    setDetails('');
     setIsAllDay(false);
     const start = initialDate ? (() => {
       const [y, m, d] = initialDate.split('-').map(Number);
@@ -177,9 +180,9 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
       }
 
       if (editingEvent) {
-        await updateCalendarEvent(editingEvent.id, title.trim(), start, end, isAllDay, editingEvent.isPersonal);
+        await updateCalendarEvent(editingEvent.id, title.trim(), start, end, isAllDay, editingEvent.isPersonal, details);
       } else {
-        await createPersonalCalendarEvent(title.trim(), start, end, isAllDay);
+        await createPersonalCalendarEvent(title.trim(), start, end, isAllDay, details);
       }
       onSaved();
     } catch (err) {
@@ -250,6 +253,16 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
             autoFocus={!isEditing}
             returnKeyType="done"
             onSubmitEditing={Keyboard.dismiss}
+          />
+
+          <Text style={styles.label}>Details</Text>
+          <TextInput
+            style={[styles.input, styles.detailsInput]}
+            placeholder="Bring cleats, wear the blue jersey, anything else worth remembering"
+            placeholderTextColor={colors.textMuted}
+            value={details}
+            onChangeText={setDetails}
+            multiline
           />
 
           <Text style={styles.label}>Starts</Text>
@@ -368,6 +381,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     backgroundColor: colors.surface,
   },
+  detailsInput: { minHeight: 60, textAlignVertical: 'top' },
   row: { flexDirection: 'row', gap: 10 },
   pillButton: { flex: 1, backgroundColor: colors.surface, borderRadius: 10, borderWidth: 1, borderColor: colors.border, paddingVertical: 12, alignItems: 'center' },
   pillButtonText: { color: colors.textPrimary, fontSize: 15 },

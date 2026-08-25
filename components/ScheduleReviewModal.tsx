@@ -33,6 +33,7 @@ type Row = {
   startTime: string | null; // HH:mm
   endTime: string | null; // HH:mm
   location: string | null;
+  details: string | null;
   yearInferred: boolean;
   confidence: 'high' | 'low';
 };
@@ -82,6 +83,7 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
   const [submitting, setSubmitting] = useState(false);
 
   const [editTitle, setEditTitle] = useState('');
+  const [editDetails, setEditDetails] = useState('');
   const [editHasDate, setEditHasDate] = useState(true);
   const [editDate, setEditDate] = useState(new Date());
   const [editAllDay, setEditAllDay] = useState(false);
@@ -102,6 +104,7 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
         startTime: e.startTime,
         endTime: e.endTime,
         location: e.location,
+        details: e.details,
         yearInferred: e.yearInferred,
         confidence: e.confidence,
       }))
@@ -115,6 +118,7 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
 
   const openEditor = (row: Row) => {
     setEditTitle(row.title);
+    setEditDetails(row.details || '');
     const hasDate = row.date !== null;
     setEditHasDate(hasDate);
     const base = hasDate ? parseDateAndTime(row.date!, null) : new Date();
@@ -173,6 +177,7 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
           ? {
               ...r,
               title: editTitle.trim(),
+              details: editDetails.trim() || null,
               date: toDateString(editDate),
               startTime: editAllDay ? null : toTimeString(editStart),
               endTime: editAllDay ? null : toTimeString(editEnd),
@@ -219,7 +224,7 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
           end = row.endTime ? parseDateAndTime(row.date!, row.endTime) : new Date(start.getTime() + 60 * 60000);
           if (end.getTime() <= start.getTime()) end = new Date(start.getTime() + 60 * 60000);
         }
-        await createPersonalCalendarEvent(row.title, start, end, allDay);
+        await createPersonalCalendarEvent(row.title, start, end, allDay, row.details || undefined);
         addedCount += 1;
       } catch (err) {
         console.error('Error creating event from schedule scan:', row.title, err);
@@ -263,6 +268,16 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
                   onChangeText={setEditTitle}
                   returnKeyType="done"
                   onSubmitEditing={Keyboard.dismiss}
+                />
+
+                <Text style={styles.label}>Details</Text>
+                <TextInput
+                  style={[styles.input, styles.detailsInput]}
+                  value={editDetails}
+                  onChangeText={setEditDetails}
+                  placeholder="Bring cleats, wear the blue jersey, etc."
+                  placeholderTextColor={colors.textMuted}
+                  multiline
                 />
 
                 <Text style={styles.label}>Date</Text>
@@ -362,6 +377,11 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
                           {item.date ? ` · ${formatTimeLabel(item.date, item.startTime)}` : ''}
                           {item.location ? ` · ${item.location}` : ''}
                         </Text>
+                        {item.details && (
+                          <Text style={styles.eventDetails} numberOfLines={1}>
+                            {item.details}
+                          </Text>
+                        )}
                         {(!item.date || item.yearInferred || item.confidence === 'low') && (
                           <Text style={styles.eventFlag}>
                             {!item.date ? 'Needs a date — tap to set one' : item.yearInferred ? 'Year assumed' : 'Double-check this one'}
@@ -415,6 +435,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     backgroundColor: colors.surface,
   },
+  detailsInput: { minHeight: 60, textAlignVertical: 'top' },
   row: { flexDirection: 'row', gap: 10 },
   pillButton: { flex: 1, backgroundColor: colors.surface, borderRadius: 10, borderWidth: 1, borderColor: colors.border, paddingVertical: 12, alignItems: 'center' },
   pillButtonText: { color: colors.textPrimary, fontSize: 15 },
@@ -433,5 +454,6 @@ const styles = StyleSheet.create({
   eventRow: { flexDirection: 'row', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.divider, alignItems: 'flex-start' },
   eventTitle: { fontSize: 16, fontWeight: '600', color: colors.textPrimary },
   eventMeta: { fontSize: 13, color: colors.textSecondary, marginTop: 2 },
+  eventDetails: { fontSize: 12, color: colors.textMuted, marginTop: 2, fontStyle: 'italic' },
   eventFlag: { fontSize: 12, color: colors.textSecondary, marginTop: 2, fontWeight: '600' },
 });
