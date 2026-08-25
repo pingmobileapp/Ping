@@ -122,7 +122,10 @@ export default function MessageBubble({
 }
 
 const styles = StyleSheet.create({
-  bubbleRow: { flexDirection: 'row', width: '100%', marginBottom: 10, alignItems: 'flex-end' },
+  // 20, not a plainer 10 - the reaction badge below pokes 14px above its
+  // own bubble's top edge (see reactionBadgeRow), so anything tighter lets
+  // a reacted message's badge collide with whichever bubble sits above it.
+  bubbleRow: { flexDirection: 'row', width: '100%', marginBottom: 20, alignItems: 'flex-end' },
   bubbleRowMine: { justifyContent: 'flex-end' },
   avatarSlot: { marginRight: 6, marginBottom: 2 },
   // Explicit on this inner wrapper too, redundant with bubbleRow's
