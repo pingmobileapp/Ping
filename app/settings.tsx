@@ -22,9 +22,10 @@ import { colors } from '../lib/theme';
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { session } = useAuth();
+  const { session, signOut } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState(session?.user?.email || '');
@@ -111,6 +112,37 @@ export default function SettingsScreen() {
     router.back();
   };
 
+  const performDelete = async () => {
+    setDeleting(true);
+    const { error } = await supabase.functions.invoke('delete-account');
+    if (error) {
+      setDeleting(false);
+      console.error('Error deleting account:', error);
+      Alert.alert('Error', 'Could not delete your account. Try again in a moment.');
+      return;
+    }
+    await signOut();
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      "This permanently deletes your account and everything tied to it - your profile, events you host, messages, contacts, and groups you own. This can't be undone.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () =>
+            Alert.alert('Are you sure?', 'This is your last chance to back out.', [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Delete Account', style: 'destructive', onPress: performDelete },
+            ]),
+        },
+      ]
+    );
+  };
+
   if (loading) {
     return (
       <View style={styles.centered}>
@@ -185,6 +217,16 @@ export default function SettingsScreen() {
           <Text style={styles.helperText}>
             Changing your email requires confirming it from a link sent to your new address.
           </Text>
+
+          <View style={styles.dangerZone}>
+            <TouchableOpacity onPress={handleDeleteAccount} disabled={deleting}>
+              <Text style={styles.deleteText}>{deleting ? 'Deleting Account…' : 'Delete Account'}</Text>
+            </TouchableOpacity>
+            <Text style={styles.helperText}>
+              Permanently deletes your account and everything tied to it - your profile, events you host,
+              messages, contacts, and groups you own. This can't be undone.
+            </Text>
+          </View>
         </ScrollView>
       </View>
     </KeyboardAvoidingView>
@@ -219,4 +261,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   helperText: { color: colors.textMuted, fontSize: 12, marginTop: 6, fontStyle: 'italic' },
+  dangerZone: { marginTop: 40, paddingTop: 20, borderTopWidth: 1, borderTopColor: colors.divider },
+  deleteText: { color: colors.danger, fontSize: 16, fontWeight: '700' },
 });
