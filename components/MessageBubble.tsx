@@ -72,42 +72,50 @@ export default function MessageBubble({
         </View>
       )}
       <View style={isMine ? styles.bubbleColumnMine : styles.bubbleColumn}>
-        <Animated.View
-          ref={bubbleRef}
-          collapsable={false}
-          style={[{ transform: [{ scale }] }, isActive && styles.raised]}
-        >
-          <TouchableOpacity
-            style={[styles.bubble, isMine && styles.bubbleMine, isActive && styles.bubbleActive]}
-            activeOpacity={0.85}
-            onLongPress={handleLongPress}
-            delayLongPress={280}
+        <View style={styles.bubbleWrapper}>
+          <Animated.View
+            ref={bubbleRef}
+            collapsable={false}
+            style={[{ transform: [{ scale }] }, isActive && styles.raised]}
           >
-            {!isMine && showSenderName && senderLabel && (
-              <Text style={styles.senderName} numberOfLines={1}>{senderLabel}</Text>
-            )}
-            <Text style={[styles.bubbleText, isMine && styles.bubbleTextMine]}>{body}</Text>
-            <Text style={[styles.timestamp, isMine && styles.timestampMine]} numberOfLines={1}>
-              {timestamp}
-            </Text>
-          </TouchableOpacity>
-        </Animated.View>
-        {reactions.length > 0 && (
-          <View style={[styles.reactionRow, isMine && styles.reactionRowMine]}>
-            {reactions.map((r) => (
-              <TouchableOpacity
-                key={r.emoji}
-                style={[styles.reactionPill, r.mine && styles.reactionPillMine]}
-                onPress={() => onToggleReaction(r.emoji)}
-              >
-                <Text style={styles.reactionPillText}>
-                  {r.emoji}
-                  {r.count > 1 ? ` ${r.count}` : ''}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
+            <TouchableOpacity
+              style={[styles.bubble, isMine && styles.bubbleMine, isActive && styles.bubbleActive]}
+              activeOpacity={0.85}
+              onLongPress={handleLongPress}
+              delayLongPress={280}
+            >
+              {!isMine && showSenderName && senderLabel && (
+                <Text style={styles.senderName} numberOfLines={1}>{senderLabel}</Text>
+              )}
+              <Text style={[styles.bubbleText, isMine && styles.bubbleTextMine]}>{body}</Text>
+              <Text style={[styles.timestamp, isMine && styles.timestampMine]} numberOfLines={1}>
+                {timestamp}
+              </Text>
+            </TouchableOpacity>
+          </Animated.View>
+          {reactions.length > 0 && (
+            // Overlaps the bubble's top corner (iMessage tapback style)
+            // instead of stacking below it as its own row, which read like
+            // a separate message. Hangs toward whichever side is away from
+            // the screen edge the bubble is pinned to (left for outgoing/
+            // right-aligned bubbles, right for incoming/left-aligned ones)
+            // so it never gets clipped.
+            <View style={[styles.reactionBadgeRow, isMine ? styles.reactionBadgeRowMine : styles.reactionBadgeRowTheirs]}>
+              {reactions.map((r) => (
+                <TouchableOpacity
+                  key={r.emoji}
+                  style={[styles.reactionBadge, r.mine && styles.reactionBadgeMine]}
+                  onPress={() => onToggleReaction(r.emoji)}
+                >
+                  <Text style={styles.reactionBadgeText}>
+                    {r.emoji}
+                    {r.count > 1 ? ` ${r.count}` : ''}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </View>
       </View>
     </View>
   );
@@ -152,17 +160,28 @@ const styles = StyleSheet.create({
   bubbleTextMine: { color: colors.textOnPrimary },
   timestamp: { color: colors.textMuted, fontSize: 10, marginTop: 6, textAlign: 'right' },
   timestampMine: { color: 'rgba(255,255,255,0.75)' },
-  reactionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
-  reactionRowMine: { justifyContent: 'flex-end' },
-  reactionPill: {
+  // Bubble's own positioning context for the absolutely-positioned
+  // reaction badge below - just establishes the anchor, doesn't affect
+  // alignment (bubbleColumn/bubbleColumnMine's alignItems already handles
+  // that via normal shrink-wrap).
+  bubbleWrapper: { position: 'relative' },
+  reactionBadgeRow: { position: 'absolute', top: -14, flexDirection: 'row', gap: 2 },
+  reactionBadgeRowMine: { left: -4 },
+  reactionBadgeRowTheirs: { right: -4 },
+  reactionBadge: {
     flexDirection: 'row',
-    backgroundColor: colors.surface,
+    backgroundColor: colors.background,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    shadowColor: colors.textPrimary,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    elevation: 3,
   },
-  reactionPillMine: { borderColor: colors.primary, backgroundColor: colors.primaryPale },
-  reactionPillText: { fontSize: 13, color: colors.textPrimary },
+  reactionBadgeMine: { borderColor: colors.primary },
+  reactionBadgeText: { fontSize: 13, color: colors.textPrimary },
 });
