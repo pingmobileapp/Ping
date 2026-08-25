@@ -43,10 +43,11 @@ export function formatEventDate(
 export function formatEventTime(eventDate: string, isAllDay?: boolean | null, endDate?: string | null): string {
   if (isAllDay) return 'All day';
   const startLabel = new Date(eventDate).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  // A multi-day span already shows its date range via formatEventDate -
-  // pairing that with the end date's bare time (no date attached) would
-  // read as if it ends today, so only show a time range within one day.
-  if (!endDate || isMultiDayEvent(eventDate, endDate)) return startLabel;
+  if (!endDate) return startLabel;
+  // Every caller already shows this right alongside formatEventDate's own
+  // date range, so a multi-day span's end time reads fine paired with it
+  // ("Aug 28 - 29" / "7:00 PM - 8:00 AM") rather than needing to be hidden
+  // to avoid implying it ends the same day.
   const endLabel = new Date(endDate).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   return `${startLabel} – ${endLabel}`;
 }
