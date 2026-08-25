@@ -28,6 +28,7 @@ import { pickEventImage } from '../lib/imagePicker';
 import { colors, cardFrameGradient, calendarTheme, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
 import { notify } from '../lib/notify';
 import { RecurrenceConfig, generateOccurrences } from '../lib/recurrence';
+import { suggestItems } from '../lib/itemSuggestions';
 import ImportContactsModal from './ImportContactsModal';
 import ImageCropModal from './ImageCropModal';
 import NonAppInviteQueue, { QueueContact } from './NonAppInviteQueue';
@@ -112,6 +113,8 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
   const [newItemName, setNewItemName] = useState('');
   const [newItemQty, setNewItemQty] = useState('1');
   const [newItemAllowCustom, setNewItemAllowCustom] = useState(false);
+  const [suggestedItems, setSuggestedItems] = useState<string[]>([]);
+  const [suggestingItems, setSuggestingItems] = useState(false);
 
   const dragY = useRef(new Animated.Value(0)).current;
   const [keyboardVisible, setKeyboardVisible] = useState(false);
@@ -349,6 +352,31 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
     Keyboard.dismiss();
   };
 
+  const handleSuggestItems = async () => {
+    if (!title.trim() || !session?.user?.id) {
+      Alert.alert('Add a title first', 'Suggestions are based on the event title.');
+      return;
+    }
+    setSuggestingItems(true);
+    try {
+      const suggestions = await suggestItems(supabase, session.user.id, title.trim());
+      // Drop anything already added, so tapping a suggestion never creates
+      // a duplicate item.
+      const existingNames = new Set(items.map((it) => it.name.toLowerCase()));
+      setSuggestedItems(suggestions.filter((s) => !existingNames.has(s.toLowerCase())));
+    } catch (err) {
+      console.error('Error suggesting items:', err);
+      Alert.alert('Error', 'Could not get suggestions right now.');
+    } finally {
+      setSuggestingItems(false);
+    }
+  };
+
+  const addSuggestedItem = (name: string) => {
+    setItems((prev) => [...prev, { name, qty: '1', allowCustom: false }]);
+    setSuggestedItems((prev) => prev.filter((s) => s !== name));
+  };
+
   const removeItem = (index: number) => {
     setItems((prev) => prev.filter((_, i) => i !== index));
   };
@@ -379,6 +407,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
       setIsAllDay(false);
     }
     setRecurrence(null);
+    setSuggestedItems([]);
     setSelectedContactIds([]);
     setSelectedCoHostIds([]);
     setSelectedGroupIds([]);
@@ -1041,8 +1070,25 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
               </>
             )}
 
-            <Text style={styles.label}>What to bring</Text>
-            <Text style={styles.helperText}>Guests can claim these once they get the invite.</Text>
+            <View style={styles.whatToBringHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.label}>What to bring</Text>
+                <Text style={styles.helperText}>Guests can claim these once they get the invite.</Text>
+              </View>
+              <TouchableOpacity style={styles.suggestButton} onPress={handleSuggestItems} disabled={suggestingItems}>
+                <Text style={styles.suggestButtonText}>{suggestingItems ? 'Thinking…' : '✨ Suggest'}</Text>
+              </TouchableOpacity>
+            </View>
+
+            {suggestedItems.length > 0 && (
+              <View style={styles.chipRow}>
+                {suggestedItems.map((name) => (
+                  <TouchableOpacity key={name} style={styles.chip} onPress={() => addSuggestedItem(name)}>
+                    <Text style={styles.chipText}>+ {name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
 
             {items.map((it, idx) => (
               <View key={idx} style={styles.itemRow}>
@@ -1182,6 +1228,15 @@ const styles = StyleSheet.create({
   },
   editPhotoBadgeIcon: { fontSize: 15 },
   label: { fontWeight: '600', marginTop: 14, marginBottom: 6, color: colors.textPrimary },
+  whatToBringHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  suggestButton: {
+    marginTop: 14,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  suggestButtonText: { color: colors.primary, fontSize: 13, fontWeight: '700' },
   sublabel: { color: colors.textSecondary, fontSize: 13, marginTop: 8, marginBottom: 6 },
   seeAllText: { color: colors.primary, fontSize: 13, fontWeight: '600', marginTop: 8 },
   helperText: { color: colors.textMuted, fontSize: 13, marginTop: 8, fontStyle: 'italic' },
