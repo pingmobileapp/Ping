@@ -4,6 +4,7 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { supabase } from '../supabase';
 import { useAuth } from '../lib/AuthContext';
 import { colors } from '../lib/theme';
+import CatchMeUpModal from './CatchMeUpModal';
 
 const MENU_WIDTH = 200;
 
@@ -14,11 +15,11 @@ type Props = {
   onToggleDeclined: () => void;
 };
 
-// Notifications will get its own row in this menu once that feature exists.
 export default function ProfileMenu({ draftsActive, declinedActive, onToggleDrafts, onToggleDeclined }: Props) {
   const router = useRouter();
   const { session, signOut } = useAuth();
   const [open, setOpen] = useState(false);
+  const [catchMeUpVisible, setCatchMeUpVisible] = useState(false);
   const [anchor, setAnchor] = useState({ top: 0, left: 0 });
   const [fullName, setFullName] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -68,6 +69,11 @@ export default function ProfileMenu({ draftsActive, declinedActive, onToggleDraf
     router.push('/settings');
   };
 
+  const openCatchMeUp = () => {
+    setOpen(false);
+    setCatchMeUpVisible(true);
+  };
+
   const handleDrafts = () => {
     setOpen(false);
     onToggleDrafts();
@@ -96,6 +102,10 @@ export default function ProfileMenu({ draftsActive, declinedActive, onToggleDraf
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setOpen(false)}>
           <View style={[styles.menu, { top: anchor.top, left: anchor.left, width: MENU_WIDTH }]}>
+            <TouchableOpacity style={styles.menuItem} onPress={openCatchMeUp}>
+              <Text style={styles.menuItemText}>✨ Catch me up</Text>
+            </TouchableOpacity>
+            <View style={styles.menuDivider} />
             <TouchableOpacity style={styles.menuItem} onPress={openSettings}>
               <Text style={styles.menuItemText}>Settings</Text>
             </TouchableOpacity>
@@ -117,6 +127,8 @@ export default function ProfileMenu({ draftsActive, declinedActive, onToggleDraf
           </View>
         </Pressable>
       </Modal>
+
+      <CatchMeUpModal visible={catchMeUpVisible} onClose={() => setCatchMeUpVisible(false)} />
     </>
   );
 }
