@@ -41,6 +41,7 @@ type EventDetail = {
   image_url_full: string | null;
   status: 'sent' | 'draft';
   description: string | null;
+  recurrence_id: string | null;
 };
 
 type InviteeRow = {
@@ -461,6 +462,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
         )}
 
         <Text style={styles.title}>{event.title}</Text>
+        {!!event.recurrence_id && <Text style={styles.meta}>↻ Part of a repeating series</Text>}
         <Text style={styles.meta}>{dateLabel}</Text>
         <Text style={styles.meta}>{timeLabel}</Text>
         {!!event.location && <Text style={styles.meta}>{event.location}</Text>}
@@ -788,6 +790,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
             is_public: event.is_public,
             status: event.status,
             description: event.description,
+            recurrence_id: event.recurrence_id,
           } as EditableEvent
         }
         onClose={() => setEditModalVisible(false)}

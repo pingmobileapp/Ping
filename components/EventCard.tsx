@@ -12,6 +12,10 @@ export type PingEvent = {
   is_all_day?: boolean;
   status?: 'sent' | 'draft';
   image_url?: string | null;
+  // Set only when this occurrence is part of a series (see
+  // CreateEventModal's batch-create) - every occurrence is otherwise a
+  // fully independent row, this is purely a display hint.
+  recurrence_id?: string | null;
 };
 
 type RsvpStatus = 'pending' | 'accepted' | 'interested' | 'declined';
@@ -61,6 +65,7 @@ export default function EventCard({ event, onPress, highlight, rsvpStatus }: Pro
 
         <View style={styles.statBar}>
           <Text style={styles.statText}>
+            {!!event.recurrence_id && '↻ '}
             {dateLabel} · {timeLabel}
           </Text>
           {!!event.location && (

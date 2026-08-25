@@ -22,6 +22,7 @@ export default function CompactEventRow({ event, snippet, unread = false, onPres
       <View style={styles.textCol}>
         <View style={styles.titleRow}>
           <Text style={[styles.title, unread && styles.titleUnread]} numberOfLines={1}>
+            {!!event.recurrence_id && '↻ '}
             {event.title}
           </Text>
           <Text style={[styles.date, unread && styles.dateUnread]}>{dateLabel}</Text>

@@ -18,6 +18,7 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Calendar } from 'react-native-calendars';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Crypto from 'expo-crypto';
 import { supabase } from '../supabase';
 import { useAuth } from '../lib/AuthContext';
 import { findOrCreateContact, healContactLink } from '../lib/phone';
@@ -26,9 +27,11 @@ import { uploadEventImage, uploadEventImageFull } from '../lib/imageUpload';
 import { pickEventImage } from '../lib/imagePicker';
 import { colors, cardFrameGradient, calendarTheme, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
 import { notify } from '../lib/notify';
+import { RecurrenceConfig, generateOccurrences } from '../lib/recurrence';
 import ImportContactsModal from './ImportContactsModal';
 import ImageCropModal from './ImageCropModal';
 import NonAppInviteQueue, { QueueContact } from './NonAppInviteQueue';
+import RecurrencePicker from './RecurrencePicker';
 
 type Contact = {
   id: string;
@@ -64,6 +67,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [isMultiDay, setIsMultiDay] = useState(false);
   const [isAllDay, setIsAllDay] = useState(false);
+  const [recurrence, setRecurrence] = useState<RecurrenceConfig | null>(null);
   const [showPicker, setShowPicker] = useState(false);
   const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
   const [pickerTarget, setPickerTarget] = useState<'start' | 'end'>('start');
@@ -366,6 +370,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
       setIsMultiDay(false);
       setIsAllDay(false);
     }
+    setRecurrence(null);
     setSelectedContactIds([]);
     setSelectedGroupIds([]);
     setExcludedGroupMemberIds([]);
@@ -457,34 +462,25 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
     return deduped;
   };
 
-  const submit = async (status: 'sent' | 'draft') => {
-    if (!title) {
-      Alert.alert('Missing info', 'Please add at least a title.');
-      return;
-    }
-    if (!session?.user?.id) return;
-
-    setSubmitting(true);
-
-    let imageUrl: string | null = null;
-    let imageUrlFull: string | null = null;
-    if (imageUri) {
-      setUploadingImage(true);
-      try {
-        [imageUrl, imageUrlFull] = await Promise.all([
-          uploadEventImage(imageUri, session.user.id),
-          uploadEventImageFull(originalImageUri || imageUri, session.user.id),
-        ]);
-      } catch (err) {
-        console.error('Error uploading image:', err);
-        setUploadingImage(false);
-        setSubmitting(false);
-        Alert.alert('Image upload failed', 'Could not upload the photo. Try again, or continue without one.');
-        return;
-      }
-      setUploadingImage(false);
-    }
-
+  // One occurrence's worth of the full create sequence - event row, host's
+  // own accepted-invitee row, items, and (if sent) guest invitees. Used
+  // both for a plain one-off event and, in a loop, for each date in a
+  // recurring series (see submit below) - shouldNotify gates the push
+  // notification and SMS-queue prompt so a multi-occurrence series fires
+  // those once, not once per occurrence (nobody wants 10 "you're invited"
+  // pushes back to back for a weekly series). Throws on the one failure
+  // that should hard-stop the caller (the events insert itself); every
+  // other failure here is logged and swallowed, matching this form's
+  // existing non-atomic error handling.
+  const createOccurrence = async (
+    occStart: Date,
+    occEnd: Date | null,
+    recurrenceId: string | null,
+    imageUrl: string | null,
+    imageUrlFull: string | null,
+    status: 'sent' | 'draft',
+    shouldNotify: boolean
+  ): Promise<{ eventId: string; smsQueueItems: QueueContact[] }> => {
     const { data: eventRow, error } = await supabase
       .from('events')
       .insert([
@@ -492,24 +488,22 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
           title,
           description: description.trim() || null,
           location,
-          event_date: eventDate.toISOString(),
-          end_date: endDate ? endDate.toISOString() : null,
+          event_date: occStart.toISOString(),
+          end_date: occEnd ? occEnd.toISOString() : null,
           is_all_day: isAllDay,
           status,
-          host_id: session.user.id,
+          host_id: session!.user.id,
           is_public: isPublic,
           image_url: imageUrl,
           image_url_full: imageUrlFull,
+          recurrence_id: recurrenceId,
         },
       ])
       .select()
       .single();
 
     if (error || !eventRow) {
-      setSubmitting(false);
-      console.error('Error creating event:', error);
-      Alert.alert('Error', 'Something went wrong creating the event.');
-      return;
+      throw error || new Error('No event row returned');
     }
 
     // Host always gets their own accepted invitee row, regardless of
@@ -517,7 +511,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
     const { error: hostInviteError } = await supabase.from('invitees').insert([
       {
         event_id: eventRow.id,
-        user_id: session.user.id,
+        user_id: session!.user.id,
         rsvp_status: 'accepted',
         invited_via: 'app',
         responded_at: new Date().toISOString(),
@@ -567,12 +561,14 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
           .select();
         if (inviteeError) {
           console.error('Error creating invitees:', inviteeError);
-        } else {
+        } else if (shouldNotify) {
           const notifiableUserIds = rows.map((r) => r.user_id).filter(Boolean);
-          await notify(notifiableUserIds, "You're invited! 🎉", `${title} — tap to view and RSVP`, {
-            eventId: eventRow.id,
-            type: 'invite',
-          });
+          await notify(
+            notifiableUserIds,
+            "You're invited! 🎉",
+            `${title} — tap to view and RSVP${recurrenceId ? ' (repeats)' : ''}`,
+            { eventId: eventRow.id, type: 'invite' }
+          );
           smsQueueItems = (insertedInvitees || [])
             .filter((r) => r.invited_via === 'sms' && r.contact_id)
             .map((r) => {
@@ -584,7 +580,91 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
       }
     }
 
-    setSubmitting(false);
+    return { eventId: eventRow.id, smsQueueItems };
+  };
+
+  const submit = async (status: 'sent' | 'draft') => {
+    if (!title) {
+      Alert.alert('Missing info', 'Please add at least a title.');
+      return;
+    }
+    if (!session?.user?.id) return;
+
+    setSubmitting(true);
+
+    let imageUrl: string | null = null;
+    let imageUrlFull: string | null = null;
+    if (imageUri) {
+      setUploadingImage(true);
+      try {
+        [imageUrl, imageUrlFull] = await Promise.all([
+          uploadEventImage(imageUri, session.user.id),
+          uploadEventImageFull(originalImageUri || imageUri, session.user.id),
+        ]);
+      } catch (err) {
+        console.error('Error uploading image:', err);
+        setUploadingImage(false);
+        setSubmitting(false);
+        Alert.alert('Image upload failed', 'Could not upload the photo. Try again, or continue without one.');
+        return;
+      }
+      setUploadingImage(false);
+    }
+
+    let smsQueueItems: QueueContact[] = [];
+
+    if (recurrence) {
+      const recurrenceId = Crypto.randomUUID();
+      const occurrences = generateOccurrences(eventDate, endDate, recurrence);
+      const failedDates: string[] = [];
+      let firstOccurrenceCreated = false;
+
+      for (let i = 0; i < occurrences.length; i++) {
+        const occ = occurrences[i];
+        try {
+          const result = await createOccurrence(
+            occ.startDate,
+            occ.endDate,
+            recurrenceId,
+            imageUrl,
+            imageUrlFull,
+            status,
+            i === 0
+          );
+          if (i === 0) {
+            firstOccurrenceCreated = true;
+            smsQueueItems = result.smsQueueItems;
+          }
+        } catch (err) {
+          console.error('Error creating occurrence:', occ.startDate, err);
+          failedDates.push(occ.startDate.toLocaleDateString());
+        }
+      }
+
+      setSubmitting(false);
+
+      if (!firstOccurrenceCreated) {
+        Alert.alert('Error', 'Something went wrong creating the event.');
+        return;
+      }
+      if (failedDates.length > 0) {
+        Alert.alert(
+          'Some occurrences could not be created',
+          `Everything else was added. These dates failed: ${failedDates.join(', ')}`
+        );
+      }
+    } else {
+      try {
+        const result = await createOccurrence(eventDate, endDate, null, imageUrl, imageUrlFull, status, true);
+        smsQueueItems = result.smsQueueItems;
+      } catch (err) {
+        setSubmitting(false);
+        console.error('Error creating event:', err);
+        Alert.alert('Error', 'Something went wrong creating the event.');
+        return;
+      }
+      setSubmitting(false);
+    }
 
     // Same-app-only invites (or drafts, with no invitees at all) skip
     // straight to finishing - the queue only interrupts when there's
@@ -752,6 +832,8 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
                 <Text style={styles.publicRowSubtitle}>No specific start time</Text>
               </View>
             </TouchableOpacity>
+
+            <RecurrencePicker value={recurrence} onChange={setRecurrence} />
 
             <Text style={styles.label}>Location</Text>
             <TextInput

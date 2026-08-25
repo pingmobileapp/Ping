@@ -54,6 +54,7 @@ export type EditableEvent = {
   is_public: boolean;
   status: 'sent' | 'draft';
   description: string | null;
+  recurrence_id: string | null;
 };
 
 type Props = {
@@ -549,6 +550,21 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   // other silently.
   const confirmAndSave = (sendNow: boolean) => {
     if (!event) return;
+
+    if (event.recurrence_id) {
+      Alert.alert('Apply changes to', undefined, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'This event only', onPress: () => confirmNotifyAndSave(sendNow, false) },
+        { text: 'This and following events', onPress: () => confirmNotifyAndSave(sendNow, true) },
+      ]);
+      return;
+    }
+
+    confirmNotifyAndSave(sendNow, false);
+  };
+
+  const confirmNotifyAndSave = (sendNow: boolean, applyToFuture: boolean) => {
+    if (!event) return;
     const nextEndDate = isMultiDay && endDate ? endDate.toISOString() : null;
     const changedDetails =
       !isDraft &&
@@ -560,7 +576,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
         isAllDay !== !!event.is_all_day);
 
     if (!changedDetails) {
-      handleSave(sendNow, false);
+      handleSave(sendNow, false, applyToFuture);
       return;
     }
 
@@ -569,13 +585,13 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       "You've changed this event's details. Let the people you've invited know?",
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Save silently', onPress: () => handleSave(sendNow, false) },
-        { text: 'Save & notify', onPress: () => handleSave(sendNow, true) },
+        { text: 'Save silently', onPress: () => handleSave(sendNow, false, applyToFuture) },
+        { text: 'Save & notify', onPress: () => handleSave(sendNow, true, applyToFuture) },
       ]
     );
   };
 
-  const handleSave = async (sendNow: boolean, notifyExisting: boolean) => {
+  const handleSave = async (sendNow: boolean, notifyExisting: boolean, applyToFuture: boolean) => {
     if (!event || !session?.user?.id) return;
     if (!title) {
       Alert.alert('Missing info', 'Please add at least a title.');
@@ -611,20 +627,45 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       setUploadingImage(false);
     }
 
-    const updates: Record<string, any> = {
-      title,
-      description: description.trim() || null,
-      location,
-      event_date: eventDate.toISOString(),
-      end_date: endDate ? endDate.toISOString() : null,
-      is_all_day: isAllDay,
-      is_public: isPublic,
-      image_url: imageUrl,
-      image_url_full: imageUrlFull,
-    };
-    if (sendNow) updates.status = 'sent';
+    let error;
+    if (applyToFuture && event.recurrence_id) {
+      // Bulk-applying to sibling occurrences deliberately excludes
+      // event_date/end_date - shifting a whole series' dates needs
+      // relative-offset math, not an absolute overwrite, and is out of
+      // scope here. A date/time change always saves as "this event only"
+      // (the branch below), never bulk.
+      const futureUpdates: Record<string, any> = {
+        title,
+        description: description.trim() || null,
+        location,
+        is_all_day: isAllDay,
+        is_public: isPublic,
+        image_url: imageUrl,
+        image_url_full: imageUrlFull,
+      };
+      if (sendNow) futureUpdates.status = 'sent';
 
-    const { error } = await supabase.from('events').update(updates).eq('id', event.id);
+      ({ error } = await supabase
+        .from('events')
+        .update(futureUpdates)
+        .eq('recurrence_id', event.recurrence_id)
+        .gte('event_date', event.event_date));
+    } else {
+      const updates: Record<string, any> = {
+        title,
+        description: description.trim() || null,
+        location,
+        event_date: eventDate.toISOString(),
+        end_date: endDate ? endDate.toISOString() : null,
+        is_all_day: isAllDay,
+        is_public: isPublic,
+        image_url: imageUrl,
+        image_url_full: imageUrlFull,
+      };
+      if (sendNow) updates.status = 'sent';
+
+      ({ error } = await supabase.from('events').update(updates).eq('id', event.id));
+    }
 
     if (error) {
       setSubmitting(false);
@@ -727,7 +768,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
     }
   };
 
-  const handleDeleteEvent = async (shouldNotify: boolean) => {
+  const handleDeleteEvent = async (shouldNotify: boolean, applyToFuture: boolean) => {
     if (!event) return;
     setSubmitting(true);
 
@@ -756,7 +797,24 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
     try {
       await Promise.race([
         (async () => {
+          // "This and following events" needs every sibling occurrence's
+          // id up front - everything below (notify/cascade-delete) then
+          // operates across all of them instead of just event.id.
+          let eventIds = [event.id];
+          if (applyToFuture && event.recurrence_id) {
+            const { data: siblingRows } = await supabase
+              .from('events')
+              .select('id')
+              .eq('recurrence_id', event.recurrence_id)
+              .gte('event_date', event.event_date);
+            if (siblingRows && siblingRows.length > 0) eventIds = siblingRows.map((r) => r.id);
+          }
+
           if (shouldNotify) {
+            // Only the current occurrence's invitees are notified/checked
+            // for reachability, same "once, not per occurrence" reasoning
+            // as CreateEventModal's batch-create - a family doesn't need a
+            // separate cancellation notice for each of 10 canceled weeks.
             const { data: allInvitees } = await supabase
               .from('invitees')
               .select('user_id, invited_via, contacts(name, phone)')
@@ -765,10 +823,12 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
               .map((i) => i.user_id)
               .filter((id): id is string => !!id && id !== session?.user?.id);
             if (recipientIds.length > 0) {
-              await notify(recipientIds, 'Event canceled', `"${title}" has been canceled.`, {
-                eventId: event.id,
-                type: 'event_canceled',
-              });
+              await notify(
+                recipientIds,
+                'Event canceled',
+                applyToFuture ? `"${title}" and its remaining repeats have been canceled.` : `"${title}" has been canceled.`,
+                { eventId: event.id, type: 'event_canceled' }
+              );
             }
             unreachableNames = (allInvitees || [])
               .filter((i: any) => !i.user_id && i.invited_via === 'sms' && i.contacts?.phone)
@@ -778,16 +838,16 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
           // Cascade delete configuration on the DB side is unknown, so
           // clean up dependents manually rather than risk a foreign-key
           // failure.
-          const { data: eventItems } = await supabase.from('items').select('id').eq('event_id', event.id);
+          const { data: eventItems } = await supabase.from('items').select('id').in('event_id', eventIds);
           const itemIds = (eventItems || []).map((i) => i.id);
           if (itemIds.length > 0) {
             await supabase.from('item_claims').delete().in('item_id', itemIds);
           }
-          await supabase.from('items').delete().eq('event_id', event.id);
-          await supabase.from('messages').delete().eq('event_id', event.id);
-          await supabase.from('invitees').delete().eq('event_id', event.id);
+          await supabase.from('items').delete().in('event_id', eventIds);
+          await supabase.from('messages').delete().in('event_id', eventIds);
+          await supabase.from('invitees').delete().in('event_id', eventIds);
 
-          const { error } = await supabase.from('events').delete().eq('id', event.id);
+          const { error } = await supabase.from('events').delete().in('id', eventIds);
           if (error) throw error;
         })(),
         timeout,
@@ -811,10 +871,22 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   };
 
   const confirmDelete = () => {
+    if (event?.recurrence_id) {
+      Alert.alert('Delete which events?', undefined, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'This event only', style: 'destructive', onPress: () => confirmDeleteNotify(false) },
+        { text: 'This and following events', style: 'destructive', onPress: () => confirmDeleteNotify(true) },
+      ]);
+      return;
+    }
+    confirmDeleteNotify(false);
+  };
+
+  const confirmDeleteNotify = (applyToFuture: boolean) => {
     Alert.alert('Delete this event?', 'This cannot be undone.', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete silently', style: 'destructive', onPress: () => handleDeleteEvent(false) },
-      { text: 'Notify & delete', style: 'destructive', onPress: () => handleDeleteEvent(true) },
+      { text: 'Delete silently', style: 'destructive', onPress: () => handleDeleteEvent(false, applyToFuture) },
+      { text: 'Notify & delete', style: 'destructive', onPress: () => handleDeleteEvent(true, applyToFuture) },
     ]);
   };
 
@@ -973,6 +1045,16 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
                 <Text style={styles.publicRowSubtitle}>No specific start time</Text>
               </View>
             </TouchableOpacity>
+
+            {!!event.recurrence_id && (
+              // Ping series don't store their recurrence pattern anywhere
+              // (only that these rows share recurrence_id) - a full
+              // RecurrencePicker summary would need data that doesn't
+              // exist, so this is just an honest "you're editing one part
+              // of a series" note. Saving/deleting still asks which
+              // occurrences to apply to, below.
+              <Text style={styles.recurrenceNote}>↻ Part of a repeating series</Text>
+            )}
 
             <Text style={styles.label}>Location</Text>
             <TextInput
@@ -1299,6 +1381,7 @@ const styles = StyleSheet.create({
   checkmark: { color: colors.textOnPrimary, fontSize: 14, fontWeight: '700' },
   publicRowTitle: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
   publicRowSubtitle: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
+  recurrenceNote: { color: colors.textSecondary, fontSize: 13, marginTop: 8, fontStyle: 'italic' },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 12, fontSize: 16, color: colors.textPrimary, backgroundColor: colors.surface },
   descriptionInput: { minHeight: 80, textAlignVertical: 'top' },
   row: { flexDirection: 'row', gap: 10 },

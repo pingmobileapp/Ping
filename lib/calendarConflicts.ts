@@ -47,6 +47,12 @@ export type ExternalEvent = {
   // stripMarker) - that marker is Ping's own bookkeeping, not something a
   // user should see or be able to edit into oblivion.
   details: string;
+  // null for a one-off event. When set, editing/deleting should offer a
+  // "this event only" vs "this and following events" choice (see
+  // RecurringEventOptions passed through updateCalendarEvent/
+  // deleteCalendarEvent) - EventKit's own native recurrence, not anything
+  // Ping tracks itself.
+  recurrenceRule: Calendar.RecurrenceRule | null;
 };
 
 const PING_CALENDAR_TITLE = 'Ping';
@@ -135,6 +141,7 @@ export async function getUpcomingExternalEvents(): Promise<ExternalEvent[]> {
       isPersonal: pingCalendarIds.has(e.calendarId) || (e.notes || '').includes(PING_NOTE_MARKER),
       editable: writableCalendarIds.has(e.calendarId),
       details: stripMarker(e.notes),
+      recurrenceRule: e.recurrenceRule ?? null,
     }));
 }
 
@@ -221,10 +228,18 @@ export async function createPersonalCalendarEvent(
   startDate: Date,
   endDate: Date,
   allDay: boolean,
-  details?: string
+  details?: string,
+  recurrenceRule?: Calendar.RecurrenceRule
 ): Promise<void> {
   const calendarId = await getOrCreatePingCalendarId();
-  await Calendar.createEventAsync(calendarId, { title, startDate, endDate, allDay, notes: buildNotes(details, true) });
+  await Calendar.createEventAsync(calendarId, {
+    title,
+    startDate,
+    endDate,
+    allDay,
+    notes: buildNotes(details, true),
+    ...(recurrenceRule ? { recurrenceRule } : {}),
+  });
 }
 
 // Also used to edit calendar events Ping didn't create (anything from the
@@ -234,6 +249,14 @@ export async function createPersonalCalendarEvent(
 // calendar event just because the user edited it here, or the next fetch
 // would wrongly treat someone else's calendar entry as Ping's own to
 // freely delete.
+// futureEvents is only meaningful (and should only be passed) for an
+// event that already has a recurrenceRule - undefined means "not part of
+// a series," so no RecurringEventOptions get built and this behaves
+// exactly as it did before recurrence existed. recurrenceRule left
+// undefined leaves whatever rule the event already has untouched (the
+// caller passes one through only when the user is newly adding a
+// recurrence during an edit - an already-recurring item's rule is never
+// re-sent, since that's what futureEvents/readOnlyExisting scope instead).
 export async function updateCalendarEvent(
   eventId: string,
   title: string,
@@ -241,12 +264,32 @@ export async function updateCalendarEvent(
   endDate: Date,
   allDay: boolean,
   isPersonal: boolean,
-  details?: string
+  details?: string,
+  futureEvents?: boolean,
+  recurrenceRule?: Calendar.RecurrenceRule
 ): Promise<void> {
-  const updates: Partial<Calendar.Event> = { title, startDate, endDate, allDay, notes: buildNotes(details, isPersonal) };
-  await Calendar.updateEventAsync(eventId, updates);
+  const updates: Partial<Calendar.Event> = {
+    title,
+    startDate,
+    endDate,
+    allDay,
+    notes: buildNotes(details, isPersonal),
+    ...(recurrenceRule ? { recurrenceRule } : {}),
+  };
+  await Calendar.updateEventAsync(
+    eventId,
+    updates,
+    futureEvents !== undefined ? { futureEvents, instanceStartDate: startDate } : undefined
+  );
 }
 
-export async function deleteCalendarEvent(eventId: string): Promise<void> {
-  await Calendar.deleteEventAsync(eventId);
+export async function deleteCalendarEvent(
+  eventId: string,
+  futureEvents?: boolean,
+  instanceStartDate?: Date
+): Promise<void> {
+  await Calendar.deleteEventAsync(
+    eventId,
+    futureEvents !== undefined ? { futureEvents, instanceStartDate } : undefined
+  );
 }

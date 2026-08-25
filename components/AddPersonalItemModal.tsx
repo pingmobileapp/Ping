@@ -11,6 +11,8 @@ import {
   updateCalendarEvent,
   deleteCalendarEvent,
 } from '../lib/calendarConflicts';
+import RecurrencePicker from './RecurrencePicker';
+import { RecurrenceConfig, toExpoRecurrenceRule, fromExpoRecurrenceRule } from '../lib/recurrence';
 
 type Props = {
   visible: boolean;
@@ -42,6 +44,7 @@ type PickerTarget = 'start' | 'end';
 export default function AddPersonalItemModal({ visible, initialDate, editingEvent, onClose, onSaved, onConvertToPing }: Props) {
   const [title, setTitle] = useState('');
   const [details, setDetails] = useState('');
+  const [recurrence, setRecurrence] = useState<RecurrenceConfig | null>(null);
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState(new Date(Date.now() + 60 * 60000));
   const [isAllDay, setIsAllDay] = useState(false);
@@ -51,6 +54,11 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
   const [submitting, setSubmitting] = useState(false);
 
   const isEditing = !!editingEvent;
+  // Only an item that's already part of a series gets the read-only
+  // picker + "apply to" question - editing a plain one-off item can still
+  // freely turn it into a new series, no scoping question needed since
+  // there's no existing series to disambiguate against.
+  const isExistingRecurring = isEditing && !!editingEvent?.recurrenceRule;
 
   const dragY = useRef(new Animated.Value(0)).current;
 
@@ -86,6 +94,7 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
     if (editingEvent) {
       setTitle(editingEvent.title);
       setDetails(editingEvent.details);
+      setRecurrence(editingEvent.recurrenceRule ? fromExpoRecurrenceRule(editingEvent.recurrenceRule) : null);
       setStartDate(new Date(editingEvent.startDate));
       setEndDate(new Date(editingEvent.endDate));
       setIsAllDay(editingEvent.allDay);
@@ -94,6 +103,7 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
 
     setTitle('');
     setDetails('');
+    setRecurrence(null);
     setIsAllDay(false);
     const start = initialDate ? (() => {
       const [y, m, d] = initialDate.split('-').map(Number);
@@ -156,12 +166,7 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
     return false;
   };
 
-  const handleSave = async () => {
-    if (!title.trim()) {
-      Alert.alert('Missing info', 'Please add a title.');
-      return;
-    }
-
+  const performSave = async (futureEvents?: boolean) => {
     setSubmitting(true);
     const allowed = await ensurePermission();
     if (!allowed) {
@@ -180,9 +185,29 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
       }
 
       if (editingEvent) {
-        await updateCalendarEvent(editingEvent.id, title.trim(), start, end, isAllDay, editingEvent.isPersonal, details);
+        await updateCalendarEvent(
+          editingEvent.id,
+          title.trim(),
+          start,
+          end,
+          isAllDay,
+          editingEvent.isPersonal,
+          details,
+          futureEvents,
+          // Only passed when this item wasn't already recurring - an
+          // existing series' rule is preserved untouched (futureEvents
+          // above is what scopes the rest of this edit instead).
+          !isExistingRecurring && recurrence ? toExpoRecurrenceRule(recurrence) : undefined
+        );
       } else {
-        await createPersonalCalendarEvent(title.trim(), start, end, isAllDay, details);
+        await createPersonalCalendarEvent(
+          title.trim(),
+          start,
+          end,
+          isAllDay,
+          details,
+          recurrence ? toExpoRecurrenceRule(recurrence) : undefined
+        );
       }
       onSaved();
     } catch (err) {
@@ -193,8 +218,50 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
     }
   };
 
+  const handleSave = () => {
+    if (!title.trim()) {
+      Alert.alert('Missing info', 'Please add a title.');
+      return;
+    }
+
+    if (isExistingRecurring) {
+      Alert.alert('Apply changes to', undefined, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'This event only', onPress: () => performSave(false) },
+        { text: 'This and following events', onPress: () => performSave(true) },
+      ]);
+      return;
+    }
+
+    performSave();
+  };
+
+  const performDelete = async (futureEvents?: boolean) => {
+    if (!editingEvent) return;
+    setSubmitting(true);
+    try {
+      await deleteCalendarEvent(editingEvent.id, futureEvents, editingEvent.startDate);
+      onSaved();
+    } catch (err) {
+      console.error('Error deleting calendar item:', err);
+      Alert.alert('Error', 'Could not delete that item.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleDelete = () => {
     if (!editingEvent) return;
+
+    if (isExistingRecurring) {
+      Alert.alert('Delete which events?', undefined, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'This event only', style: 'destructive', onPress: () => performDelete(false) },
+        { text: 'This and following events', style: 'destructive', onPress: () => performDelete(true) },
+      ]);
+      return;
+    }
+
     Alert.alert(
       'Delete this item?',
       editingEvent.isPersonal
@@ -205,18 +272,7 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: async () => {
-            setSubmitting(true);
-            try {
-              await deleteCalendarEvent(editingEvent.id);
-              onSaved();
-            } catch (err) {
-              console.error('Error deleting calendar item:', err);
-              Alert.alert('Error', 'Could not delete that item.');
-            } finally {
-              setSubmitting(false);
-            }
-          },
+          onPress: () => performDelete(),
         },
       ]
     );
@@ -295,6 +351,8 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
             </View>
             <Text style={styles.allDayText}>All day</Text>
           </TouchableOpacity>
+
+          <RecurrencePicker value={recurrence} onChange={setRecurrence} readOnlyExisting={isExistingRecurring} />
 
           {showPicker && pickerMode === 'date' && (
             <View style={styles.calendarWrap}>
