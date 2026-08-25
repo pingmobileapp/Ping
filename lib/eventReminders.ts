@@ -2,6 +2,15 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { supabase } from '../supabase';
 
+// Shared by EventDetailContent's RSVP'd-Ping reminder picker and
+// AddPersonalItemModal's personal-item one, so both offer the same choices.
+export const REMINDER_OPTIONS: { label: string; value: number | null }[] = [
+  { label: 'Off', value: null },
+  { label: '30 min', value: 30 },
+  { label: '1 hr', value: 60 },
+  { label: '1 day', value: 1440 },
+];
+
 // Local (on-device) scheduled notifications — these work in Expo Go, unlike
 // remote push (dropped from Expo Go as of SDK 53). The OS alarm fires on its
 // own regardless of whether the app is open, so there's no reliable moment to

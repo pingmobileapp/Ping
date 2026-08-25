@@ -24,7 +24,7 @@ import Avatar from './Avatar';
 import { colors, cardFrameGradient, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
 import { notify } from '../lib/notify';
 import { submitRsvp, RsvpStatus } from '../lib/rsvp';
-import { scheduleEventReminder, cancelEventReminder } from '../lib/eventReminders';
+import { scheduleEventReminder, cancelEventReminder, REMINDER_OPTIONS } from '../lib/eventReminders';
 import { displayName } from '../lib/displayName';
 import { formatEventDate, formatEventTime } from '../lib/eventDate';
 
@@ -72,13 +72,6 @@ const RSVP_OPTIONS: { label: string; value: 'accepted' | 'declined' | 'intereste
   { label: 'Accept', value: 'accepted' },
   { label: 'Interested', value: 'interested' },
   { label: 'Decline', value: 'declined' },
-];
-
-const REMINDER_OPTIONS: { label: string; value: number | null }[] = [
-  { label: 'Off', value: null },
-  { label: '30 min', value: 30 },
-  { label: '1 hr', value: 60 },
-  { label: '1 day', value: 1440 },
 ];
 
 type Props = {

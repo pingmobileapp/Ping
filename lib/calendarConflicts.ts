@@ -53,6 +53,11 @@ export type ExternalEvent = {
   // deleteCalendarEvent) - EventKit's own native recurrence, not anything
   // Ping tracks itself.
   recurrenceRule: Calendar.RecurrenceRule | null;
+  // Minutes before startDate the device should alert, from the calendar
+  // item's own native alarm (see minutesToAlarms/alarmsToMinutes) - null
+  // if none is set. Only the single soonest alarm is represented; Ping
+  // only ever writes at most one.
+  reminderMinutesBefore: number | null;
 };
 
 const PING_CALENDAR_TITLE = 'Ping';
@@ -74,6 +79,18 @@ const buildNotes = (details: string | undefined, stampMarker: boolean): string |
   const trimmed = details?.trim();
   if (!stampMarker) return trimmed || undefined;
   return trimmed ? `${trimmed}\n\n${PING_NOTE_MARKER}` : PING_NOTE_MARKER;
+};
+
+// A "remind me N minutes before" picker (see lib/eventReminders.ts's
+// REMINDER_OPTIONS, shared with the Ping RSVP reminder UI) maps onto a
+// single native alarm - EventKit's own reminder delivery, so there's
+// nothing for Ping to schedule or track itself.
+const minutesToAlarms = (minutesBefore: number | null | undefined): Calendar.Alarm[] | undefined =>
+  minutesBefore ? [{ relativeOffset: -minutesBefore }] : minutesBefore === null ? [] : undefined;
+
+const alarmsToMinutes = (alarms?: Calendar.Alarm[] | null): number | null => {
+  const offset = alarms?.[0]?.relativeOffset;
+  return typeof offset === 'number' && offset < 0 ? -offset : null;
 };
 
 export async function getCalendarPermissionStatus(): Promise<CalendarPermissionStatus> {
@@ -142,6 +159,7 @@ export async function getUpcomingExternalEvents(): Promise<ExternalEvent[]> {
       editable: writableCalendarIds.has(e.calendarId),
       details: stripMarker(e.notes),
       recurrenceRule: e.recurrenceRule ?? null,
+      reminderMinutesBefore: alarmsToMinutes(e.alarms),
     }));
 }
 
@@ -229,9 +247,11 @@ export async function createPersonalCalendarEvent(
   endDate: Date,
   allDay: boolean,
   details?: string,
-  recurrenceRule?: Calendar.RecurrenceRule
+  recurrenceRule?: Calendar.RecurrenceRule,
+  reminderMinutesBefore?: number | null
 ): Promise<void> {
   const calendarId = await getOrCreatePingCalendarId();
+  const alarms = minutesToAlarms(reminderMinutesBefore);
   await Calendar.createEventAsync(calendarId, {
     title,
     startDate,
@@ -239,6 +259,7 @@ export async function createPersonalCalendarEvent(
     allDay,
     notes: buildNotes(details, true),
     ...(recurrenceRule ? { recurrenceRule } : {}),
+    ...(alarms !== undefined ? { alarms } : {}),
   });
 }
 
@@ -266,8 +287,10 @@ export async function updateCalendarEvent(
   isPersonal: boolean,
   details?: string,
   futureEvents?: boolean,
-  recurrenceRule?: Calendar.RecurrenceRule
+  recurrenceRule?: Calendar.RecurrenceRule,
+  reminderMinutesBefore?: number | null
 ): Promise<void> {
+  const alarms = minutesToAlarms(reminderMinutesBefore);
   const updates: Partial<Calendar.Event> = {
     title,
     startDate,
@@ -275,6 +298,7 @@ export async function updateCalendarEvent(
     allDay,
     notes: buildNotes(details, isPersonal),
     ...(recurrenceRule ? { recurrenceRule } : {}),
+    ...(alarms !== undefined ? { alarms } : {}),
   };
   await Calendar.updateEventAsync(
     eventId,

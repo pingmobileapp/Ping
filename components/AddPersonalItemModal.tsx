@@ -13,6 +13,7 @@ import {
 } from '../lib/calendarConflicts';
 import RecurrencePicker from './RecurrencePicker';
 import { RecurrenceConfig, toExpoRecurrenceRule, fromExpoRecurrenceRule } from '../lib/recurrence';
+import { REMINDER_OPTIONS } from '../lib/eventReminders';
 
 type Props = {
   visible: boolean;
@@ -45,6 +46,7 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
   const [title, setTitle] = useState('');
   const [details, setDetails] = useState('');
   const [recurrence, setRecurrence] = useState<RecurrenceConfig | null>(null);
+  const [reminderMinutes, setReminderMinutes] = useState<number | null>(null);
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState(new Date(Date.now() + 60 * 60000));
   const [isAllDay, setIsAllDay] = useState(false);
@@ -95,6 +97,7 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
       setTitle(editingEvent.title);
       setDetails(editingEvent.details);
       setRecurrence(editingEvent.recurrenceRule ? fromExpoRecurrenceRule(editingEvent.recurrenceRule) : null);
+      setReminderMinutes(editingEvent.reminderMinutesBefore);
       setStartDate(new Date(editingEvent.startDate));
       setEndDate(new Date(editingEvent.endDate));
       setIsAllDay(editingEvent.allDay);
@@ -104,6 +107,7 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
     setTitle('');
     setDetails('');
     setRecurrence(null);
+    setReminderMinutes(null);
     setIsAllDay(false);
     const start = initialDate ? (() => {
       const [y, m, d] = initialDate.split('-').map(Number);
@@ -197,7 +201,8 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
           // Only passed when this item wasn't already recurring - an
           // existing series' rule is preserved untouched (futureEvents
           // above is what scopes the rest of this edit instead).
-          !isExistingRecurring && recurrence ? toExpoRecurrenceRule(recurrence) : undefined
+          !isExistingRecurring && recurrence ? toExpoRecurrenceRule(recurrence) : undefined,
+          reminderMinutes
         );
       } else {
         await createPersonalCalendarEvent(
@@ -206,7 +211,8 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
           end,
           isAllDay,
           details,
-          recurrence ? toExpoRecurrenceRule(recurrence) : undefined
+          recurrence ? toExpoRecurrenceRule(recurrence) : undefined,
+          reminderMinutes
         );
       }
       onSaved();
@@ -352,6 +358,21 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
             <Text style={styles.allDayText}>All day</Text>
           </TouchableOpacity>
 
+          <Text style={styles.label}>Remind me before</Text>
+          <View style={styles.row}>
+            {REMINDER_OPTIONS.map((opt) => (
+              <TouchableOpacity
+                key={opt.label}
+                style={[styles.pillButton, reminderMinutes === opt.value && styles.pillButtonSelected]}
+                onPress={() => setReminderMinutes(opt.value)}
+              >
+                <Text style={[styles.pillButtonText, reminderMinutes === opt.value && styles.pillButtonTextSelected]}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
           <RecurrencePicker value={recurrence} onChange={setRecurrence} readOnlyExisting={isExistingRecurring} />
 
           {showPicker && pickerMode === 'date' && (
@@ -443,6 +464,8 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', gap: 10 },
   pillButton: { flex: 1, backgroundColor: colors.surface, borderRadius: 10, borderWidth: 1, borderColor: colors.border, paddingVertical: 12, alignItems: 'center' },
   pillButtonText: { color: colors.textPrimary, fontSize: 15 },
+  pillButtonSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
+  pillButtonTextSelected: { color: colors.textOnPrimary, fontWeight: '600' },
   allDayRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 16 },
   checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
   checkboxChecked: { backgroundColor: colors.primary, borderColor: colors.primary },
