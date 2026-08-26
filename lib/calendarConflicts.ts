@@ -303,7 +303,7 @@ export async function updateCalendarEvent(
   await Calendar.updateEventAsync(
     eventId,
     updates,
-    futureEvents !== undefined ? { futureEvents, instanceStartDate: startDate } : undefined
+    futureEvents !== undefined ? { futureEvents, instanceStartDate: startDate.toISOString() } : undefined
   );
 }
 
@@ -312,8 +312,14 @@ export async function deleteCalendarEvent(
   futureEvents?: boolean,
   instanceStartDate?: Date
 ): Promise<void> {
+  // The native side casts instanceStartDate to Either<String, Double> - a
+  // raw JS Date object has no enumerable own properties to bridge, so it
+  // arrives there as "{}" and fails to cast (seen as "Cannot cast '{}' for
+  // field 'instanceStartDate'"). toISOString() first avoids that.
   await Calendar.deleteEventAsync(
     eventId,
-    futureEvents !== undefined ? { futureEvents, instanceStartDate } : undefined
+    futureEvents !== undefined
+      ? { futureEvents, ...(instanceStartDate ? { instanceStartDate: instanceStartDate.toISOString() } : {}) }
+      : undefined
   );
 }
