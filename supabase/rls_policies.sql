@@ -251,15 +251,20 @@ create policy invitees_select_host_or_member
   using (public.is_event_member(event_id, auth.uid()));
 
 -- Covers: the host adding invitees (including their own accepted row) to
--- their own event, and a user self-joining a public event via a share
--- link (see lib/rsvp.ts submitRsvp's insert branch).
+-- their own event; a user self-joining a public event via a share link
+-- (see lib/rsvp.ts submitRsvp's insert branch); and an existing member
+-- (host or guest) of a public event forwarding it to someone else (see
+-- ShareInviteModal.tsx's "+ Invite others") - see
+-- supabase/invitees_public_share.sql for why that third clause was added.
 drop policy if exists invitees_insert_host_or_self_public on public.invitees;
-create policy invitees_insert_host_or_self_public
+drop policy if exists invitees_insert_host_or_member_public on public.invitees;
+create policy invitees_insert_host_or_member_public
   on public.invitees for insert
   to authenticated
   with check (
     public.is_event_host(event_id, auth.uid())
     or (user_id = auth.uid() and public.is_event_public(event_id))
+    or (public.is_event_member(event_id, auth.uid()) and public.is_event_public(event_id))
   );
 
 -- Covers: a guest updating their own RSVP/reminder, and the host manually
