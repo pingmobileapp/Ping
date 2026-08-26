@@ -251,14 +251,17 @@ export default function GroupDetailScreen() {
         </TouchableOpacity>
       </View>
 
-      {groupEvents.length > 0 && (
-        <View style={styles.eventsSection}>
-          <Text style={[styles.sectionLabel, styles.eventsSectionLabel]}>Upcoming</Text>
-          {groupEvents.map((event) => (
-            <EventCard key={event.id} event={event} onPress={openEvent} />
-          ))}
-        </View>
-      )}
+      <View style={styles.eventsSection}>
+        <Text style={[styles.sectionLabel, styles.eventsSectionLabel]}>Upcoming</Text>
+        {groupEvents.length > 0 ? (
+          groupEvents.map((event) => <EventCard key={event.id} event={event} onPress={openEvent} />)
+        ) : (
+          <Text style={styles.noEventsText}>
+            No upcoming Pings tagged to this group yet — when you create one and select just this group to invite
+            from, it'll show up here.
+          </Text>
+        )}
+      </View>
 
       {isOwner ? (
         <View style={styles.sharedRow}>
@@ -420,6 +423,7 @@ const styles = StyleSheet.create({
   // the section itself cancels that out to avoid a doubled 40px inset.
   eventsSection: { marginHorizontal: -20 },
   eventsSectionLabel: { marginHorizontal: 20 },
+  noEventsText: { marginHorizontal: 20, color: colors.textMuted, fontSize: 13, lineHeight: 18, fontStyle: 'italic' },
   importRow: {
     backgroundColor: colors.surfaceAlt,
     borderRadius: 10,
