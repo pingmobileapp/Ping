@@ -142,6 +142,14 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   // as the read-only note for that case).
   const [recurrence, setRecurrence] = useState<RecurrenceConfig | null>(null);
 
+  // Only ever set (and only ever shown) when the event isn't tagged to a
+  // group yet - lets a Ping created before the group-view feature (or
+  // just created without picking a group) get tagged after the fact, so
+  // it can show up in that group's Upcoming section. Re-tagging an
+  // already-tagged event isn't supported here, same "set once" scope as
+  // recurrence above.
+  const [selectedTagGroupId, setSelectedTagGroupId] = useState<string | null>(null);
+
   const dragY = useRef(new Animated.Value(0)).current;
   const [keyboardVisible, setKeyboardVisible] = useState(false);
 
@@ -217,6 +225,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       setCoHosts([]);
       setTaggedGroupName(null);
       setRecurrence(null);
+      setSelectedTagGroupId(null);
 
       if (session?.user?.id) {
         loadContactsAndGroups();
@@ -876,6 +885,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       };
       if (sendNow) updates.status = 'sent';
       if (newRecurrenceId) updates.recurrence_id = newRecurrenceId;
+      if (!event.group_id && selectedTagGroupId) updates.group_id = selectedTagGroupId;
 
       ({ error } = await supabase.from('events').update(updates).eq('id', event.id));
     }
@@ -1291,8 +1301,32 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
               <RecurrencePicker value={recurrence} onChange={setRecurrence} />
             )}
 
-            {!!taggedGroupName && (
-              <Text style={styles.recurrenceNote}>Part of the {taggedGroupName} group</Text>
+            {event.group_id ? (
+              !!taggedGroupName && (
+                <Text style={styles.recurrenceNote}>Part of the {taggedGroupName} group</Text>
+              )
+            ) : (
+              groups.length > 0 && (
+                <>
+                  <Text style={styles.label}>Tag to a group</Text>
+                  <Text style={styles.helperText}>Shows this Ping in that group's Upcoming section.</Text>
+                  <View style={styles.chipRow}>
+                    {groups.map((g) => (
+                      <TouchableOpacity
+                        key={g.id}
+                        style={[styles.chip, selectedTagGroupId === g.id && styles.chipSelected]}
+                        onPress={() => setSelectedTagGroupId((prev) => (prev === g.id ? null : g.id))}
+                      >
+                        <Text
+                          style={[styles.chipText, selectedTagGroupId === g.id && styles.chipTextSelected]}
+                        >
+                          {g.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )
             )}
 
             <Text style={styles.label}>Location</Text>
