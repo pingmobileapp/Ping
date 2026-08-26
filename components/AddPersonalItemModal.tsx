@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, Alert, KeyboardAvoidingView, Keyboard, Animated, PanResponder } from 'react-native';
+import { Modal, View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, Alert, KeyboardAvoidingView, Keyboard, Animated, PanResponder, ScrollView } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Calendar } from 'react-native-calendars';
 import { colors, calendarTheme } from '../lib/theme';
@@ -296,6 +296,12 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
           >
             <View style={styles.handle} />
           </View>
+          <ScrollView
+            style={{ flex: 1 }}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ paddingBottom: 12 }}
+          >
           <Text style={styles.header}>
             {isEditing ? (editingEvent!.isPersonal ? 'Edit Personal Item' : 'Edit Calendar Event') : 'Add Personal Item'}
           </Text>
@@ -436,6 +442,7 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
               </TouchableOpacity>
             </>
           )}
+          </ScrollView>
         </Animated.View>
       </View>
       </KeyboardAvoidingView>
@@ -445,7 +452,12 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
 
 const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(43,43,43,0.4)' },
-  card: { backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 },
+  // height, not maxHeight - a flex:1 child (the ScrollView below) can't
+  // expand to fill space in an ancestor whose own height is just "however
+  // tall its content happens to be." Content here grew past the screen
+  // top with nothing to scroll it (Details, Remind me before, and Repeats
+  // were all added after this card was first built at its natural size).
+  card: { height: '85%', backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 },
   dragHandleArea: { paddingVertical: 8 },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: 'center', marginBottom: 4 },
   header: { fontSize: 20, fontWeight: '700', color: colors.textPrimary },
