@@ -84,6 +84,12 @@ const SPRING_CONFIG = { damping: 22, stiffness: 210, mass: 0.4 };
 // mid-drag — see note below); this is the width of the dragY band around 0
 // over which they crossfade.
 const CROSSFADE_BAND = 16;
+// Week mode never lets the downward drag go far enough to shrink Upcoming
+// (and push the handle) past this much height - unlike Month mode, Upcoming
+// never fades out in Week mode (see animatedCardsSheetStyle), so without
+// this reserve the handle could ride down out of easy reach and the list
+// could shrink to nothing, with no way back but a lucky blind grab.
+const MIN_UPCOMING_VISIBLE = 160;
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -918,7 +924,12 @@ export default function HomeScreen() {
   // it never re-renders mid-drag - only the clipping wrapper's height
   // animates, purely on the UI thread.
   const weekGridBaseHeight = Math.max(0, (calFullHeight ?? 0) - MIN_TOP_INSET);
-  const weekGridMaxHeight = weekGridBaseHeight + bottomLimit;
+  // Week mode's own, smaller ceiling for dragY - leaves MIN_UPCOMING_VISIBLE
+  // of Upcoming (and the handle) always reachable, unlike Month mode's
+  // bottomLimit which is fine to ride all the way down since Upcoming there
+  // is meant to fully hand off to the Message Board.
+  const weekBottomLimit = ready ? Math.max(0, bottomLimit - MIN_UPCOMING_VISIBLE) : 0;
+  const weekGridMaxHeight = weekGridBaseHeight + weekBottomLimit;
 
   const handleContentLayout = (e: LayoutChangeEvent) => {
     if (totalMeasuredRef.current) return;
@@ -939,7 +950,8 @@ export default function HomeScreen() {
     })
     .onUpdate((e) => {
       const next = dragStart.value + e.translationY;
-      dragY.value = Math.min(bottomLimit, Math.max(topLimit, next));
+      const maxY = viewMode === "week" ? weekBottomLimit : bottomLimit;
+      dragY.value = Math.min(maxY, Math.max(topLimit, next));
     })
     .onEnd(() => {
       // Snap purely by physical nearest-point — no velocity involved.
@@ -947,7 +959,8 @@ export default function HomeScreen() {
       // overshooting straight past the intended target to whichever
       // endpoint matched the direction of motion, regardless of how close
       // the actual release position was to a nearer point.
-      const points = [topLimit, 0, bottomLimit];
+      const maxY = viewMode === "week" ? weekBottomLimit : bottomLimit;
+      const points = [topLimit, 0, maxY];
       let target = points[0];
       let bestDist = Math.abs(points[0] - dragY.value);
       for (let i = 1; i < points.length; i++) {
@@ -1043,7 +1056,7 @@ export default function HomeScreen() {
       // the growing calendar, rather than fading out.
       return {
         opacity: 1,
-        top: dragY.value > 0 ? base + Math.min(dragY.value, bottomLimit) : upTop,
+        top: dragY.value > 0 ? base + Math.min(dragY.value, weekBottomLimit) : upTop,
       };
     }
     return {
@@ -1098,7 +1111,7 @@ export default function HomeScreen() {
   // handle is pulled down - purely a UI-thread height/overflow animation, so
   // WeekGrid's own (heavier) component tree never re-renders mid-drag.
   const animatedWeekGridWrapperStyle = useAnimatedStyle(() => ({
-    height: weekGridBaseHeight + (dragY.value > 0 ? Math.min(dragY.value, bottomLimit) : 0),
+    height: weekGridBaseHeight + (dragY.value > 0 ? Math.min(dragY.value, weekBottomLimit) : 0),
   }));
 
   // The handle itself: a single, always-mounted element so the active
