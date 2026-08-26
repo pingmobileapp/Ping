@@ -367,30 +367,6 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
             </>
           )}
 
-          <TouchableOpacity style={styles.allDayRow} onPress={() => setIsAllDay((v) => !v)}>
-            <View style={[styles.checkbox, isAllDay && styles.checkboxChecked]}>
-              {isAllDay && <Text style={styles.checkmark}>✓</Text>}
-            </View>
-            <Text style={styles.allDayText}>All day</Text>
-          </TouchableOpacity>
-
-          <Text style={styles.label}>Remind me before</Text>
-          <View style={styles.row}>
-            {REMINDER_OPTIONS.map((opt) => (
-              <TouchableOpacity
-                key={opt.label}
-                style={[styles.pillButton, reminderMinutes === opt.value && styles.pillButtonSelected]}
-                onPress={() => setReminderMinutes(opt.value)}
-              >
-                <Text style={[styles.pillButtonText, reminderMinutes === opt.value && styles.pillButtonTextSelected]}>
-                  {opt.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <RecurrencePicker value={recurrence} onChange={setRecurrence} readOnlyExisting={isExistingRecurring} />
-
           {showPicker && pickerMode === 'date' && (
             <View style={styles.calendarWrap}>
               <Calendar
@@ -425,6 +401,30 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
               <Text style={styles.doneText}>Done</Text>
             </TouchableOpacity>
           )}
+
+          <TouchableOpacity style={styles.allDayRow} onPress={() => setIsAllDay((v) => !v)}>
+            <View style={[styles.checkbox, isAllDay && styles.checkboxChecked]}>
+              {isAllDay && <Text style={styles.checkmark}>✓</Text>}
+            </View>
+            <Text style={styles.allDayText}>All day</Text>
+          </TouchableOpacity>
+
+          <Text style={styles.label}>Remind me before</Text>
+          <View style={styles.row}>
+            {REMINDER_OPTIONS.map((opt) => (
+              <TouchableOpacity
+                key={opt.label}
+                style={[styles.pillButton, reminderMinutes === opt.value && styles.pillButtonSelected]}
+                onPress={() => setReminderMinutes(opt.value)}
+              >
+                <Text style={[styles.pillButtonText, reminderMinutes === opt.value && styles.pillButtonTextSelected]}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <RecurrencePicker value={recurrence} onChange={setRecurrence} readOnlyExisting={isExistingRecurring} />
 
           {!showPicker && (
             <>
