@@ -910,6 +910,16 @@ export default function HomeScreen() {
   const bottomLimit = ready ? Math.max(80, originalRoom, roomNeededForHalfway) : 0;
   const extraCoverable = Math.max(0, bottomLimit - originalRoom);
 
+  // Week mode repurposes the same downward drag + bottomLimit budget that
+  // Month mode grants to the Message Board (rows block) below - instead of
+  // revealing messages, dragging down in Week view grows how many hours of
+  // the day are visible. WeekGrid itself is always given this full max
+  // height as its own internal layout budget (see the height prop below) so
+  // it never re-renders mid-drag - only the clipping wrapper's height
+  // animates, purely on the UI thread.
+  const weekGridBaseHeight = Math.max(0, (calFullHeight ?? 0) - MIN_TOP_INSET);
+  const weekGridMaxHeight = weekGridBaseHeight + bottomLimit;
+
   const handleContentLayout = (e: LayoutChangeEvent) => {
     if (totalMeasuredRef.current) return;
     totalMeasuredRef.current = true;
@@ -972,6 +982,11 @@ export default function HomeScreen() {
   // would — teaches people where the feature lives.
   const openMessages = () => {
     if (!ready) return;
+    // In Week mode the same downward drag/bottomLimit is repurposed to grow
+    // the hour grid instead of revealing the Message Board (see
+    // weekGridMaxHeight above) - switch back to Month first so this always
+    // actually lands on messages regardless of which view was showing.
+    if (viewMode === "week") setViewMode("month");
     dragY.value = withSpring(bottomLimit, SPRING_CONFIG);
   };
 
@@ -988,7 +1003,9 @@ export default function HomeScreen() {
   // Content type is a pure function of which side of center the handle is
   // on — no separate toggle/threshold bookkeeping needed.
   useAnimatedReaction(
-    () => dragY.value > 0,
+    // Week mode never enters compact/Message-Board mode - its downward drag
+    // is repurposed to grow the hour grid instead (see weekGridMaxHeight).
+    () => dragY.value > 0 && viewMode !== "week",
     (shouldBeCompact) => {
       if (shouldBeCompact !== isCompactModeShared.value) {
         isCompactModeShared.value = shouldBeCompact;
@@ -1011,23 +1028,37 @@ export default function HomeScreen() {
   // resize it, so the FlatList inside kept thinking it had more room than
   // was actually on-screen and would scroll its last item into a clipped,
   // invisible strip past the true bottom edge.
-  const animatedCardsSheetStyle = useAnimatedStyle(() => ({
-    // Only fades out once you're pulling into rows territory (dragY > 0);
-    // fully opaque for the entire rest/up range, so the default view never
-    // sits mid-fade.
-    opacity: interpolate(
-      dragY.value,
-      [0, CROSSFADE_BAND],
-      [1, 0],
-      Extrapolation.CLAMP,
-    ),
-    top: interpolate(
+  const animatedCardsSheetStyle = useAnimatedStyle(() => {
+    const base = calFullHeight ?? MIN_TOP_INSET;
+    const upTop = interpolate(
       dragY.value,
       [topLimit, 0],
-      [MIN_TOP_INSET, calFullHeight ?? MIN_TOP_INSET],
+      [MIN_TOP_INSET, base],
       Extrapolation.CLAMP,
-    ),
-  }));
+    );
+    if (viewMode === "week") {
+      // Week mode's downward drag grows the hour grid (see
+      // weekGridMaxHeight) instead of revealing the Message Board - Upcoming
+      // stays fully visible and just gets pushed down to stay flush against
+      // the growing calendar, rather than fading out.
+      return {
+        opacity: 1,
+        top: dragY.value > 0 ? base + Math.min(dragY.value, bottomLimit) : upTop,
+      };
+    }
+    return {
+      // Only fades out once you're pulling into rows territory (dragY > 0);
+      // fully opaque for the entire rest/up range, so the default view never
+      // sits mid-fade.
+      opacity: interpolate(
+        dragY.value,
+        [0, CROSSFADE_BAND],
+        [1, 0],
+        Extrapolation.CLAMP,
+      ),
+      top: upTop,
+    };
+  });
 
   // Rows block: top edge stays flush against the calendar while there's
   // still room below it (dragY <= originalRoom); only on a cramped screen
@@ -1035,6 +1066,11 @@ export default function HomeScreen() {
   // to cover the calendar too (never past its own midpoint — see
   // roomNeededForHalfway above). Height always simply tracks dragY 1:1.
   const animatedRowsBlockStyle = useAnimatedStyle(() => {
+    // Never shown in Week mode - that view's downward drag grows the hour
+    // grid instead (see weekGridMaxHeight/animatedWeekGridWrapperStyle).
+    if (viewMode === "week") {
+      return { opacity: 0, top: calFullHeight ?? 0, height: 0 };
+    }
     const calBottom = calFullHeight ?? 0;
     const covered =
       extraCoverable > 0
@@ -1056,6 +1092,14 @@ export default function HomeScreen() {
       ),
     };
   });
+
+  // Clips WeekGrid (always rendered at weekGridMaxHeight internally, see
+  // below) down to weekGridBaseHeight at rest, growing 1:1 with dragY as the
+  // handle is pulled down - purely a UI-thread height/overflow animation, so
+  // WeekGrid's own (heavier) component tree never re-renders mid-drag.
+  const animatedWeekGridWrapperStyle = useAnimatedStyle(() => ({
+    height: weekGridBaseHeight + (dragY.value > 0 ? Math.min(dragY.value, bottomLimit) : 0),
+  }));
 
   // The handle itself: a single, always-mounted element so the active
   // gesture never gets orphaned by a conditional remount mid-drag. It must
@@ -1269,17 +1313,21 @@ export default function HomeScreen() {
               customHeaderTitle={<View />}
             />
           ) : (
-            <WeekGrid
-              ref={weekGridRef}
-              rangeStart={weekGridRangeStart}
-              dayCount={WEEK_GRID_DAY_COUNT}
-              initialDayIndex={WEEK_GRID_LOOKBACK_DAYS}
-              eventsByDay={weekDayColumns}
-              allDayByDay={weekAllDayColumns}
-              height={Math.max(0, (calFullHeight ?? 0) - MIN_TOP_INSET)}
-              onEventPress={handleWeekItemPress}
-              onVisibleWeekChange={setVisibleWeekStart}
-            />
+            <Animated.View
+              style={[{ overflow: "hidden" }, ready && animatedWeekGridWrapperStyle]}
+            >
+              <WeekGrid
+                ref={weekGridRef}
+                rangeStart={weekGridRangeStart}
+                dayCount={WEEK_GRID_DAY_COUNT}
+                initialDayIndex={WEEK_GRID_LOOKBACK_DAYS}
+                eventsByDay={weekDayColumns}
+                allDayByDay={weekAllDayColumns}
+                height={weekGridMaxHeight}
+                onEventPress={handleWeekItemPress}
+                onVisibleWeekChange={setVisibleWeekStart}
+              />
+            </Animated.View>
           )}
         </View>
 
