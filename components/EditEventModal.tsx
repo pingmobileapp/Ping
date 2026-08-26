@@ -18,6 +18,7 @@ import {
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Calendar } from 'react-native-calendars';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Crypto from 'expo-crypto';
 import { supabase } from '../supabase';
 import { useAuth } from '../lib/AuthContext';
 import { findOrCreateContact, healContactLink, getAlreadyInvitedPhones, normalizePhone } from '../lib/phone';
@@ -28,6 +29,8 @@ import { colors, cardFrameGradient, calendarTheme, EVENT_IMAGE_ASPECT_RATIO } fr
 import { isMultiDayEvent } from '../lib/eventDate';
 import { displayName } from '../lib/displayName';
 import { notify } from '../lib/notify';
+import { RecurrenceConfig, generateOccurrences } from '../lib/recurrence';
+import RecurrencePicker from './RecurrencePicker';
 import ImportContactsModal from './ImportContactsModal';
 import ImageCropModal from './ImageCropModal';
 import NonAppInviteQueue, { QueueContact } from './NonAppInviteQueue';
@@ -132,6 +135,13 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   const [newItemQty, setNewItemQty] = useState('1');
   const [newItemAllowCustom, setNewItemAllowCustom] = useState(false);
 
+  // Only ever set (and only ever shown - see the RecurrencePicker below)
+  // when the event isn't already part of a series - this is "turn this
+  // one-off Ping into occurrence #1 of a new series", not an edit to an
+  // existing series' pattern (which is fixed once occurrences exist, same
+  // as the read-only note for that case).
+  const [recurrence, setRecurrence] = useState<RecurrenceConfig | null>(null);
+
   const dragY = useRef(new Animated.Value(0)).current;
   const [keyboardVisible, setKeyboardVisible] = useState(false);
 
@@ -206,6 +216,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       setItems([]);
       setCoHosts([]);
       setTaggedGroupName(null);
+      setRecurrence(null);
 
       if (session?.user?.id) {
         loadContactsAndGroups();
@@ -678,6 +689,113 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
     );
   };
 
+  // Generates the sibling rows for turning this event into a new series -
+  // called from handleSave once the anchor event (occurrence #1, already
+  // tagged with recurrenceId there) has saved successfully. Copies today's
+  // items, co-hosts, and this event's final guest list (including anyone
+  // just invited in this same save) onto each later date; RSVPs and item
+  // claims start fresh per occurrence, same as CreateEventModal's
+  // batch-create. Deliberately sends no "you're invited" notification for
+  // these - guests already know about the event from the original invite,
+  // so a burst of pushes for future dates would just be noise. Returns the
+  // dates that failed to create so the caller can surface a partial-failure
+  // notice, matching CreateEventModal's failedDates pattern.
+  const createFutureOccurrences = async (
+    recurrenceId: string,
+    finalImageUrl: string | null,
+    finalImageUrlFull: string | null,
+    finalStatus: 'sent' | 'draft'
+  ): Promise<string[]> => {
+    if (!event || !session?.user?.id || !recurrence) return [];
+
+    const occurrences = generateOccurrences(eventDate, endDate, recurrence);
+    const futureOccurrences = occurrences.slice(1);
+    if (futureOccurrences.length === 0) return [];
+
+    const { data: finalInvitees } = await supabase
+      .from('invitees')
+      .select('contact_id, user_id, invited_via')
+      .eq('event_id', event.id);
+    const guestRows = (finalInvitees || []).filter((i) => i.user_id !== session.user.id);
+
+    const failedDates: string[] = [];
+
+    for (const occ of futureOccurrences) {
+      const { data: eventRow, error } = await supabase
+        .from('events')
+        .insert([
+          {
+            title,
+            description: description.trim() || null,
+            location,
+            event_date: occ.startDate.toISOString(),
+            end_date: occ.endDate ? occ.endDate.toISOString() : null,
+            is_all_day: isAllDay,
+            status: finalStatus,
+            host_id: session.user.id,
+            is_public: isPublic,
+            image_url: finalImageUrl,
+            image_url_full: finalImageUrlFull,
+            recurrence_id: recurrenceId,
+            group_id: event.group_id,
+          },
+        ])
+        .select()
+        .single();
+
+      if (error || !eventRow) {
+        console.error('Error creating sibling occurrence:', occ.startDate, error);
+        failedDates.push(occ.startDate.toLocaleDateString());
+        continue;
+      }
+
+      const { error: hostInviteError } = await supabase.from('invitees').insert([
+        {
+          event_id: eventRow.id,
+          user_id: session.user.id,
+          rsvp_status: 'accepted',
+          invited_via: 'app',
+          responded_at: new Date().toISOString(),
+        },
+      ]);
+      if (hostInviteError) console.error('Error creating host invitee row:', hostInviteError);
+
+      if (coHosts.length > 0) {
+        const { error: hostsError } = await supabase
+          .from('event_hosts')
+          .insert(coHosts.map((c) => ({ event_id: eventRow.id, user_id: c.userId })));
+        if (hostsError) console.error('Error adding co-hosts:', hostsError);
+      }
+
+      if (items.length > 0) {
+        const { error: itemsError } = await supabase.from('items').insert(
+          items.map((it) => ({
+            event_id: eventRow.id,
+            name: it.name,
+            quantity_needed: parseInt(it.qty, 10) || 1,
+            allow_custom: it.allowCustom,
+          }))
+        );
+        if (itemsError) console.error('Error creating items:', itemsError);
+      }
+
+      if (guestRows.length > 0) {
+        const { error: inviteesError } = await supabase.from('invitees').insert(
+          guestRows.map((i) => ({
+            event_id: eventRow.id,
+            contact_id: i.contact_id,
+            user_id: i.user_id,
+            rsvp_status: 'pending',
+            invited_via: i.invited_via,
+          }))
+        );
+        if (inviteesError) console.error('Error inviting guests to occurrence:', inviteesError);
+      }
+    }
+
+    return failedDates;
+  };
+
   const handleSave = async (sendNow: boolean, notifyExisting: boolean, applyToFuture: boolean) => {
     if (!event || !session?.user?.id) return;
     if (!title) {
@@ -686,6 +804,13 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
     }
 
     setSubmitting(true);
+
+    // Freshly minted only when the host just picked a recurrence on an
+    // event that wasn't already part of one - applyToFuture can never be
+    // true in that case (the "this and following" choice only appears
+    // when event.recurrence_id is already set), so this always lands in
+    // the single-event update branch below.
+    const newRecurrenceId = recurrence && !event.recurrence_id ? Crypto.randomUUID() : null;
 
     let imageUrl = existingImageUrl;
     let imageUrlFull = existingImageUrlFull;
@@ -750,6 +875,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
         image_url_full: imageUrlFull,
       };
       if (sendNow) updates.status = 'sent';
+      if (newRecurrenceId) updates.recurrence_id = newRecurrenceId;
 
       ({ error } = await supabase.from('events').update(updates).eq('id', event.id));
     }
@@ -840,6 +966,21 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
             })
             .filter((c): c is QueueContact => !!c);
         }
+      }
+    }
+
+    if (newRecurrenceId) {
+      const failedDates = await createFutureOccurrences(
+        newRecurrenceId,
+        imageUrl,
+        imageUrlFull,
+        sendNow ? 'sent' : event.status
+      );
+      if (failedDates.length > 0) {
+        Alert.alert(
+          'Some repeats could not be created',
+          `This event is now repeating, but these dates failed: ${failedDates.join(', ')}`
+        );
       }
     }
 
@@ -1134,7 +1275,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
               </View>
             </TouchableOpacity>
 
-            {!!event.recurrence_id && (
+            {event.recurrence_id ? (
               // Ping series don't store their recurrence pattern anywhere
               // (only that these rows share recurrence_id) - a full
               // RecurrencePicker summary would need data that doesn't
@@ -1142,6 +1283,12 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
               // of a series" note. Saving/deleting still asks which
               // occurrences to apply to, below.
               <Text style={styles.recurrenceNote}>↻ Part of a repeating series</Text>
+            ) : (
+              // Not part of a series yet - this lets the host turn this
+              // single Ping into occurrence #1 of a new one. Saving
+              // generates the sibling occurrences (see handleSave), copying
+              // today's items, co-hosts, and current guest list onto each.
+              <RecurrencePicker value={recurrence} onChange={setRecurrence} />
             )}
 
             {!!taggedGroupName && (
