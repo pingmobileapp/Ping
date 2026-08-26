@@ -341,29 +341,31 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
             multiline
           />
 
-          <Text style={styles.label}>Starts</Text>
+          <Text style={styles.label}>Date</Text>
           <View style={styles.row}>
             <TouchableOpacity style={styles.pillButton} onPress={() => openPicker('start', 'date')}>
               <Text style={styles.pillButtonText}>{formatDate(startDate)}</Text>
             </TouchableOpacity>
-            {!isAllDay && (
-              <TouchableOpacity style={styles.pillButton} onPress={() => openPicker('start', 'time')}>
-                <Text style={styles.pillButtonText}>{formatTime(startDate)}</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          <Text style={styles.label}>Ends</Text>
-          <View style={styles.row}>
+            <Text style={styles.rangeDash}>–</Text>
             <TouchableOpacity style={styles.pillButton} onPress={() => openPicker('end', 'date')}>
               <Text style={styles.pillButtonText}>{formatDate(endDate)}</Text>
             </TouchableOpacity>
-            {!isAllDay && (
-              <TouchableOpacity style={styles.pillButton} onPress={() => openPicker('end', 'time')}>
-                <Text style={styles.pillButtonText}>{formatTime(endDate)}</Text>
-              </TouchableOpacity>
-            )}
           </View>
+
+          {!isAllDay && (
+            <>
+              <Text style={styles.label}>Time</Text>
+              <View style={styles.row}>
+                <TouchableOpacity style={styles.pillButton} onPress={() => openPicker('start', 'time')}>
+                  <Text style={styles.pillButtonText}>{formatTime(startDate)}</Text>
+                </TouchableOpacity>
+                <Text style={styles.rangeDash}>–</Text>
+                <TouchableOpacity style={styles.pillButton} onPress={() => openPicker('end', 'time')}>
+                  <Text style={styles.pillButtonText}>{formatTime(endDate)}</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
 
           <TouchableOpacity style={styles.allDayRow} onPress={() => setIsAllDay((v) => !v)}>
             <View style={[styles.checkbox, isAllDay && styles.checkboxChecked]}>
@@ -481,7 +483,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   detailsInput: { minHeight: 60, textAlignVertical: 'top' },
-  row: { flexDirection: 'row', gap: 10 },
+  row: { flexDirection: 'row', gap: 10, alignItems: 'center' },
+  rangeDash: { color: colors.textMuted, fontSize: 15, fontWeight: '600' },
   pillButton: { flex: 1, backgroundColor: colors.surface, borderRadius: 10, borderWidth: 1, borderColor: colors.border, paddingVertical: 12, alignItems: 'center' },
   pillButtonText: { color: colors.textPrimary, fontSize: 15 },
   pillButtonSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
