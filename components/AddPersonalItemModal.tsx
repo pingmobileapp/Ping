@@ -33,6 +33,14 @@ const toDateString = (date: Date) => {
 
 type PickerTarget = 'start' | 'end';
 
+// Recurring items go through EventKit's own instance-scoping (futureEvents/
+// instanceStartDate) rather than anything Ping tracks, and that's real
+// native behavior this environment has no simulator to exercise before it
+// ships - if it fails, showing the actual reason (not just "something went
+// wrong") is what makes the next report diagnosable instead of another
+// guess.
+const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
 // Creating: a lightweight, device-only counterpart to a Ping - title +
 // start/end time, no invitees, nothing sent. Saved straight to the phone's
 // own calendar (see createPersonalCalendarEvent) so it shows up in the
@@ -218,7 +226,7 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
       onSaved();
     } catch (err) {
       console.error('Error saving personal calendar item:', err);
-      Alert.alert('Error', 'Could not save that to your calendar.');
+      Alert.alert('Error', `Could not save that to your calendar. (${errorMessage(err)})`);
     } finally {
       setSubmitting(false);
     }
@@ -250,7 +258,7 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
       onSaved();
     } catch (err) {
       console.error('Error deleting calendar item:', err);
-      Alert.alert('Error', 'Could not delete that item.');
+      Alert.alert('Error', `Could not delete that item. (${errorMessage(err)})`);
     } finally {
       setSubmitting(false);
     }
