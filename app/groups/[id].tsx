@@ -295,6 +295,7 @@ export default function GroupDetailScreen() {
         <FlatList
           data={allContacts}
           keyExtractor={(c) => c.id}
+          style={{ flex: 1 }}
           contentContainerStyle={{ paddingVertical: 12 }}
           keyboardShouldPersistTaps="handled"
           renderItem={({ item }) => {
@@ -352,6 +353,7 @@ export default function GroupDetailScreen() {
         <FlatList
           data={memberNames}
           keyExtractor={(name, i) => `${name}-${i}`}
+          style={{ flex: 1 }}
           contentContainerStyle={{ paddingVertical: 12 }}
           renderItem={({ item }) => (
             <View style={styles.contactRow}>
