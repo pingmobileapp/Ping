@@ -43,10 +43,114 @@ type ActivityRow = {
   price_label: string | null;
   url: string | null;
   confidence: 'high' | 'low';
+  // Real, computed distance from the anchor - null only means "couldn't be
+  // verified" (geocoding found no match), never "trust me, it's close." See
+  // verifyDistances below, which is what actually fills this in.
+  distance_miles: number | null;
 };
 
 const DAYS_AHEAD = 30;
 const RADIUS_MILES = 25;
+// How much slack to give a verified distance before dropping a result -
+// catches things that are clearly not nearby without nitpicking a result
+// that's a mile or two over due to geocoding imprecision or a slightly
+// generous read of "within 25 miles" in the search prompt.
+const RADIUS_SLACK_MILES = 5;
+
+function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 3958.8;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Only cache misses ever hit Nominatim itself, so this only throttles
+// genuinely new locations - a venue that recurs night after night gets
+// geocoded once, ever.
+let lastGeocodeCallAt = 0;
+
+async function geocodeLocation(
+  admin: ReturnType<typeof createClient>,
+  locationText: string
+): Promise<{ lat: number; lng: number } | null> {
+  const key = locationText.trim().toLowerCase();
+  if (!key) return null;
+
+  const { data: cached } = await admin
+    .from('geocode_cache')
+    .select('lat, lng')
+    .eq('location_text', key)
+    .maybeSingle();
+  if (cached) {
+    return cached.lat !== null && cached.lng !== null ? { lat: cached.lat, lng: cached.lng } : null;
+  }
+
+  // Nominatim's public-instance usage policy asks for roughly 1
+  // request/second from a single client.
+  const elapsed = Date.now() - lastGeocodeCallAt;
+  if (elapsed < 1100) await new Promise((r) => setTimeout(r, 1100 - elapsed));
+  lastGeocodeCallAt = Date.now();
+
+  try {
+    const url =
+      `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q=${encodeURIComponent(locationText)}`;
+    const res = await fetch(url, { headers: { 'User-Agent': 'PingApp-Discover/1.0' } });
+    if (!res.ok) {
+      await admin.from('geocode_cache').insert({ location_text: key, lat: null, lng: null });
+      return null;
+    }
+    const results = await res.json();
+    const first = Array.isArray(results) ? results[0] : null;
+    const lat = first ? Number(first.lat) : null;
+    const lng = first ? Number(first.lon) : null;
+    const resolved = lat !== null && lng !== null && !Number.isNaN(lat) && !Number.isNaN(lng);
+    await admin.from('geocode_cache').upsert({ location_text: key, lat: resolved ? lat : null, lng: resolved ? lng : null });
+    return resolved ? { lat: lat as number, lng: lng as number } : null;
+  } catch (err) {
+    console.error('Geocoding failed for', locationText, err);
+    return null;
+  }
+}
+
+// The real verification step: geocodes anything without known coordinates
+// (Ticketmaster/SeatGeek usually already have them from their own API),
+// computes an actual haversine distance from the anchor, and drops
+// anything that's confirmed to be further than RADIUS_MILES +
+// RADIUS_SLACK_MILES away - rather than trusting the search prompt's
+// "within 25 miles" or the model's own sense of what's nearby. A result
+// that couldn't be geocoded at all is kept (not punished for a geocoding
+// miss) with distance_miles left null.
+async function verifyDistances(
+  admin: ReturnType<typeof createClient>,
+  rows: ActivityRow[],
+  anchorLat: number,
+  anchorLng: number
+): Promise<ActivityRow[]> {
+  const verified: ActivityRow[] = [];
+  for (const row of rows) {
+    let { lat, lng } = row;
+    if ((lat === null || lng === null) && row.location) {
+      const geo = await geocodeLocation(admin, row.location);
+      if (geo) {
+        lat = geo.lat;
+        lng = geo.lng;
+      }
+    }
+
+    if (lat !== null && lng !== null) {
+      const distance = haversineMiles(anchorLat, anchorLng, lat, lng);
+      if (distance > RADIUS_MILES + RADIUS_SLACK_MILES) continue;
+      verified.push({ ...row, lat, lng, distance_miles: Math.round(distance * 10) / 10 });
+    } else {
+      verified.push({ ...row, distance_miles: null });
+    }
+  }
+  return verified;
+}
 
 const AI_SEARCH_SCHEMA = {
   type: 'object',
@@ -187,6 +291,7 @@ async function fetchAiSearchActivities(
           price_label: a.price_label || null,
           url: a.url,
           confidence: 'low',
+          distance_miles: null,
         };
       });
   } catch (err) {
@@ -251,6 +356,7 @@ async function fetchTicketmasterActivities(lat: number, lng: number): Promise<Ac
         price_label: priceRange ? `$${priceRange.min}${priceRange.max !== priceRange.min ? `-$${priceRange.max}` : ''}` : 'See listing',
         url: e.url || null,
         confidence: 'high',
+        distance_miles: null,
       };
     });
   } catch (err) {
@@ -289,6 +395,7 @@ async function fetchSeatGeekActivities(lat: number, lng: number): Promise<Activi
       price_label: e.stats?.lowest_price ? `$${e.stats.lowest_price}+` : 'See listing',
       url: e.url || null,
       confidence: 'high',
+      distance_miles: null,
     }));
   } catch (err) {
     console.error('SeatGeek fetch failed:', err);
@@ -319,11 +426,20 @@ serve(async (req) => {
     const lng = Number(Deno.env.get('DISCOVER_ANCHOR_LNG') ?? '0');
     const label = Deno.env.get('DISCOVER_ANCHOR_LABEL') ?? 'the area';
 
-    const [aiActivities, ticketmasterActivities, seatgeekActivities] = await Promise.all([
+    const [rawAiActivities, rawTicketmasterActivities, rawSeatgeekActivities] = await Promise.all([
       fetchAiSearchActivities(label, debug),
       fetchTicketmasterActivities(lat, lng),
       fetchSeatGeekActivities(lat, lng),
     ]);
+
+    // The real verification pass - geocodes anything without known
+    // coordinates and drops whatever's confirmed to be outside the radius,
+    // rather than trusting the search prompt's "within 25 miles" or
+    // Ticketmaster/SeatGeek's own radius search unverified. Sequential
+    // (not part of the Promise.all above) since geocoding is rate-limited.
+    const aiActivities = rawAiActivities !== null ? await verifyDistances(admin, rawAiActivities, lat, lng) : null;
+    const ticketmasterActivities = await verifyDistances(admin, rawTicketmasterActivities, lat, lng);
+    const seatgeekActivities = await verifyDistances(admin, rawSeatgeekActivities, lat, lng);
 
     // Housekeeping: drop anything already over, regardless of source.
     await admin.from('activities').delete().lt('starts_at', new Date().toISOString());

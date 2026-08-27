@@ -59,6 +59,7 @@ type ActivityRow = {
   price_label: string | null;
   url: string | null;
   confidence: string;
+  distance_miles: number | null;
 };
 
 const isKnownCategory = (c: string): c is ActivityCategory => c in CATEGORY_LABELS;
@@ -70,7 +71,10 @@ const toActivity = (row: ActivityRow): Activity => ({
   category: isKnownCategory(row.category) ? row.category : 'community',
   description: row.description,
   location: row.location,
-  distanceMiles: null,
+  // A real, geocoded-and-verified distance from refresh-activities - null
+  // only means it couldn't be verified (no geocoding match), never "trust
+  // the search, it's probably close."
+  distanceMiles: row.distance_miles,
   startsAt: row.starts_at,
   endsAt: row.ends_at,
   priceLabel: row.price_label,
@@ -97,7 +101,9 @@ export async function fetchActivities(options: { dateKey?: string; daysAhead?: n
 
   const { data, error } = await supabase
     .from('activities')
-    .select('id, source, title, category, description, location, starts_at, ends_at, price_label, url, confidence')
+    .select(
+      'id, source, title, category, description, location, starts_at, ends_at, price_label, url, confidence, distance_miles'
+    )
     .gte('starts_at', rangeStart.toISOString())
     .lte('starts_at', rangeEnd.toISOString())
     .order('starts_at', { ascending: true });
