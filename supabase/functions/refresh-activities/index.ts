@@ -376,7 +376,15 @@ async function fetchTicketmasterActivities(lat: number, lng: number): Promise<Ac
     }
     const data = await res.json();
     const events = data?._embedded?.events || [];
-    return events.map((e: any): ActivityRow => {
+    // Ticketmaster's search results include events regardless of whether
+    // they're actually purchasable right now - dates.status.code also
+    // covers "offsale" (presale not started yet, or sales already ended),
+    // "cancelled", "postponed", "rescheduled". Only "onsale" is guaranteed
+    // bookable - seen live: a "Book" link that opened fine but landed on
+    // "Tickets for this event are not currently available."
+    return events
+      .filter((e: any) => e.dates?.status?.code === 'onsale')
+      .map((e: any): ActivityRow => {
       const venue = e._embedded?.venues?.[0];
       const classification = e.classifications?.[0];
       const priceRange = e.priceRanges?.[0];
