@@ -2,6 +2,7 @@ import { PingEvent } from '../components/EventCard';
 import { ExternalEvent } from './calendarConflicts';
 import { colors } from './theme';
 import { externalItemDuplicatesPing } from './eventDedup';
+import { eachDayKeyInRange } from './eventDate';
 
 export type AllDayItem = { id: string; title: string; dayKey: string };
 // startMinutes/endMinutes are minutes since that day's midnight - directly
@@ -125,6 +126,29 @@ export function buildDayColumns(
 // Same idea as buildDayColumns but for all-day items - excluded from the
 // hourly grid entirely (a fixed-height day column has no sensible way to
 // draw a full-day block) and bucketed per day instead, for a chip strip.
+// A multi-day all-day item (event_date through end_date) needs to show up
+// in every day's chip strip it spans, not just its start day - pushes the
+// same item onto each day key from start through end (inclusive, matching
+// the convention the month view's own multi-day bar already uses - see
+// eachDayKeyInRange), clipped to the rendered range.
+const pushAllDayAcrossSpan = (
+  columns: Record<string, AllDayItem[]>,
+  id: string,
+  title: string,
+  start: Date,
+  end: Date | null,
+  rangeStart: Date,
+  rangeEnd: Date
+) => {
+  const spanKeys = eachDayKeyInRange(toDayKey(start), toDayKey(end ?? start));
+  const rangeStartKey = toDayKey(rangeStart);
+  const rangeEndKey = toDayKey(rangeEnd);
+  for (const key of spanKeys) {
+    if (key < rangeStartKey || key >= rangeEndKey) continue;
+    (columns[key] ||= []).push({ id, title, dayKey: key });
+  }
+};
+
 export function buildAllDayColumns(
   rangeStart: Date,
   rangeEnd: Date,
@@ -137,18 +161,20 @@ export function buildAllDayColumns(
   for (const p of pings) {
     if (!p.is_all_day) continue;
     const start = new Date(p.event_date);
-    if (!inRange(start, rangeStart, rangeEnd)) continue;
+    const end = p.end_date ? new Date(p.end_date) : null;
+    // Cheap pre-check before doing any day-by-day work - the span has to
+    // at least overlap the rendered range somewhere.
+    if ((end ?? start) < rangeStart || start >= rangeEnd) continue;
     pingAllDayEntries.push({ title: p.title, start });
-    const dayKey = toDayKey(start);
-    (columns[dayKey] ||= []).push({ id: `ping-${p.id}`, title: p.title, dayKey });
+    pushAllDayAcrossSpan(columns, `ping-${p.id}`, p.title, start, end, rangeStart, rangeEnd);
   }
 
   for (const e of external) {
     if (!e.allDay) continue;
-    if (!inRange(e.startDate, rangeStart, rangeEnd)) continue;
+    const end = e.endDate ? new Date(e.endDate) : null;
+    if ((end ?? e.startDate) < rangeStart || e.startDate >= rangeEnd) continue;
     if (externalItemDuplicatesPing(pingAllDayEntries, { title: e.title, start: e.startDate })) continue;
-    const dayKey = toDayKey(e.startDate);
-    (columns[dayKey] ||= []).push({ id: `ext-${e.id}`, title: e.title, dayKey });
+    pushAllDayAcrossSpan(columns, `ext-${e.id}`, e.title, e.startDate, end, rangeStart, rangeEnd);
   }
 
   return columns;
