@@ -1,0 +1,340 @@
+import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+// Backs the Discover feature (see app/(tabs)/explore.tsx and the Open
+// Slots roadmap) - a scheduled job (see supabase/activities_cron.sql) that
+// refreshes public.activities so the app only ever does a plain SELECT,
+// never calling an external API or AI itself. Two passes:
+//   1. AI web search (Claude) for the long tail no ticketing API covers
+//      well - farmers markets, carnivals, community events. Always runs;
+//      ANTHROPIC_API_KEY is already configured.
+//   2. Ticketmaster/SeatGeek for the mainstream/ticketed side. Each is
+//      skipped entirely (not an error) if its own API key secret isn't
+//      set yet - both slot in automatically the moment those secrets
+//      exist, with no code change needed.
+// Anchored on a fixed location for now (DISCOVER_ANCHOR_LAT/LNG/LABEL)
+// since there's no real per-user device location yet - see the Open
+// Slots roadmap for when that gets added.
+
+const CATEGORIES = [
+  'movies',
+  'music',
+  'dance',
+  'carnival',
+  'farmers_market',
+  'family',
+  'sports',
+  'community',
+] as const;
+
+type Category = (typeof CATEGORIES)[number];
+
+type ActivityRow = {
+  source: 'ai_search' | 'ticketmaster' | 'seatgeek';
+  external_id: string | null;
+  title: string;
+  category: Category;
+  description: string | null;
+  location: string | null;
+  lat: number | null;
+  lng: number | null;
+  starts_at: string;
+  ends_at: string | null;
+  price_label: string | null;
+  url: string | null;
+  confidence: 'high' | 'low';
+};
+
+const DAYS_AHEAD = 10;
+const RADIUS_MILES = 25;
+
+const AI_SEARCH_SCHEMA = {
+  type: 'object',
+  properties: {
+    activities: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          category: { type: 'string', enum: CATEGORIES as unknown as string[] },
+          date: { type: 'string', description: 'ISO yyyy-mm-dd, the date this specific occurrence happens.' },
+          start_time: { type: ['string', 'null'], description: '24-hour HH:mm local time, null if all-day/unclear.' },
+          end_time: { type: ['string', 'null'] },
+          location: { type: 'string', description: 'Venue name and/or city.' },
+          price_label: { type: 'string', description: 'e.g. "Free", "$10", "$8+". "Unknown" if truly not stated.' },
+          url: { type: 'string', description: 'A real URL from your search results for this specific activity.' },
+          description: { type: ['string', 'null'], description: 'One short sentence, or null.' },
+        },
+        required: ['title', 'category', 'date', 'start_time', 'end_time', 'location', 'price_label', 'url', 'description'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['activities'],
+  additionalProperties: false,
+};
+
+async function fetchAiSearchActivities(
+  anchorLabel: string,
+  debug: Record<string, unknown>
+): Promise<ActivityRow[]> {
+  const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
+  if (!apiKey) {
+    console.error('ANTHROPIC_API_KEY not set - skipping AI search pass');
+    debug.ai_search = 'no_api_key';
+    return [];
+  }
+
+  const today = new Date();
+  const isoToday = today.toISOString().slice(0, 10);
+  const endDate = new Date(today);
+  endDate.setDate(endDate.getDate() + DAYS_AHEAD);
+  const isoEnd = endDate.toISOString().slice(0, 10);
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-5',
+      // Each web search round (server_tool_use + web_search_tool_result +
+      // the model's own reasoning between rounds) burns real tokens before
+      // any of it becomes the final record_activities call - 4096 was
+      // exhausted mid-search, hitting max_tokens with no tool call at all.
+      max_tokens: 16000,
+      system:
+        `Search the web to find real, currently-scheduled local activities and events near ${anchorLabel}, ` +
+        `within about ${RADIUS_MILES} miles, happening between ${isoToday} and ${isoEnd}. Prioritize the kinds of ` +
+        `things a general ticketing platform search tends to miss: farmers markets, carnivals/fairs, community ` +
+        `events, dances, family activities, library/park-district events - but include anything else worth ` +
+        `knowing about too. Only include something if you found it via an actual search result with a real date - ` +
+        `never guess or invent a date, time, price, or URL. If you're not confident something is real and ` +
+        `currently scheduled, leave it out rather than include it. Aim for up to 20 results. Once you've searched ` +
+        `enough to have a good list, call record_activities with everything you found - that call is mandatory, ` +
+        `do not end your turn with only a text response.`,
+      tools: [
+        { type: 'web_search_20250305', name: 'web_search', max_uses: 5 },
+        { name: 'record_activities', description: 'Record the activities found via web search.', input_schema: AI_SEARCH_SCHEMA },
+      ],
+      messages: [
+        { role: 'user', content: `Find local activities and events near ${anchorLabel} for the next ${DAYS_AHEAD} days.` },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    console.error('Anthropic API error:', response.status, detail);
+    debug.ai_search = { status: response.status, detail };
+    return [];
+  }
+
+  const result = await response.json();
+  const toolUse = (result.content || []).find(
+    (block: any) => block.type === 'tool_use' && block.name === 'record_activities'
+  );
+  const rawActivities = toolUse?.input?.activities;
+  if (!Array.isArray(rawActivities)) {
+    console.error('No record_activities call in AI search response - stop_reason:', result.stop_reason);
+    debug.ai_search = {
+      stop_reason: result.stop_reason,
+      content_types: (result.content || []).map((b: any) => b.type),
+      text: (result.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join(' '),
+    };
+    return [];
+  }
+  debug.ai_search = { rawCount: rawActivities.length };
+
+  return rawActivities
+    .filter((a: any) => a?.title && a?.date && CATEGORIES.includes(a.category))
+    .map((a: any): ActivityRow => {
+      const startsAt = a.start_time ? `${a.date}T${a.start_time}:00` : `${a.date}T00:00:00`;
+      const endsAt = a.end_time ? `${a.date}T${a.end_time}:00` : null;
+      return {
+        source: 'ai_search',
+        external_id: null,
+        title: a.title,
+        category: a.category,
+        description: a.description || null,
+        location: a.location || null,
+        lat: null,
+        lng: null,
+        starts_at: startsAt,
+        ends_at: endsAt,
+        price_label: a.price_label || null,
+        url: a.url || null,
+        confidence: 'low',
+      };
+    });
+}
+
+// Ticketmaster's own segment/genre taxonomy mapped onto ours - anything
+// unrecognized falls into 'community' rather than being dropped, since
+// that's the closest "miscellaneous local thing" bucket the app has.
+const mapTicketmasterCategory = (segment: string | undefined, genre: string | undefined): Category => {
+  const s = (segment || '').toLowerCase();
+  const g = (genre || '').toLowerCase();
+  if (s.includes('film')) return 'movies';
+  if (s.includes('sports')) return 'sports';
+  if (s.includes('music')) return g.includes('dance') ? 'dance' : 'music';
+  if (g.includes('dance')) return 'dance';
+  if (g.includes('fair') || g.includes('festival')) return 'carnival';
+  if (s.includes('family')) return 'family';
+  return 'community';
+};
+
+async function fetchTicketmasterActivities(lat: number, lng: number): Promise<ActivityRow[]> {
+  const apiKey = Deno.env.get('TICKETMASTER_API_KEY');
+  if (!apiKey) return [];
+
+  const startDateTime = new Date().toISOString().slice(0, 19) + 'Z';
+  const end = new Date();
+  end.setDate(end.getDate() + DAYS_AHEAD);
+  const endDateTime = end.toISOString().slice(0, 19) + 'Z';
+
+  const url =
+    `https://app.ticketmaster.com/discovery/v2/events.json?apikey=${apiKey}` +
+    `&latlong=${lat},${lng}&radius=${RADIUS_MILES}&unit=miles` +
+    `&startDateTime=${startDateTime}&endDateTime=${endDateTime}&sort=date,asc&size=50`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.error('Ticketmaster API error:', res.status, await res.text());
+      return [];
+    }
+    const data = await res.json();
+    const events = data?._embedded?.events || [];
+    return events.map((e: any): ActivityRow => {
+      const venue = e._embedded?.venues?.[0];
+      const classification = e.classifications?.[0];
+      const priceRange = e.priceRanges?.[0];
+      return {
+        source: 'ticketmaster',
+        external_id: e.id,
+        title: e.name,
+        category: mapTicketmasterCategory(classification?.segment?.name, classification?.genre?.name),
+        description: null,
+        location: venue?.name || null,
+        lat: venue?.location?.latitude ? Number(venue.location.latitude) : null,
+        lng: venue?.location?.longitude ? Number(venue.location.longitude) : null,
+        starts_at: e.dates?.start?.dateTime || `${e.dates?.start?.localDate}T00:00:00`,
+        ends_at: null,
+        price_label: priceRange ? `$${priceRange.min}${priceRange.max !== priceRange.min ? `-$${priceRange.max}` : ''}` : 'See listing',
+        url: e.url || null,
+        confidence: 'high',
+      };
+    });
+  } catch (err) {
+    console.error('Ticketmaster fetch failed:', err);
+    return [];
+  }
+}
+
+async function fetchSeatGeekActivities(lat: number, lng: number): Promise<ActivityRow[]> {
+  const clientId = Deno.env.get('SEATGEEK_CLIENT_ID');
+  if (!clientId) return [];
+
+  const url =
+    `https://api.seatgeek.com/2/events?client_id=${clientId}` +
+    `&lat=${lat}&lon=${lng}&range=${RADIUS_MILES}mi&per_page=50&sort=datetime_local.asc`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.error('SeatGeek API error:', res.status, await res.text());
+      return [];
+    }
+    const data = await res.json();
+    const events = data?.events || [];
+    return events.map((e: any): ActivityRow => ({
+      source: 'seatgeek',
+      external_id: String(e.id),
+      title: e.title,
+      category: e.type === 'movie' ? 'movies' : e.type?.includes('sports') || e.type === 'baseball' || e.type === 'basketball' ? 'sports' : e.type === 'concert' ? 'music' : 'community',
+      description: null,
+      location: e.venue?.name || null,
+      lat: e.venue?.location?.lat ?? null,
+      lng: e.venue?.location?.lon ?? null,
+      starts_at: e.datetime_local,
+      ends_at: null,
+      price_label: e.stats?.lowest_price ? `$${e.stats.lowest_price}+` : 'See listing',
+      url: e.url || null,
+      confidence: 'high',
+    }));
+  } catch (err) {
+    console.error('SeatGeek fetch failed:', err);
+    return [];
+  }
+}
+
+serve(async (req) => {
+  try {
+    let debugRequested = false;
+    try {
+      const body = await req.json();
+      debugRequested = !!body?.debug;
+    } catch {
+      // No/invalid JSON body (e.g. the cron job posts an empty body) - not
+      // an error, debug just stays off.
+    }
+    const debug: Record<string, unknown> = {};
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (!supabaseUrl || !serviceRoleKey) {
+      return new Response(JSON.stringify({ error: 'not configured' }), { status: 500 });
+    }
+    const admin = createClient(supabaseUrl, serviceRoleKey);
+
+    const lat = Number(Deno.env.get('DISCOVER_ANCHOR_LAT') ?? '0');
+    const lng = Number(Deno.env.get('DISCOVER_ANCHOR_LNG') ?? '0');
+    const label = Deno.env.get('DISCOVER_ANCHOR_LABEL') ?? 'the area';
+
+    const [aiActivities, ticketmasterActivities, seatgeekActivities] = await Promise.all([
+      fetchAiSearchActivities(label, debug),
+      fetchTicketmasterActivities(lat, lng),
+      fetchSeatGeekActivities(lat, lng),
+    ]);
+
+    // Housekeeping: drop anything already over, regardless of source.
+    await admin.from('activities').delete().lt('starts_at', new Date().toISOString());
+
+    // AI-search rows have no stable id across runs (see ActivityRow) -
+    // fully replaced each time rather than upserted.
+    await admin.from('activities').delete().eq('source', 'ai_search');
+
+    const errors: string[] = [];
+
+    if (aiActivities.length > 0) {
+      const { error } = await admin.from('activities').insert(aiActivities);
+      if (error) errors.push(`ai_search insert: ${error.message}`);
+    }
+
+    const upsertBatch = [...ticketmasterActivities, ...seatgeekActivities];
+    if (upsertBatch.length > 0) {
+      const { error } = await admin.from('activities').upsert(upsertBatch, { onConflict: 'source,external_id' });
+      if (error) errors.push(`ticketmaster/seatgeek upsert: ${error.message}`);
+    }
+
+    return new Response(
+      JSON.stringify({
+        counts: {
+          ai_search: aiActivities.length,
+          ticketmaster: ticketmasterActivities.length,
+          seatgeek: seatgeekActivities.length,
+        },
+        errors,
+        ...(debugRequested ? { debug } : {}),
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  } catch (err) {
+    console.error(err);
+    return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
+  }
+});

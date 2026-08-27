@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   FlatList,
   Linking,
@@ -14,9 +15,7 @@ import {
   Activity,
   ActivityCategory,
   CATEGORY_LABELS,
-  MOCK_ACTIVITIES,
-  parseDateAndTime,
-  toMinutes,
+  fetchActivities,
 } from '../../lib/discoverActivities';
 import {
   createPersonalCalendarEvent,
@@ -24,65 +23,51 @@ import {
   requestCalendarAccess,
 } from '../../lib/calendarConflicts';
 
-const pad = (n: number) => String(n).padStart(2, '0');
-const toDateKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const formatDateHeading = (date: Date): string =>
+  date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 
-const formatDateHeading = (dateKey: string): string => {
-  const [y, m, d] = dateKey.split('-').map(Number);
-  const date = new Date(y, m - 1, d);
-  return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-};
-
-const formatMinutes = (minutes: number): string => {
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  const period = h >= 12 ? 'PM' : 'AM';
-  const hour12 = h % 12 === 0 ? 12 : h % 12;
-  return `${hour12}:${pad(m)} ${period}`;
-};
+const formatTime = (date: Date): string =>
+  date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 
 const formatActivityTime = (activity: Activity): string => {
-  const start = formatMinutes(toMinutes(activity.startTime));
-  if (!activity.endTime) return start;
-  return `${start} – ${formatMinutes(toMinutes(activity.endTime))}`;
+  const start = formatTime(new Date(activity.startsAt));
+  if (!activity.endsAt) return start;
+  return `${start} – ${formatTime(new Date(activity.endsAt))}`;
 };
 
-// A placeholder pipeline (see the Open Slots roadmap) feeds this real data
-// later - Ticketmaster/SeatGeek plus an AI-assisted crawl for the long tail,
-// both normalized into one cached table. This screen only needs to know how
-// to filter and render Activity[], so swapping MOCK_ACTIVITIES for a real
-// fetch later shouldn't touch anything below.
+// Real data, written by the refresh-activities edge function on a nightly
+// schedule (see supabase/activities_cron.sql) - this screen only reads
+// what's already in the activities table via fetchActivities.
 export default function DiscoverScreen() {
   const params = useLocalSearchParams<{ date?: string; gapStart?: string; gapEnd?: string }>();
   const [selectedCategory, setSelectedCategory] = useState<ActivityCategory | null>(null);
   const [showAllDay, setShowAllDay] = useState(false);
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const hasScope = !!params.date;
-  const gapStart = params.gapStart ? Number(params.gapStart) : null;
-  const gapEnd = params.gapEnd ? Number(params.gapEnd) : null;
+  const gapStartMinutes = params.gapStart ? Number(params.gapStart) : null;
+  const gapEndMinutes = params.gapEnd ? Number(params.gapEnd) : null;
 
-  const dayActivities = useMemo(() => {
-    if (hasScope) return MOCK_ACTIVITIES.filter((a) => a.date === params.date);
-    // Opened straight from the tab, with no day picked - browse the next
-    // week rather than showing nothing.
-    const todayKey = toDateKey(new Date());
-    const end = new Date();
-    end.setDate(end.getDate() + 7);
-    const endKey = toDateKey(end);
-    return MOCK_ACTIVITIES.filter((a) => a.date >= todayKey && a.date <= endKey);
-  }, [hasScope, params.date]);
+  useEffect(() => {
+    setLoading(true);
+    fetchActivities({ dateKey: params.date })
+      .then(setActivities)
+      .finally(() => setLoading(false));
+  }, [params.date]);
 
   const timeScoped = useMemo(() => {
-    if (showAllDay || gapStart === null || gapEnd === null) return dayActivities;
-    return dayActivities.filter((a) => {
-      const mins = toMinutes(a.startTime);
-      return mins >= gapStart && mins <= gapEnd;
+    if (showAllDay || gapStartMinutes === null || gapEndMinutes === null) return activities;
+    return activities.filter((a) => {
+      const start = new Date(a.startsAt);
+      const mins = start.getHours() * 60 + start.getMinutes();
+      return mins >= gapStartMinutes && mins <= gapEndMinutes;
     });
-  }, [dayActivities, gapStart, gapEnd, showAllDay]);
+  }, [activities, gapStartMinutes, gapEndMinutes, showAllDay]);
 
   const visibleActivities = useMemo(() => {
-    const list = selectedCategory ? timeScoped.filter((a) => a.category === selectedCategory) : timeScoped;
-    return [...list].sort((a, b) => (a.date === b.date ? toMinutes(a.startTime) - toMinutes(b.startTime) : a.date < b.date ? -1 : 1));
+    if (!selectedCategory) return timeScoped;
+    return timeScoped.filter((a) => a.category === selectedCategory);
   }, [timeScoped, selectedCategory]);
 
   const categories = Object.keys(CATEGORY_LABELS) as ActivityCategory[];
@@ -95,10 +80,8 @@ export default function DiscoverScreen() {
       Alert.alert('Calendar access needed', 'Enable calendar access in Settings to add this to your calendar.');
       return;
     }
-    const start = parseDateAndTime(activity.date, activity.startTime);
-    const end = activity.endTime
-      ? parseDateAndTime(activity.date, activity.endTime)
-      : new Date(start.getTime() + 60 * 60000);
+    const start = new Date(activity.startsAt);
+    const end = activity.endsAt ? new Date(activity.endsAt) : new Date(start.getTime() + 60 * 60000);
     try {
       const details = [activity.location, activity.description, activity.url].filter(Boolean).join('\n');
       await createPersonalCalendarEvent(activity.title, start, end, false, details);
@@ -110,6 +93,7 @@ export default function DiscoverScreen() {
   };
 
   const handleBook = (activity: Activity) => {
+    if (!activity.url) return;
     Linking.openURL(activity.url).catch(() => {
       Alert.alert('Error', 'Could not open that link.');
     });
@@ -121,16 +105,18 @@ export default function DiscoverScreen() {
         <Text style={styles.title}>Discover</Text>
         {hasScope ? (
           <Text style={styles.subtitle}>
-            {formatDateHeading(params.date!)}
-            {gapStart !== null && gapEnd !== null && !showAllDay
-              ? ` · ${formatMinutes(gapStart)} – ${formatMinutes(gapEnd)}`
+            {formatDateHeading(new Date(`${params.date}T00:00:00`))}
+            {gapStartMinutes !== null && gapEndMinutes !== null && !showAllDay
+              ? ` · ${formatTime(new Date(0, 0, 0, Math.floor(gapStartMinutes / 60), gapStartMinutes % 60))} – ${formatTime(
+                  new Date(0, 0, 0, Math.floor(gapEndMinutes / 60), gapEndMinutes % 60)
+                )}`
               : ''}
             {' · within 25 mi'}
           </Text>
         ) : (
           <Text style={styles.subtitle}>What&apos;s happening near you, within 25 mi</Text>
         )}
-        {hasScope && gapStart !== null && gapEnd !== null && (
+        {hasScope && gapStartMinutes !== null && gapEndMinutes !== null && (
           <TouchableOpacity onPress={() => setShowAllDay((v) => !v)}>
             <Text style={styles.toggleText}>{showAllDay ? 'Show just my free time' : 'See all day'}</Text>
           </TouchableOpacity>
@@ -164,43 +150,49 @@ export default function DiscoverScreen() {
         )}
       />
 
-      <FlatList
-        style={{ flex: 1 }}
-        data={visibleActivities}
-        keyExtractor={(a) => a.id}
-        contentContainerStyle={styles.listContent}
-        renderItem={({ item }) => (
-          <View style={styles.card}>
-            <View style={styles.cardHeaderRow}>
-              <Text style={styles.cardCategory}>{CATEGORY_LABELS[item.category]}</Text>
-              <Text style={styles.cardDistance}>{item.distanceMiles.toFixed(1)} mi</Text>
+      {loading ? (
+        <ActivityIndicator style={{ marginTop: 40 }} color={colors.primary} />
+      ) : (
+        <FlatList
+          style={{ flex: 1 }}
+          data={visibleActivities}
+          keyExtractor={(a) => a.id}
+          contentContainerStyle={styles.listContent}
+          renderItem={({ item }) => (
+            <View style={styles.card}>
+              <View style={styles.cardHeaderRow}>
+                <Text style={styles.cardCategory}>{CATEGORY_LABELS[item.category]}</Text>
+                {item.distanceMiles !== null && (
+                  <Text style={styles.cardDistance}>{item.distanceMiles.toFixed(1)} mi</Text>
+                )}
+              </View>
+              <Text style={styles.cardTitle}>{item.title}</Text>
+              <Text style={styles.cardMeta}>
+                {formatDateHeading(new Date(item.startsAt))} · {formatActivityTime(item)}
+              </Text>
+              {!!item.location && <Text style={styles.cardMeta}>{item.location}</Text>}
+              {!!item.description && <Text style={styles.cardDescription}>{item.description}</Text>}
+              <View style={styles.cardFooterRow}>
+                <Text style={styles.cardPrice}>{item.priceLabel || 'See listing'}</Text>
+                <Text style={styles.cardSource}>via {item.source}</Text>
+              </View>
+              <View style={styles.cardActionsRow}>
+                <TouchableOpacity style={styles.bookButton} onPress={() => handleBook(item)} disabled={!item.url}>
+                  <Text style={styles.bookButtonText}>Book</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.calendarButton} onPress={() => handleAddToCalendar(item)}>
+                  <Text style={styles.calendarButtonText}>Add to My Calendar</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-            <Text style={styles.cardTitle}>{item.title}</Text>
-            <Text style={styles.cardMeta}>
-              {formatDateHeading(item.date)} · {formatActivityTime(item)}
+          )}
+          ListEmptyComponent={
+            <Text style={styles.emptyText}>
+              Nothing found for this window yet - try &quot;See all day&quot; or a different filter.
             </Text>
-            <Text style={styles.cardMeta}>{item.location}</Text>
-            {!!item.description && <Text style={styles.cardDescription}>{item.description}</Text>}
-            <View style={styles.cardFooterRow}>
-              <Text style={styles.cardPrice}>{item.price}</Text>
-              <Text style={styles.cardSource}>via {item.source}</Text>
-            </View>
-            <View style={styles.cardActionsRow}>
-              <TouchableOpacity style={styles.bookButton} onPress={() => handleBook(item)}>
-                <Text style={styles.bookButtonText}>Book</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.calendarButton} onPress={() => handleAddToCalendar(item)}>
-                <Text style={styles.calendarButtonText}>Add to My Calendar</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-        ListEmptyComponent={
-          <Text style={styles.emptyText}>
-            Nothing found for this window yet - try &quot;See all day&quot; or a different filter.
-          </Text>
-        }
-      />
+          }
+        />
+      )}
     </View>
   );
 }
