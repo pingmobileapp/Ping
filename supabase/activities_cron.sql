@@ -49,3 +49,19 @@ select cron.schedule(
   );
   $$
 );
+
+-- Staggered another 20 minutes further out, for the same reason as above.
+select cron.schedule(
+  'refresh-activities-allevents-nightly',
+  '57 9 * * *', -- 9:57am UTC =~ 3:57am Mountain Time, daily
+  $$
+  select net.http_post(
+    url := 'https://rmooxzkinakbyhvxcivv.supabase.co/functions/v1/refresh-activities-allevents',
+    headers := jsonb_build_object(
+      'Authorization', 'Bearer sb_publishable_O97fJjA2cNuR4vvRumRsvQ_P3RuxrhO',
+      'Content-Type', 'application/json'
+    ),
+    body := '{}'::jsonb
+  );
+  $$
+);
