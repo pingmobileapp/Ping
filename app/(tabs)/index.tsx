@@ -359,6 +359,22 @@ export default function HomeScreen() {
     });
   }, [fetchExternalEvents]);
 
+  // Without this, anything written straight to the phone calendar from
+  // somewhere other than this exact screen - Discover's "Add to My
+  // Calendar", editing an event in the native Calendar app, Add Personal
+  // Item's own onSaved covers itself but nothing covered arriving here from
+  // elsewhere - stayed invisible in Upcoming until some unrelated action
+  // happened to also call fetchExternalEvents (a pull-to-refresh). This is
+  // what was behind "it says added, but I don't see it": the write itself
+  // was succeeding, Home's cached externalEvents just hadn't been told to
+  // refetch. Refetching on every focus resolves that the moment you come
+  // back to this screen.
+  useFocusEffect(
+    useCallback(() => {
+      if (calendarPermission === "granted") fetchExternalEvents();
+    }, [calendarPermission, fetchExternalEvents]),
+  );
+
   const handleEnableExternalCalendar = async () => {
     const granted = await requestCalendarAccess();
     setCalendarPermission(granted ? "granted" : "denied");
