@@ -940,6 +940,11 @@ export default function HomeScreen() {
   // is meant to fully hand off to the Message Board.
   const weekBottomLimit = ready ? Math.max(0, bottomLimit - MIN_UPCOMING_VISIBLE) : 0;
   const weekGridMaxHeight = weekGridBaseHeight + weekBottomLimit;
+  // Week mode's resting (dragY=0) height is boosted by this much over
+  // Month's - showing only ~3 hours by default (weekGridBaseHeight alone)
+  // was too little to be useful without dragging every time. Capped to
+  // weekBottomLimit so it never asks for more than that ceiling allows.
+  const weekDefaultExpansion = Math.min(280, weekBottomLimit);
 
   const handleContentLayout = (e: LayoutChangeEvent) => {
     if (totalMeasuredRef.current) return;
@@ -1063,10 +1068,23 @@ export default function HomeScreen() {
       // Week mode's downward drag grows the hour grid (see
       // weekGridMaxHeight) instead of revealing the Message Board - Upcoming
       // stays fully visible and just gets pushed down to stay flush against
-      // the growing calendar, rather than fading out.
+      // the growing calendar, rather than fading out. The rest position
+      // (dragY=0) is itself boosted by weekDefaultExpansion so Week view
+      // opens already showing more than a bare handful of hours, without
+      // giving up the topLimit/weekBottomLimit endpoints - only the 0→
+      // weekBottomLimit segment's slope compresses slightly to make room for
+      // that boosted starting point.
+      if (weekBottomLimit <= 0) {
+        return { opacity: 1, top: upTop };
+      }
       return {
         opacity: 1,
-        top: dragY.value > 0 ? base + Math.min(dragY.value, weekBottomLimit) : upTop,
+        top: interpolate(
+          dragY.value,
+          [topLimit, 0, weekBottomLimit],
+          [MIN_TOP_INSET, base + weekDefaultExpansion, base + weekBottomLimit],
+          Extrapolation.CLAMP,
+        ),
       };
     }
     return {
@@ -1127,6 +1145,23 @@ export default function HomeScreen() {
   // buttons and making the drag feel broken.)
   const animatedHandleStyle = useAnimatedStyle(() => {
     const calBottom = calFullHeight ?? MIN_TOP_INSET;
+    // Week mode's cards sheet rests at a boosted top (see
+    // animatedCardsSheetStyle) - the handle has to track that same boosted
+    // curve or it visually drifts away from the sheet's actual top edge.
+    if (viewMode === "week" && weekBottomLimit > 0) {
+      return {
+        transform: [
+          {
+            translateY: interpolate(
+              dragY.value,
+              [topLimit, 0, weekBottomLimit],
+              [MIN_TOP_INSET, calBottom + weekDefaultExpansion, calBottom + weekBottomLimit],
+              Extrapolation.CLAMP,
+            ),
+          },
+        ],
+      };
+    }
     if (dragY.value <= 0) {
       return {
         transform: [
@@ -1342,6 +1377,7 @@ export default function HomeScreen() {
               dragY={dragY}
               visibleHeight={weekGridBaseHeight}
               maxExtraHeight={weekBottomLimit}
+              defaultExpansion={weekDefaultExpansion}
             />
           )}
         </View>

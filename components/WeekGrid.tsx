@@ -1,6 +1,8 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, Pressable, StyleSheet, Dimensions } from 'react-native';
 import Animated, {
+  Extrapolation,
+  interpolate,
   runOnJS,
   scrollTo,
   SharedValue,
@@ -75,6 +77,10 @@ type Props = {
   dragY: SharedValue<number>;
   visibleHeight: number;
   maxExtraHeight: number;
+  // How much taller than visibleHeight the scroll area already starts at
+  // rest (dragY=0) - see the matching boost on the Upcoming sheet's own
+  // rest position in app/(tabs)/index.tsx (animatedCardsSheetStyle).
+  defaultExpansion: number;
 };
 
 type DiscoverPrompt = { dayKey: string; top: number; gapStart: number; gapEnd: number };
@@ -112,6 +118,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       dragY,
       visibleHeight,
       maxExtraHeight,
+      defaultExpansion,
     },
     ref,
   ) => {
@@ -123,9 +130,20 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     // The header row and all-day strip above the scroll area are fixed
     // height - only the remainder is this ScrollView's own frame.
     const scrollAreaBaseHeight = Math.max(0, visibleHeight - DAY_LABEL_ROW_HEIGHT - ALL_DAY_ROW_HEIGHT);
-    const animatedScrollAreaStyle = useAnimatedStyle(() => ({
-      height: scrollAreaBaseHeight + (dragY.value > 0 ? Math.min(dragY.value, maxExtraHeight) : 0),
-    }));
+    const animatedScrollAreaStyle = useAnimatedStyle(() => {
+      if (maxExtraHeight <= 0) {
+        return { height: scrollAreaBaseHeight };
+      }
+      // Mirrors the same rest-position boost as the Upcoming sheet's top
+      // (see animatedCardsSheetStyle) - at dragY<=0 this is already
+      // scrollAreaBaseHeight + defaultExpansion, growing up to
+      // scrollAreaBaseHeight + maxExtraHeight as the handle is dragged down.
+      return {
+        height:
+          scrollAreaBaseHeight +
+          interpolate(dragY.value, [0, maxExtraHeight], [defaultExpansion, maxExtraHeight], Extrapolation.CLAMP),
+      };
+    });
 
     useEffect(() => {
       if (!discoverPrompt) return;
