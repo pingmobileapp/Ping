@@ -104,6 +104,13 @@ export function distanceFromCoords(activity: Activity, coords: { latitude: numbe
   return Math.round(distance * 10) / 10;
 }
 
+// Ticketmaster/SeatGeek pull in plenty of paid listings, so "Free" is its
+// own filter rather than a category - matches the AI search prompt's own
+// price_label convention ("Free", "Free entry", etc.) without also
+// catching something like "$5 (free for kids)".
+export const isFreeActivity = (activity: Activity): boolean =>
+  !!activity.priceLabel && /^free\b/i.test(activity.priceLabel.trim());
+
 // Real-world events picked up by more than one source look like separate
 // rows to the database - the same BYU game can show up via Ticketmaster,
 // via the AI web search, and via the utahagenda.com crawl all at once,

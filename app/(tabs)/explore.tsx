@@ -19,6 +19,7 @@ import {
   CATEGORY_LABELS,
   distanceFromCoords,
   fetchActivities,
+  isFreeActivity,
 } from '../../lib/discoverActivities';
 import {
   createPersonalCalendarEvent,
@@ -84,6 +85,10 @@ export default function DiscoverScreen() {
   // independently of how the screen was entered.
   const [selectedDate, setSelectedDate] = useState(() => params.date ?? toDateKey(new Date()));
   const [selectedCategory, setSelectedCategory] = useState<ActivityCategory | null>(null);
+  // Independent of category - free events show up across every category,
+  // so this combines with whatever category is selected rather than
+  // replacing it (e.g. "Free" + "Music" is a valid combination).
+  const [freeOnly, setFreeOnly] = useState(false);
   const [showAllDay, setShowAllDay] = useState(false);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -170,9 +175,11 @@ export default function DiscoverScreen() {
   }, [activities, gapStartMinutes, gapEndMinutes, showAllDay]);
 
   const visibleActivities = useMemo(() => {
-    if (!selectedCategory) return timeScoped;
-    return timeScoped.filter((a) => a.category === selectedCategory);
-  }, [timeScoped, selectedCategory]);
+    let list = timeScoped;
+    if (selectedCategory) list = list.filter((a) => a.category === selectedCategory);
+    if (freeOnly) list = list.filter(isFreeActivity);
+    return list;
+  }, [timeScoped, selectedCategory, freeOnly]);
 
   const categories = Object.keys(CATEGORY_LABELS) as ActivityCategory[];
 
@@ -267,12 +274,19 @@ export default function DiscoverScreen() {
         style={styles.chipRow}
         contentContainerStyle={styles.chipRowContent}
         ListHeaderComponent={
-          <TouchableOpacity
-            style={[styles.chip, selectedCategory === null && styles.chipActive]}
-            onPress={() => setSelectedCategory(null)}
-          >
-            <Text style={[styles.chipText, selectedCategory === null && styles.chipTextActive]}>All</Text>
-          </TouchableOpacity>
+          <>
+            <TouchableOpacity
+              style={[styles.chip, selectedCategory === null && styles.chipActive]}
+              onPress={() => setSelectedCategory(null)}
+            >
+              <Text style={[styles.chipText, selectedCategory === null && styles.chipTextActive]}>All</Text>
+            </TouchableOpacity>
+            {/* Independent toggle, not part of the category selection above -
+                see freeOnly. */}
+            <TouchableOpacity style={[styles.chip, freeOnly && styles.chipActive]} onPress={() => setFreeOnly((v) => !v)}>
+              <Text style={[styles.chipText, freeOnly && styles.chipTextActive]}>Free</Text>
+            </TouchableOpacity>
+          </>
         }
         renderItem={({ item }) => (
           <TouchableOpacity
