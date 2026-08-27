@@ -29,6 +29,7 @@ import { colors, cardFrameGradient, calendarTheme, EVENT_IMAGE_ASPECT_RATIO } fr
 import { notify } from '../lib/notify';
 import { RecurrenceConfig, generateOccurrences } from '../lib/recurrence';
 import { suggestItems } from '../lib/itemSuggestions';
+import { ActivityCategory, CATEGORY_LABELS } from '../lib/discoverActivities';
 import ImportContactsModal from './ImportContactsModal';
 import ImageCropModal from './ImageCropModal';
 import NonAppInviteQueue, { QueueContact } from './NonAppInviteQueue';
@@ -74,6 +75,12 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
   const [pickerTarget, setPickerTarget] = useState<'start' | 'end'>('start');
   const [submitting, setSubmitting] = useState(false);
   const [isPublic, setIsPublic] = useState(false);
+  // Checking this also forces isPublic true on submit (see submit's
+  // insert) - a Discover listing needs to be joinable by strangers, which
+  // is exactly what is_public already grants via the self-join invitees
+  // policy, so there's no separate RSVP machinery to build for this.
+  const [discoverable, setDiscoverable] = useState(false);
+  const [discoverCategory, setDiscoverCategory] = useState<ActivityCategory>('community');
   const [imageUri, setImageUri] = useState<string | null>(null);
   // The never-cropped pick, kept separate from imageUri (the cropped
   // result) so recropping always has full image data to work with - see
@@ -413,6 +420,8 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
     setSelectedGroupIds([]);
     setExcludedGroupMemberIds([]);
     setIsPublic(false);
+    setDiscoverable(false);
+    setDiscoverCategory('community');
     setImageUri(null);
     setOriginalImageUri(null);
     setItems([]);
@@ -537,7 +546,9 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
           is_all_day: isAllDay,
           status,
           host_id: session!.user.id,
-          is_public: isPublic,
+          is_public: isPublic || discoverable,
+          discoverable,
+          discover_category: discoverable ? discoverCategory : null,
           image_url: imageUrl,
           image_url_full: imageUrlFull,
           recurrence_id: recurrenceId,
@@ -930,12 +941,43 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
                 {isPublic && <Text style={styles.checkmark}>✓</Text>}
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.publicRowTitle}>Make this event public</Text>
+                <Text style={styles.publicRowTitle}>Make this event shareable</Text>
                 <Text style={styles.publicRowSubtitle}>
                   {isPublic ? 'Invitees can share this Ping with others' : 'Only you can select who gets invited'}
                 </Text>
               </View>
             </TouchableOpacity>
+
+            <TouchableOpacity style={styles.publicRow} onPress={() => setDiscoverable((v) => !v)}>
+              <View style={[styles.checkbox, discoverable && styles.checkboxChecked]}>
+                {discoverable && <Text style={styles.checkmark}>✓</Text>}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.publicRowTitle}>List on Discover</Text>
+                <Text style={styles.publicRowSubtitle}>
+                  Any nearby Ping user can find this and say they're going — also makes it shareable
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            {discoverable && (
+              <>
+                <Text style={styles.sublabel}>Category</Text>
+                <View style={styles.chipRow}>
+                  {(Object.keys(CATEGORY_LABELS) as ActivityCategory[]).map((cat) => (
+                    <TouchableOpacity
+                      key={cat}
+                      style={[styles.chip, discoverCategory === cat && styles.chipSelected]}
+                      onPress={() => setDiscoverCategory(cat)}
+                    >
+                      <Text style={[styles.chipText, discoverCategory === cat && styles.chipTextSelected]}>
+                        {CATEGORY_LABELS[cat]}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
 
             <Text style={styles.label}>Invite</Text>
 

@@ -222,7 +222,7 @@ export default function ShareInviteModal({
         <View style={styles.card}>
           <View style={styles.handle} />
           <Text style={styles.header}>Invite others</Text>
-          <Text style={styles.subheader}>This event is public — anyone invited can pass it along.</Text>
+          <Text style={styles.subheader}>This event is shareable — anyone invited can pass it along.</Text>
 
           <TouchableOpacity style={styles.importRow} onPress={() => setImportVisible(true)}>
             <Text style={styles.importText}>📇 Import from Contacts</Text>

@@ -11,7 +11,7 @@ import {
 import { openBrowserAsync } from 'expo-web-browser';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { colors } from '../../lib/theme';
 import {
   Activity,
@@ -79,6 +79,7 @@ const formatActivityTime = (activity: Activity): string => {
 // reads what's already in the activities table via fetchActivities.
 export default function DiscoverScreen() {
   const params = useLocalSearchParams<{ date?: string; gapStart?: string; gapEnd?: string }>();
+  const router = useRouter();
   // Always viewing exactly one day - defaults to today when opened
   // straight from the tab bar, or to the long-pressed day when arriving
   // from a WeekGrid gap. Swiping or tapping a date chip below moves this
@@ -201,6 +202,11 @@ export default function DiscoverScreen() {
       console.error('Error adding activity to calendar:', err);
       Alert.alert('Error', 'Could not add that to your calendar.');
     }
+  };
+
+  const handleViewListing = (activity: Activity) => {
+    if (!activity.pingEventId) return;
+    router.push({ pathname: '/event/[id]', params: { id: activity.pingEventId } });
   };
 
   const handleBook = (activity: Activity) => {
@@ -338,7 +344,11 @@ export default function DiscoverScreen() {
                   {!!item.description && <Text style={styles.cardDescription}>{item.description}</Text>}
                   <View style={styles.cardFooterRow}>
                     <Text style={styles.cardPrice}>{item.priceLabel || 'See listing'}</Text>
-                    {!!sourceDomain(item.url) && <Text style={styles.cardSource}>via {sourceDomain(item.url)}</Text>}
+                    {item.source === 'ping' ? (
+                      <Text style={styles.cardSource}>posted on Ping</Text>
+                    ) : (
+                      !!sourceDomain(item.url) && <Text style={styles.cardSource}>via {sourceDomain(item.url)}</Text>
+                    )}
                   </View>
                   {item.confidence === 'low' && (
                     <Text style={styles.aiDisclaimer}>
@@ -347,15 +357,23 @@ export default function DiscoverScreen() {
                     </Text>
                   )}
                   <View style={styles.cardActionsRow}>
-                    <TouchableOpacity style={styles.bookButton} onPress={() => handleBook(item)} disabled={!item.url}>
-                      {/* AI-search results aren't a real booking flow - this link
-                          is how someone verifies the details themselves, so it
-                          shouldn't imply a purchase the way "Book" does. */}
-                      <Text style={styles.bookButtonText}>{item.source.startsWith('ai_search') ? 'View Source' : 'Book'}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.calendarButton} onPress={() => handleAddToCalendar(item)}>
-                      <Text style={styles.calendarButtonText}>Add to My Calendar</Text>
-                    </TouchableOpacity>
+                    {item.source === 'ping' ? (
+                      <TouchableOpacity style={styles.bookButton} onPress={() => handleViewListing(item)}>
+                        <Text style={styles.bookButtonText}>View & RSVP</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <>
+                        <TouchableOpacity style={styles.bookButton} onPress={() => handleBook(item)} disabled={!item.url}>
+                          {/* AI-search results aren't a real booking flow - this link
+                              is how someone verifies the details themselves, so it
+                              shouldn't imply a purchase the way "Book" does. */}
+                          <Text style={styles.bookButtonText}>{item.source.startsWith('ai_search') ? 'View Source' : 'Book'}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.calendarButton} onPress={() => handleAddToCalendar(item)}>
+                          <Text style={styles.calendarButtonText}>Add to My Calendar</Text>
+                        </TouchableOpacity>
+                      </>
+                    )}
                   </View>
                 </View>
               );

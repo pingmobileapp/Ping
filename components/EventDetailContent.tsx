@@ -37,6 +37,8 @@ type EventDetail = {
   is_all_day: boolean;
   host_id: string | null;
   is_public: boolean;
+  discoverable: boolean;
+  discover_category: string | null;
   image_url: string | null;
   image_url_full: string | null;
   status: 'sent' | 'draft';
@@ -215,6 +217,64 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
       supabase.removeChannel(channel);
     };
   }, [eventId, fetchData]);
+
+  // Backs every RSVP button for someone with no host invitation - reached
+  // only from Discover, never from a real invite. Every option starts
+  // unchecked (no row exists yet) rather than defaulting to "accepted" the
+  // moment the event opens - self-joining only happens once they actually
+  // tap a specific option, and it's inserted with exactly that status.
+  const handleDiscoverJoin = async (status: 'accepted' | 'declined' | 'interested') => {
+    if (!session?.user?.id) return;
+    setUpdating(true);
+    const { error } = await supabase.from('invitees').insert([
+      {
+        event_id: eventId,
+        user_id: session.user.id,
+        rsvp_status: status,
+        // Distinct from 'app' (used for a real host invite) so tapping the
+        // same option again knows it's safe to fully un-join rather than
+        // just clear a real invitee's response - see handlePressRsvpOption.
+        invited_via: 'discover',
+        responded_at: new Date().toISOString(),
+      },
+    ]);
+    if (error) {
+      console.error('Error joining discoverable event:', error);
+      Alert.alert('Error', 'Could not update your response.');
+    } else {
+      await fetchData();
+    }
+    setUpdating(false);
+  };
+
+  // Someone who only ever joined themselves via Discover (never actually
+  // invited by the host) can tap their current selection again to undo it
+  // completely - "as if they never responded" means no invitee row left
+  // at all, not just clearing back to a lingering pending one, since the
+  // host never invited them in the first place. Item claims/assignments
+  // are cleaned up first (no ON DELETE CASCADE from either onto invitees),
+  // same as the full-event delete flow in EditEventModal.
+  const handleDiscoverLeave = async () => {
+    if (!session?.user?.id || !event || !myInvitee) return;
+    setUpdating(true);
+    await supabase.from('item_claims').delete().eq('invitee_id', myInvitee.id);
+    await supabase.from('items').update({ assigned_to: null }).eq('assigned_to', myInvitee.id);
+    await cancelEventReminder(session.user.id, event.id);
+    const { error } = await supabase.from('invitees').delete().eq('id', myInvitee.id);
+    if (error) {
+      console.error('Error leaving discoverable event:', error);
+      Alert.alert('Error', 'Could not update your response.');
+    } else {
+      await fetchData();
+    }
+    setUpdating(false);
+  };
+
+  const handlePressRsvpOption = (status: 'accepted' | 'declined' | 'interested') => {
+    if (!isHost && !myInvitee) return handleDiscoverJoin(status);
+    if (myInvitee?.invited_via === 'discover' && myInvitee.rsvp_status === status) return handleDiscoverLeave();
+    return handleRsvp(status);
+  };
 
   const handleRsvp = async (status: 'accepted' | 'declined' | 'interested') => {
     if (!session?.user?.id || !event) return;
@@ -502,8 +562,13 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
 
         <View style={styles.visibilityRow}>
           <View style={[styles.visibilityBadge, event.is_public ? styles.publicBadge : styles.privateBadge]}>
-            <Text style={styles.visibilityBadgeText}>{event.is_public ? 'Public' : 'Private'}</Text>
+            <Text style={styles.visibilityBadgeText}>{event.is_public ? 'Shareable' : 'Private'}</Text>
           </View>
+          {event.discoverable && (
+            <View style={[styles.visibilityBadge, styles.publicBadge]}>
+              <Text style={styles.visibilityBadgeText}>On Discover</Text>
+            </View>
+          )}
           {event.is_public && (myInvitee || isHost) && (
             <TouchableOpacity onPress={() => setShareModalVisible(true)}>
               <Text style={styles.inviteOthersText}>+ Invite others</Text>
@@ -513,15 +578,18 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
 
         <View style={styles.rsvpSection}>
           <Text style={styles.sectionLabel}>Your response</Text>
-          {isHost || myInvitee ? (
+          {isHost || myInvitee || event.discoverable ? (
             <View style={styles.rsvpRow}>
               {RSVP_OPTIONS.map((opt) => {
+                // False for every option until a real invitee row exists -
+                // a Discover viewer who hasn't tapped anything yet sees all
+                // three unchecked, never a default "accepted".
                 const selected = myInvitee?.rsvp_status === opt.value;
                 return (
                   <TouchableOpacity
                     key={opt.value}
                     style={[styles.rsvpButton, selected && styles.rsvpButtonSelected]}
-                    onPress={() => handleRsvp(opt.value)}
+                    onPress={() => handlePressRsvpOption(opt.value)}
                     disabled={updating}
                   >
                     <Text style={[styles.rsvpButtonText, selected && styles.rsvpButtonTextSelected]}>
@@ -814,6 +882,8 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
             image_url: event.image_url,
             image_url_full: event.image_url_full,
             is_public: event.is_public,
+            discoverable: event.discoverable,
+            discover_category: event.discover_category,
             status: event.status,
             description: event.description,
             recurrence_id: event.recurrence_id,

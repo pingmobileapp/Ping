@@ -48,6 +48,10 @@ export type Activity = {
   priceLabel: string | null;
   url: string | null;
   confidence: 'high' | 'low';
+  // Set only for a Ping a host listed on Discover (source === 'ping') -
+  // the real events.id to open via /event/[id] for the full RSVP/detail
+  // experience, since these aren't ticketed listings with an external URL.
+  pingEventId?: string;
 };
 
 type ActivityRow = {
@@ -192,6 +196,58 @@ export function dedupeActivities(activities: Activity[]): Activity[] {
   return kept.sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
 }
 
+type EventListingRow = {
+  id: string;
+  title: string;
+  description: string | null;
+  location: string | null;
+  event_date: string;
+  end_date: string | null;
+  discover_category: string | null;
+};
+
+const toListingActivity = (row: EventListingRow): Activity => ({
+  id: `ping-${row.id}`,
+  source: 'ping',
+  title: row.title,
+  category: row.discover_category && isKnownCategory(row.discover_category) ? row.discover_category : 'community',
+  description: row.description,
+  location: row.location,
+  lat: null,
+  lng: null,
+  distanceMiles: null,
+  startsAt: row.event_date,
+  endsAt: row.end_date,
+  // Ping listings have no ticketing/payment path yet (a future phase of
+  // Discover) - every one shown today is free to join.
+  priceLabel: 'Free',
+  url: null,
+  confidence: 'high',
+  pingEventId: row.id,
+});
+
+// Pings a host has explicitly listed on Discover (see the "List on
+// Discover" toggle in CreateEventModal/EditEventModal) - a real events row
+// each, so no dedup pass needed the way the multi-source aggregator
+// activities do.
+async function fetchUserListings(rangeStart: Date, rangeEnd: Date): Promise<Activity[]> {
+  const { data, error } = await supabase
+    .from('events')
+    .select('id, title, description, location, event_date, end_date, discover_category')
+    .eq('discoverable', true)
+    .eq('status', 'sent')
+    .gte('event_date', rangeStart.toISOString())
+    .lte('event_date', rangeEnd.toISOString())
+    .order('event_date', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching Discover listings:', error);
+    return [];
+  }
+
+  return (data as EventListingRow[]).map(toListingActivity);
+}
+
 // dateKey: scope to just that one day (yyyy-mm-dd), as when arriving from
 // a long-pressed gap in WeekGrid. Omitted for the plain "browse" case,
 // which instead looks ahead daysAhead days from now.
@@ -209,19 +265,25 @@ export async function fetchActivities(options: { dateKey?: string; daysAhead?: n
     rangeEnd.setDate(rangeEnd.getDate() + (options.daysAhead ?? 30));
   }
 
-  const { data, error } = await supabase
-    .from('activities')
-    .select(
-      'id, source, title, category, description, location, lat, lng, starts_at, ends_at, price_label, url, confidence, distance_miles'
-    )
-    .gte('starts_at', rangeStart.toISOString())
-    .lte('starts_at', rangeEnd.toISOString())
-    .order('starts_at', { ascending: true });
+  const [{ data, error }, listings] = await Promise.all([
+    supabase
+      .from('activities')
+      .select(
+        'id, source, title, category, description, location, lat, lng, starts_at, ends_at, price_label, url, confidence, distance_miles'
+      )
+      .gte('starts_at', rangeStart.toISOString())
+      .lte('starts_at', rangeEnd.toISOString())
+      .order('starts_at', { ascending: true }),
+    fetchUserListings(rangeStart, rangeEnd),
+  ]);
 
   if (error) {
     console.error('Error fetching activities:', error);
-    return [];
+    return listings.sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
   }
 
-  return dedupeActivities((data as ActivityRow[]).map(toActivity));
+  const deduped = dedupeActivities((data as ActivityRow[]).map(toActivity));
+  return [...deduped, ...listings].sort(
+    (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()
+  );
 }

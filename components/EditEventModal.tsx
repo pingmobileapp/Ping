@@ -30,6 +30,7 @@ import { isMultiDayEvent } from '../lib/eventDate';
 import { displayName } from '../lib/displayName';
 import { notify } from '../lib/notify';
 import { RecurrenceConfig, generateOccurrences } from '../lib/recurrence';
+import { ActivityCategory, CATEGORY_LABELS } from '../lib/discoverActivities';
 import RecurrencePicker from './RecurrencePicker';
 import ImportContactsModal from './ImportContactsModal';
 import ImageCropModal from './ImageCropModal';
@@ -56,6 +57,8 @@ export type EditableEvent = {
   image_url: string | null;
   image_url_full: string | null;
   is_public: boolean;
+  discoverable: boolean;
+  discover_category: string | null;
   status: 'sent' | 'draft';
   description: string | null;
   recurrence_id: string | null;
@@ -88,6 +91,8 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   const [pickerTarget, setPickerTarget] = useState<'start' | 'end'>('start');
   const [submitting, setSubmitting] = useState(false);
   const [isPublic, setIsPublic] = useState(false);
+  const [discoverable, setDiscoverable] = useState(false);
+  const [discoverCategory, setDiscoverCategory] = useState<ActivityCategory>('community');
   const [imageUri, setImageUri] = useState<string | null>(null);
   // The never-cropped pick, kept separate from imageUri (the cropped
   // result) so recropping always has full image data to work with - see
@@ -213,6 +218,12 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       setIsMultiDay(isMultiDayEvent(event.event_date, event.end_date));
       setIsAllDay(!!event.is_all_day);
       setIsPublic(event.is_public);
+      setDiscoverable(event.discoverable);
+      setDiscoverCategory(
+        event.discover_category && event.discover_category in CATEGORY_LABELS
+          ? (event.discover_category as ActivityCategory)
+          : 'community'
+      );
       setImageUri(null);
       setOriginalImageUri(null);
       setExistingImageUrl(event.image_url);
@@ -742,7 +753,9 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
             is_all_day: isAllDay,
             status: finalStatus,
             host_id: session.user.id,
-            is_public: isPublic,
+            is_public: isPublic || discoverable,
+            discoverable,
+            discover_category: discoverable ? discoverCategory : null,
             image_url: finalImageUrl,
             image_url_full: finalImageUrlFull,
             recurrence_id: recurrenceId,
@@ -860,7 +873,9 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
         description: description.trim() || null,
         location,
         is_all_day: isAllDay,
-        is_public: isPublic,
+        is_public: isPublic || discoverable,
+        discoverable,
+        discover_category: discoverable ? discoverCategory : null,
         image_url: imageUrl,
         image_url_full: imageUrlFull,
       };
@@ -879,7 +894,9 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
         event_date: eventDate.toISOString(),
         end_date: endDate ? endDate.toISOString() : null,
         is_all_day: isAllDay,
-        is_public: isPublic,
+        is_public: isPublic || discoverable,
+        discoverable,
+        discover_category: discoverable ? discoverCategory : null,
         image_url: imageUrl,
         image_url_full: imageUrlFull,
       };
@@ -1343,12 +1360,43 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
                 {isPublic && <Text style={styles.checkmark}>✓</Text>}
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.publicRowTitle}>Make this event public</Text>
+                <Text style={styles.publicRowTitle}>Make this event shareable</Text>
                 <Text style={styles.publicRowSubtitle}>
                   {isPublic ? 'Invitees can share this Ping with others' : 'Only you can select who gets invited'}
                 </Text>
               </View>
             </TouchableOpacity>
+
+            <TouchableOpacity style={styles.publicRow} onPress={() => setDiscoverable((v) => !v)}>
+              <View style={[styles.checkbox, discoverable && styles.checkboxChecked]}>
+                {discoverable && <Text style={styles.checkmark}>✓</Text>}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.publicRowTitle}>List on Discover</Text>
+                <Text style={styles.publicRowSubtitle}>
+                  Any nearby Ping user can find this and say they're going — also makes it shareable
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            {discoverable && (
+              <>
+                <Text style={styles.sublabel}>Category</Text>
+                <View style={styles.chipRow}>
+                  {(Object.keys(CATEGORY_LABELS) as ActivityCategory[]).map((cat) => (
+                    <TouchableOpacity
+                      key={cat}
+                      style={[styles.chip, discoverCategory === cat && styles.chipSelected]}
+                      onPress={() => setDiscoverCategory(cat)}
+                    >
+                      <Text style={[styles.chipText, discoverCategory === cat && styles.chipTextSelected]}>
+                        {CATEGORY_LABELS[cat]}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
 
             <>
                 <Text style={styles.label}>{isDraft ? 'Invite' : 'Invite more people'}</Text>
