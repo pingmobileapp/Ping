@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -9,6 +9,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
 import { useLocalSearchParams } from 'expo-router';
 import { colors } from '../../lib/theme';
 import {
@@ -30,6 +32,19 @@ import {
   getLocationPermissionStatus,
   requestLocationAccess,
 } from '../../lib/location';
+
+const pad = (n: number) => String(n).padStart(2, '0');
+const toDateKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const addDays = (dateKey: string, delta: number): string => {
+  const [y, m, d] = dateKey.split('-').map(Number);
+  return toDateKey(new Date(y, m - 1, d + delta));
+};
+
+// How many days ahead the date strip offers - matches DAYS_AHEAD in the
+// refresh-activities edge functions, since there's no point letting
+// someone swipe/tap past the window the backend actually populated.
+const DATE_STRIP_DAYS = 30;
+const DATE_CHIP_WIDTH = 52;
 
 const formatDateHeading = (date: Date): string =>
   date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
@@ -58,28 +73,45 @@ const formatActivityTime = (activity: Activity): string => {
   return `${start} – ${formatTime(new Date(activity.endsAt))}`;
 };
 
-// Real data, written by the refresh-activities edge function on a nightly
-// schedule (see supabase/activities_cron.sql) - this screen only reads
-// what's already in the activities table via fetchActivities.
+// Real data, written by the refresh-activities edge functions on a
+// nightly schedule (see supabase/activities_cron.sql) - this screen only
+// reads what's already in the activities table via fetchActivities.
 export default function DiscoverScreen() {
   const params = useLocalSearchParams<{ date?: string; gapStart?: string; gapEnd?: string }>();
+  // Always viewing exactly one day - defaults to today when opened
+  // straight from the tab bar, or to the long-pressed day when arriving
+  // from a WeekGrid gap. Swiping or tapping a date chip below moves this
+  // independently of how the screen was entered.
+  const [selectedDate, setSelectedDate] = useState(() => params.date ?? toDateKey(new Date()));
   const [selectedCategory, setSelectedCategory] = useState<ActivityCategory | null>(null);
   const [showAllDay, setShowAllDay] = useState(false);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
   const [locationPermission, setLocationPermission] = useState<LocationPermissionStatus | null>(null);
   const [coords, setCoords] = useState<Coords | null>(null);
+  const dateListRef = useRef<FlatList<string>>(null);
 
-  const hasScope = !!params.date;
-  const gapStartMinutes = params.gapStart ? Number(params.gapStart) : null;
-  const gapEndMinutes = params.gapEnd ? Number(params.gapEnd) : null;
+  // Only meaningful while still looking at the exact day/gap that was
+  // long-pressed - swiping to a different day makes a stale time window
+  // from a different day's schedule meaningless, so it silently stops
+  // applying rather than filtering the new day by the old day's gap.
+  const gapAppliesHere = params.date === selectedDate;
+  const gapStartMinutes = gapAppliesHere && params.gapStart ? Number(params.gapStart) : null;
+  const gapEndMinutes = gapAppliesHere && params.gapEnd ? Number(params.gapEnd) : null;
+
+  // A fresh long-press navigation (a new params.date) should jump the
+  // view there, even if the user had swiped elsewhere on a previous visit
+  // to this screen.
+  useEffect(() => {
+    if (params.date) setSelectedDate(params.date);
+  }, [params.date]);
 
   useEffect(() => {
     setLoading(true);
-    fetchActivities({ dateKey: params.date })
+    fetchActivities({ dateKey: selectedDate })
       .then(setActivities)
       .finally(() => setLoading(false));
-  }, [params.date]);
+  }, [selectedDate]);
 
   // Checks silently on load (no prompt) so returning users who already
   // granted access get real per-user distance without an extra tap -
@@ -96,6 +128,37 @@ export default function DiscoverScreen() {
     setLocationPermission(granted ? 'granted' : 'denied');
     if (granted) setCoords(await getCurrentCoords());
   };
+
+  const dateStripKeys = useMemo(() => {
+    const start = toDateKey(new Date());
+    return Array.from({ length: DATE_STRIP_DAYS }, (_, i) => addDays(start, i));
+  }, []);
+
+  useEffect(() => {
+    const index = dateStripKeys.indexOf(selectedDate);
+    if (index >= 0) {
+      dateListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+    }
+  }, [selectedDate, dateStripKeys]);
+
+  const changeDay = (delta: number) => {
+    setSelectedDate((prev) => addDays(prev, delta));
+  };
+
+  // Lets the results area itself be swiped left/right to move a day,
+  // the same way Home's Upcoming list can be swiped to change months -
+  // activeOffsetX/failOffsetY keep this from hijacking the list's own
+  // vertical scroll, only taking over once the drag is clearly horizontal.
+  const daySwipe = Gesture.Pan()
+    .activeOffsetX([-20, 20])
+    .failOffsetY([-10, 10])
+    .onEnd((e) => {
+      if (e.translationX <= -40) {
+        runOnJS(changeDay)(1);
+      } else if (e.translationX >= 40) {
+        runOnJS(changeDay)(-1);
+      }
+    });
 
   const timeScoped = useMemo(() => {
     if (showAllDay || gapStartMinutes === null || gapEndMinutes === null) return activities;
@@ -144,20 +207,16 @@ export default function DiscoverScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Discover</Text>
-        {hasScope ? (
-          <Text style={styles.subtitle}>
-            {formatDateHeading(new Date(`${params.date}T00:00:00`))}
-            {gapStartMinutes !== null && gapEndMinutes !== null && !showAllDay
-              ? ` · ${formatTime(new Date(0, 0, 0, Math.floor(gapStartMinutes / 60), gapStartMinutes % 60))} – ${formatTime(
-                  new Date(0, 0, 0, Math.floor(gapEndMinutes / 60), gapEndMinutes % 60)
-                )}`
-              : ''}
-            {' · within 25 mi'}
-          </Text>
-        ) : (
-          <Text style={styles.subtitle}>What&apos;s happening near you, within 25 mi</Text>
-        )}
-        {hasScope && gapStartMinutes !== null && gapEndMinutes !== null && (
+        <Text style={styles.subtitle}>
+          {formatDateHeading(new Date(`${selectedDate}T00:00:00`))}
+          {gapStartMinutes !== null && gapEndMinutes !== null && !showAllDay
+            ? ` · ${formatTime(new Date(0, 0, 0, Math.floor(gapStartMinutes / 60), gapStartMinutes % 60))} – ${formatTime(
+                new Date(0, 0, 0, Math.floor(gapEndMinutes / 60), gapEndMinutes % 60)
+              )}`
+            : ''}
+          {' · within 25 mi'}
+        </Text>
+        {gapStartMinutes !== null && gapEndMinutes !== null && (
           <TouchableOpacity onPress={() => setShowAllDay((v) => !v)}>
             <Text style={styles.toggleText}>{showAllDay ? 'Show just my free time' : 'See all day'}</Text>
           </TouchableOpacity>
@@ -169,6 +228,36 @@ export default function DiscoverScreen() {
           <Text style={styles.locationPromptText}>📍 Use your location to see what&apos;s actually near you</Text>
         </TouchableOpacity>
       )}
+
+      <FlatList
+        ref={dateListRef}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        data={dateStripKeys}
+        keyExtractor={(d) => d}
+        style={styles.dateRow}
+        contentContainerStyle={styles.dateRowContent}
+        getItemLayout={(_, index) => ({ length: DATE_CHIP_WIDTH, offset: DATE_CHIP_WIDTH * index, index })}
+        onScrollToIndexFailed={(info) => {
+          setTimeout(() => dateListRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 }), 50);
+        }}
+        renderItem={({ item, index }) => {
+          const [y, m, d] = item.split('-').map(Number);
+          const date = new Date(y, m - 1, d);
+          const active = item === selectedDate;
+          return (
+            <TouchableOpacity
+              style={[styles.dateChip, active && styles.dateChipActive]}
+              onPress={() => setSelectedDate(item)}
+            >
+              <Text style={[styles.dateChipDow, active && styles.dateChipTextActive]}>
+                {index === 0 ? 'Today' : date.toLocaleDateString(undefined, { weekday: 'short' })}
+              </Text>
+              <Text style={[styles.dateChipNum, active && styles.dateChipTextActive]}>{d}</Text>
+            </TouchableOpacity>
+          );
+        }}
+      />
 
       <FlatList
         horizontal
@@ -200,49 +289,52 @@ export default function DiscoverScreen() {
       {loading ? (
         <ActivityIndicator style={{ marginTop: 40 }} color={colors.primary} />
       ) : (
-        <FlatList
-          style={{ flex: 1 }}
-          data={visibleActivities}
-          keyExtractor={(a) => a.id}
-          contentContainerStyle={styles.listContent}
-          renderItem={({ item }) => {
-            const distance = distanceFromCoords(item, coords);
-            return (
-            <View style={styles.card}>
-              <View style={styles.cardHeaderRow}>
-                <Text style={styles.cardCategory}>{CATEGORY_LABELS[item.category]}</Text>
-                {distance !== null && <Text style={styles.cardDistance}>{distance.toFixed(1)} mi</Text>}
-              </View>
-              <Text style={styles.cardTitle}>{item.title}</Text>
-              <Text style={styles.cardMeta}>
-                {formatDateHeading(new Date(item.startsAt))} · {formatActivityTime(item)}
+        <GestureDetector gesture={daySwipe}>
+          <FlatList
+            style={{ flex: 1 }}
+            data={visibleActivities}
+            keyExtractor={(a) => a.id}
+            contentContainerStyle={styles.listContent}
+            renderItem={({ item }) => {
+              const distance = distanceFromCoords(item, coords);
+              return (
+                <View style={styles.card}>
+                  <View style={styles.cardHeaderRow}>
+                    <Text style={styles.cardCategory}>{CATEGORY_LABELS[item.category]}</Text>
+                    {distance !== null && <Text style={styles.cardDistance}>{distance.toFixed(1)} mi</Text>}
+                  </View>
+                  <Text style={styles.cardTitle}>{item.title}</Text>
+                  <Text style={styles.cardMeta}>
+                    {formatDateHeading(new Date(item.startsAt))} · {formatActivityTime(item)}
+                  </Text>
+                  {!!item.location && <Text style={styles.cardMeta}>{item.location}</Text>}
+                  {!!item.description && <Text style={styles.cardDescription}>{item.description}</Text>}
+                  <View style={styles.cardFooterRow}>
+                    <Text style={styles.cardPrice}>{item.priceLabel || 'See listing'}</Text>
+                    {!!sourceDomain(item.url) && <Text style={styles.cardSource}>via {sourceDomain(item.url)}</Text>}
+                  </View>
+                  <View style={styles.cardActionsRow}>
+                    <TouchableOpacity style={styles.bookButton} onPress={() => handleBook(item)} disabled={!item.url}>
+                      {/* AI-search results aren't a real booking flow - this link
+                          is how someone verifies the details themselves, so it
+                          shouldn't imply a purchase the way "Book" does. */}
+                      <Text style={styles.bookButtonText}>{item.source.startsWith('ai_search') ? 'View Source' : 'Book'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.calendarButton} onPress={() => handleAddToCalendar(item)}>
+                      <Text style={styles.calendarButtonText}>Add to My Calendar</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            }}
+            ListEmptyComponent={
+              <Text style={styles.emptyText}>
+                Nothing found for this day yet - try &quot;See all day&quot;, a different filter, or swipe to
+                another day.
               </Text>
-              {!!item.location && <Text style={styles.cardMeta}>{item.location}</Text>}
-              {!!item.description && <Text style={styles.cardDescription}>{item.description}</Text>}
-              <View style={styles.cardFooterRow}>
-                <Text style={styles.cardPrice}>{item.priceLabel || 'See listing'}</Text>
-                {!!sourceDomain(item.url) && <Text style={styles.cardSource}>via {sourceDomain(item.url)}</Text>}
-              </View>
-              <View style={styles.cardActionsRow}>
-                <TouchableOpacity style={styles.bookButton} onPress={() => handleBook(item)} disabled={!item.url}>
-                  {/* AI-search results aren't a real booking flow - this link
-                      is how someone verifies the details themselves, so it
-                      shouldn't imply a purchase the way "Book" does. */}
-                  <Text style={styles.bookButtonText}>{item.source.startsWith('ai_search') ? 'View Source' : 'Book'}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.calendarButton} onPress={() => handleAddToCalendar(item)}>
-                  <Text style={styles.calendarButtonText}>Add to My Calendar</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-            );
-          }}
-          ListEmptyComponent={
-            <Text style={styles.emptyText}>
-              Nothing found for this window yet - try &quot;See all day&quot; or a different filter.
-            </Text>
-          }
-        />
+            }
+          />
+        </GestureDetector>
       )}
     </View>
   );
@@ -256,6 +348,20 @@ const styles = StyleSheet.create({
   toggleText: { color: colors.primary, fontSize: 13, fontWeight: '600', marginTop: 8 },
   locationPromptRow: { paddingHorizontal: 20, marginBottom: 12 },
   locationPromptText: { color: colors.primaryDark, fontSize: 13 },
+  dateRow: { flexGrow: 0, marginBottom: 8 },
+  dateRowContent: { paddingHorizontal: 20, gap: 6 },
+  dateChip: {
+    width: DATE_CHIP_WIDTH - 6,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: 12,
+    paddingVertical: 8,
+    alignItems: 'center',
+    marginRight: 6,
+  },
+  dateChipActive: { backgroundColor: colors.primary },
+  dateChipDow: { color: colors.textSecondary, fontSize: 11, fontWeight: '600' },
+  dateChipNum: { color: colors.textPrimary, fontSize: 16, fontWeight: '700', marginTop: 2 },
+  dateChipTextActive: { color: colors.textOnPrimary },
   chipRow: { flexGrow: 0, marginBottom: 8 },
   chipRowContent: { paddingHorizontal: 20, gap: 8 },
   chip: {
