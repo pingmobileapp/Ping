@@ -225,7 +225,7 @@ const styles = StyleSheet.create({
   chipTextActive: { color: colors.textOnPrimary },
   listContent: { paddingHorizontal: 20, paddingBottom: 40, gap: 14 },
   card: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.surfaceLight,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.border,
