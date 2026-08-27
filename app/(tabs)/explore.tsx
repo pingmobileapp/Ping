@@ -3,12 +3,12 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Linking,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { openBrowserAsync } from 'expo-web-browser';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 import { useLocalSearchParams } from 'expo-router';
@@ -205,7 +205,15 @@ export default function DiscoverScreen() {
 
   const handleBook = (activity: Activity) => {
     if (!activity.url) return;
-    Linking.openURL(activity.url).catch(() => {
+    // Not Linking.openURL - some of these domains (Ticketmaster in
+    // particular) register Universal Links on iOS, so a plain Linking
+    // call can hand off to that site's own native app instead of opening
+    // the page, and that app doesn't always handle every URL shape the
+    // website itself does (seen live as a "page not found" for a URL that
+    // loads fine in an actual browser). openBrowserAsync opens an in-app
+    // browser instead, which doesn't participate in that handoff - same
+    // approach ExternalLink already uses elsewhere in this app.
+    openBrowserAsync(activity.url).catch(() => {
       Alert.alert('Error', 'Could not open that link.');
     });
   };
@@ -237,6 +245,45 @@ export default function DiscoverScreen() {
       )}
 
       <FlatList
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        data={categories}
+        keyExtractor={(c) => c}
+        style={styles.chipRow}
+        contentContainerStyle={styles.chipRowContent}
+        ListHeaderComponent={
+          // A plain Fragment here doesn't lay its children out in a row -
+          // FlatList gives ListHeaderComponent its own single slot in the
+          // horizontal flow, and a bare Fragment's children fall back to
+          // View's default column direction inside that one slot (seen
+          // live as "Free" stacking under "All" instead of beside it).
+          <View style={styles.chipHeaderRow}>
+            <TouchableOpacity
+              style={[styles.chip, selectedCategory === null && styles.chipActive]}
+              onPress={() => setSelectedCategory(null)}
+            >
+              <Text style={[styles.chipText, selectedCategory === null && styles.chipTextActive]}>All</Text>
+            </TouchableOpacity>
+            {/* Independent toggle, not part of the category selection above -
+                see freeOnly. */}
+            <TouchableOpacity style={[styles.chip, freeOnly && styles.chipActive]} onPress={() => setFreeOnly((v) => !v)}>
+              <Text style={[styles.chipText, freeOnly && styles.chipTextActive]}>Free</Text>
+            </TouchableOpacity>
+          </View>
+        }
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            style={[styles.chip, selectedCategory === item && styles.chipActive]}
+            onPress={() => setSelectedCategory((prev) => (prev === item ? null : item))}
+          >
+            <Text style={[styles.chipText, selectedCategory === item && styles.chipTextActive]}>
+              {CATEGORY_LABELS[item]}
+            </Text>
+          </TouchableOpacity>
+        )}
+      />
+
+      <FlatList
         ref={dateListRef}
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -264,40 +311,6 @@ export default function DiscoverScreen() {
             </TouchableOpacity>
           );
         }}
-      />
-
-      <FlatList
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        data={categories}
-        keyExtractor={(c) => c}
-        style={styles.chipRow}
-        contentContainerStyle={styles.chipRowContent}
-        ListHeaderComponent={
-          <>
-            <TouchableOpacity
-              style={[styles.chip, selectedCategory === null && styles.chipActive]}
-              onPress={() => setSelectedCategory(null)}
-            >
-              <Text style={[styles.chipText, selectedCategory === null && styles.chipTextActive]}>All</Text>
-            </TouchableOpacity>
-            {/* Independent toggle, not part of the category selection above -
-                see freeOnly. */}
-            <TouchableOpacity style={[styles.chip, freeOnly && styles.chipActive]} onPress={() => setFreeOnly((v) => !v)}>
-              <Text style={[styles.chipText, freeOnly && styles.chipTextActive]}>Free</Text>
-            </TouchableOpacity>
-          </>
-        }
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={[styles.chip, selectedCategory === item && styles.chipActive]}
-            onPress={() => setSelectedCategory((prev) => (prev === item ? null : item))}
-          >
-            <Text style={[styles.chipText, selectedCategory === item && styles.chipTextActive]}>
-              {CATEGORY_LABELS[item]}
-            </Text>
-          </TouchableOpacity>
-        )}
       />
 
       {loading ? (
@@ -366,7 +379,7 @@ const styles = StyleSheet.create({
   dateRowContent: { paddingHorizontal: 20, gap: 6 },
   dateChip: {
     width: DATE_CHIP_WIDTH - 6,
-    backgroundColor: colors.surfaceAlt,
+    backgroundColor: colors.surfaceLight,
     borderRadius: 12,
     paddingVertical: 8,
     alignItems: 'center',
@@ -378,11 +391,12 @@ const styles = StyleSheet.create({
   dateChipTextActive: { color: colors.textOnPrimary },
   chipRow: { flexGrow: 0, marginBottom: 8 },
   chipRowContent: { paddingHorizontal: 20, gap: 8 },
+  chipHeaderRow: { flexDirection: 'row', gap: 8 },
   chip: {
-    backgroundColor: colors.surfaceAlt,
+    backgroundColor: colors.surfaceLight,
     borderRadius: 100,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
     marginRight: 8,
   },
   chipActive: { backgroundColor: colors.primary },
