@@ -75,108 +75,125 @@ const AI_SEARCH_SCHEMA = {
   additionalProperties: false,
 };
 
+// Returns null on a genuine failure (bad API response, or the model never
+// actually called record_activities) - as opposed to a real empty array,
+// which means the call succeeded and legitimately found nothing. The
+// caller (see serve() below) only replaces last run's ai_search rows on
+// success - null leaves them untouched, so a transient API failure or a
+// truncated response doesn't wipe out real data with nothing.
 async function fetchAiSearchActivities(
   anchorLabel: string,
   debug: Record<string, unknown>
-): Promise<ActivityRow[]> {
+): Promise<ActivityRow[] | null> {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
   if (!apiKey) {
     console.error('ANTHROPIC_API_KEY not set - skipping AI search pass');
     debug.ai_search = 'no_api_key';
-    return [];
+    return null;
   }
 
-  const today = new Date();
-  const isoToday = today.toISOString().slice(0, 10);
-  const endDate = new Date(today);
-  endDate.setDate(endDate.getDate() + DAYS_AHEAD);
-  const isoEnd = endDate.toISOString().slice(0, 10);
+  try {
+    const today = new Date();
+    const isoToday = today.toISOString().slice(0, 10);
+    const endDate = new Date(today);
+    endDate.setDate(endDate.getDate() + DAYS_AHEAD);
+    const isoEnd = endDate.toISOString().slice(0, 10);
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-5',
-      // Each web search round (server_tool_use + web_search_tool_result +
-      // the model's own reasoning between rounds) burns real tokens before
-      // any of it becomes the final record_activities call - 4096 was
-      // exhausted mid-search, hitting max_tokens with no tool call at all.
-      // Raised further alongside DAYS_AHEAD/max_uses below, since covering
-      // a full month means more search rounds and a longer result list.
-      max_tokens: 24000,
-      system:
-        `Search the web to find real, currently-scheduled local activities and events near ${anchorLabel}, ` +
-        `within about ${RADIUS_MILES} miles, happening between ${isoToday} and ${isoEnd} - that's a full month, ` +
-        `not just the next few days, so search specifically for later weeks too (e.g. "events near ${anchorLabel} ` +
-        `next month", "[month name] calendar of events") rather than stopping once you have enough for the first ` +
-        `week or two. If something recurs on a regular schedule (a weekly farmers market, a recurring story time), ` +
-        `include several of its upcoming occurrences spread across the window as separate dated entries, not just ` +
-        `the next one. Prioritize the kinds of things a general ticketing platform search tends to miss: farmers ` +
-        `markets, carnivals/fairs, community events, dances, family activities, library/park-district events - but ` +
-        `include anything else worth knowing about too. Only include something if you found it via an actual ` +
-        `search result with a real date - never guess or invent a date, time, price, or URL. If you're not ` +
-        `confident something is real and currently scheduled, leave it out rather than include it. Aim for up to ` +
-        `40 results, spread across the whole month rather than clustered in the first few days. Once you've ` +
-        `searched enough to have a good list covering the full window, call record_activities with everything you ` +
-        `found - that call is mandatory, do not end your turn with only a text response.`,
-      tools: [
-        { type: 'web_search_20250305', name: 'web_search', max_uses: 10 },
-        { name: 'record_activities', description: 'Record the activities found via web search.', input_schema: AI_SEARCH_SCHEMA },
-      ],
-      messages: [
-        { role: 'user', content: `Find local activities and events near ${anchorLabel} for the next ${DAYS_AHEAD} days.` },
-      ],
-    }),
-  });
-
-  if (!response.ok) {
-    const detail = await response.text();
-    console.error('Anthropic API error:', response.status, detail);
-    debug.ai_search = { status: response.status, detail };
-    return [];
-  }
-
-  const result = await response.json();
-  const toolUse = (result.content || []).find(
-    (block: any) => block.type === 'tool_use' && block.name === 'record_activities'
-  );
-  const rawActivities = toolUse?.input?.activities;
-  if (!Array.isArray(rawActivities)) {
-    console.error('No record_activities call in AI search response - stop_reason:', result.stop_reason);
-    debug.ai_search = {
-      stop_reason: result.stop_reason,
-      content_types: (result.content || []).map((b: any) => b.type),
-      text: (result.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join(' '),
-    };
-    return [];
-  }
-  debug.ai_search = { rawCount: rawActivities.length };
-
-  return rawActivities
-    .filter((a: any) => a?.title && a?.date && CATEGORIES.includes(a.category))
-    .map((a: any): ActivityRow => {
-      const startsAt = a.start_time ? `${a.date}T${a.start_time}:00` : `${a.date}T00:00:00`;
-      const endsAt = a.end_time ? `${a.date}T${a.end_time}:00` : null;
-      return {
-        source: 'ai_search',
-        external_id: null,
-        title: a.title,
-        category: a.category,
-        description: a.description || null,
-        location: a.location || null,
-        lat: null,
-        lng: null,
-        starts_at: startsAt,
-        ends_at: endsAt,
-        price_label: a.price_label || null,
-        url: a.url || null,
-        confidence: 'low',
-      };
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-5',
+        // Each web search round (server_tool_use + web_search_tool_result +
+        // the model's own reasoning between rounds) burns real tokens before
+        // any of it becomes the final record_activities call - 4096 was
+        // exhausted mid-search, hitting max_tokens with no tool call at all.
+        // Raised further alongside DAYS_AHEAD/max_uses below, since covering
+        // a full month means more search rounds and a longer result list.
+        max_tokens: 24000,
+        system:
+          `Search the web to find real, currently-scheduled local activities and events near ${anchorLabel}, ` +
+          `within about ${RADIUS_MILES} miles, happening between ${isoToday} and ${isoEnd} - that's a full month, ` +
+          `not just the next few days, so search specifically for later weeks too (e.g. "events near ${anchorLabel} ` +
+          `next month", "[month name] calendar of events") rather than stopping once you have enough for the first ` +
+          `week or two. If something recurs on a regular schedule (a weekly farmers market, a recurring story time), ` +
+          `include several of its upcoming occurrences spread across the window as separate dated entries, not just ` +
+          `the next one. Prioritize the kinds of things a general ticketing platform search tends to miss: farmers ` +
+          `markets, carnivals/fairs, community events, dances, family activities, library/park-district events - but ` +
+          `include anything else worth knowing about too. Only include something if you found it via an actual ` +
+          `search result with a real date - never guess or invent a date, time, price, or URL. Every result must ` +
+          `carry the real URL of the page you actually found it on, so someone can click through and verify the ` +
+          `details themselves - never fabricate or guess at a URL. If you're not confident something is real and ` +
+          `currently scheduled, leave it out rather than include it. Aim for up to 40 results, spread across the ` +
+          `whole month rather than clustered in the first few days. Once you've searched enough to have a good ` +
+          `list covering the full window, call record_activities with everything you found - that call is ` +
+          `mandatory, do not end your turn with only a text response.`,
+        tools: [
+          { type: 'web_search_20250305', name: 'web_search', max_uses: 10 },
+          { name: 'record_activities', description: 'Record the activities found via web search.', input_schema: AI_SEARCH_SCHEMA },
+        ],
+        messages: [
+          { role: 'user', content: `Find local activities and events near ${anchorLabel} for the next ${DAYS_AHEAD} days.` },
+        ],
+      }),
     });
+
+    if (!response.ok) {
+      const detail = await response.text();
+      console.error('Anthropic API error:', response.status, detail);
+      debug.ai_search = { status: response.status, detail };
+      return null;
+    }
+
+    const result = await response.json();
+    const toolUse = (result.content || []).find(
+      (block: any) => block.type === 'tool_use' && block.name === 'record_activities'
+    );
+    const rawActivities = toolUse?.input?.activities;
+    if (!Array.isArray(rawActivities)) {
+      console.error('No record_activities call in AI search response - stop_reason:', result.stop_reason);
+      debug.ai_search = {
+        stop_reason: result.stop_reason,
+        content_types: (result.content || []).map((b: any) => b.type),
+        text: (result.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join(' '),
+      };
+      return null;
+    }
+    debug.ai_search = { rawCount: rawActivities.length };
+
+    // A url is what makes a result verifiable - if the model didn't give
+    // one (even though the schema requires it), drop the row rather than
+    // show something no one can double-check.
+    return rawActivities
+      .filter((a: any) => a?.title && a?.date && a?.url && CATEGORIES.includes(a.category))
+      .map((a: any): ActivityRow => {
+        const startsAt = a.start_time ? `${a.date}T${a.start_time}:00` : `${a.date}T00:00:00`;
+        const endsAt = a.end_time ? `${a.date}T${a.end_time}:00` : null;
+        return {
+          source: 'ai_search',
+          external_id: null,
+          title: a.title,
+          category: a.category,
+          description: a.description || null,
+          location: a.location || null,
+          lat: null,
+          lng: null,
+          starts_at: startsAt,
+          ends_at: endsAt,
+          price_label: a.price_label || null,
+          url: a.url,
+          confidence: 'low',
+        };
+      });
+  } catch (err) {
+    console.error('AI search pass failed:', err);
+    debug.ai_search = { exception: String(err) };
+    return null;
+  }
 }
 
 // Ticketmaster's own segment/genre taxonomy mapped onto ours - anything
@@ -311,15 +328,24 @@ serve(async (req) => {
     // Housekeeping: drop anything already over, regardless of source.
     await admin.from('activities').delete().lt('starts_at', new Date().toISOString());
 
-    // AI-search rows have no stable id across runs (see ActivityRow) -
-    // fully replaced each time rather than upserted.
-    await admin.from('activities').delete().eq('source', 'ai_search');
-
     const errors: string[] = [];
 
-    if (aiActivities.length > 0) {
-      const { error } = await admin.from('activities').insert(aiActivities);
-      if (error) errors.push(`ai_search insert: ${error.message}`);
+    // aiActivities is null on a genuine failure (bad API response, or the
+    // model never called record_activities) - only replace last run's
+    // ai_search rows when this run actually succeeded, even if it found
+    // zero results. Otherwise a single bad night (an Anthropic API hiccup,
+    // a truncated response) would wipe out real data and leave nothing in
+    // its place until the next successful run.
+    if (aiActivities !== null) {
+      // AI-search rows have no stable id across runs (see ActivityRow) -
+      // fully replaced each time rather than upserted.
+      await admin.from('activities').delete().eq('source', 'ai_search');
+      if (aiActivities.length > 0) {
+        const { error } = await admin.from('activities').insert(aiActivities);
+        if (error) errors.push(`ai_search insert: ${error.message}`);
+      }
+    } else {
+      errors.push('ai_search fetch failed - left existing ai_search rows untouched');
     }
 
     const upsertBatch = [...ticketmasterActivities, ...seatgeekActivities];
@@ -331,7 +357,7 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({
         counts: {
-          ai_search: aiActivities.length,
+          ai_search: aiActivities === null ? 'failed (left untouched)' : aiActivities.length,
           ticketmaster: ticketmasterActivities.length,
           seatgeek: seatgeekActivities.length,
         },

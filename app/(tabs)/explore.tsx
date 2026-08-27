@@ -29,6 +29,21 @@ const formatDateHeading = (date: Date): string =>
 const formatTime = (date: Date): string =>
   date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 
+// The card's source line is what lets someone verify a result themselves
+// (especially the AI-search ones, which are inherently less certain than a
+// ticketing platform's own data) - showing the raw internal source id
+// ("ai_search") tells them nothing useful, but the actual domain the URL
+// points to ("allevents.in", "lehicity.libcal.com") is exactly where the
+// info came from.
+const sourceDomain = (url: string | null): string | null => {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return null;
+  }
+};
+
 const formatActivityTime = (activity: Activity): string => {
   const start = formatTime(new Date(activity.startsAt));
   if (!activity.endsAt) return start;
@@ -174,11 +189,14 @@ export default function DiscoverScreen() {
               {!!item.description && <Text style={styles.cardDescription}>{item.description}</Text>}
               <View style={styles.cardFooterRow}>
                 <Text style={styles.cardPrice}>{item.priceLabel || 'See listing'}</Text>
-                <Text style={styles.cardSource}>via {item.source}</Text>
+                {!!sourceDomain(item.url) && <Text style={styles.cardSource}>via {sourceDomain(item.url)}</Text>}
               </View>
               <View style={styles.cardActionsRow}>
                 <TouchableOpacity style={styles.bookButton} onPress={() => handleBook(item)} disabled={!item.url}>
-                  <Text style={styles.bookButtonText}>Book</Text>
+                  {/* AI-search results aren't a real booking flow - this link
+                      is how someone verifies the details themselves, so it
+                      shouldn't imply a purchase the way "Book" does. */}
+                  <Text style={styles.bookButtonText}>{item.source === 'ai_search' ? 'View Source' : 'Book'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.calendarButton} onPress={() => handleAddToCalendar(item)}>
                   <Text style={styles.calendarButtonText}>Add to My Calendar</Text>
