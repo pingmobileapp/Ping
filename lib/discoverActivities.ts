@@ -92,7 +92,7 @@ export async function fetchActivities(options: { dateKey?: string; daysAhead?: n
   } else {
     rangeStart = new Date();
     rangeEnd = new Date();
-    rangeEnd.setDate(rangeEnd.getDate() + (options.daysAhead ?? 7));
+    rangeEnd.setDate(rangeEnd.getDate() + (options.daysAhead ?? 30));
   }
 
   const { data, error } = await supabase

@@ -45,7 +45,7 @@ type ActivityRow = {
   confidence: 'high' | 'low';
 };
 
-const DAYS_AHEAD = 10;
+const DAYS_AHEAD = 30;
 const RADIUS_MILES = 25;
 
 const AI_SEARCH_SCHEMA = {
@@ -105,19 +105,26 @@ async function fetchAiSearchActivities(
       // the model's own reasoning between rounds) burns real tokens before
       // any of it becomes the final record_activities call - 4096 was
       // exhausted mid-search, hitting max_tokens with no tool call at all.
-      max_tokens: 16000,
+      // Raised further alongside DAYS_AHEAD/max_uses below, since covering
+      // a full month means more search rounds and a longer result list.
+      max_tokens: 24000,
       system:
         `Search the web to find real, currently-scheduled local activities and events near ${anchorLabel}, ` +
-        `within about ${RADIUS_MILES} miles, happening between ${isoToday} and ${isoEnd}. Prioritize the kinds of ` +
-        `things a general ticketing platform search tends to miss: farmers markets, carnivals/fairs, community ` +
-        `events, dances, family activities, library/park-district events - but include anything else worth ` +
-        `knowing about too. Only include something if you found it via an actual search result with a real date - ` +
-        `never guess or invent a date, time, price, or URL. If you're not confident something is real and ` +
-        `currently scheduled, leave it out rather than include it. Aim for up to 20 results. Once you've searched ` +
-        `enough to have a good list, call record_activities with everything you found - that call is mandatory, ` +
-        `do not end your turn with only a text response.`,
+        `within about ${RADIUS_MILES} miles, happening between ${isoToday} and ${isoEnd} - that's a full month, ` +
+        `not just the next few days, so search specifically for later weeks too (e.g. "events near ${anchorLabel} ` +
+        `next month", "[month name] calendar of events") rather than stopping once you have enough for the first ` +
+        `week or two. If something recurs on a regular schedule (a weekly farmers market, a recurring story time), ` +
+        `include several of its upcoming occurrences spread across the window as separate dated entries, not just ` +
+        `the next one. Prioritize the kinds of things a general ticketing platform search tends to miss: farmers ` +
+        `markets, carnivals/fairs, community events, dances, family activities, library/park-district events - but ` +
+        `include anything else worth knowing about too. Only include something if you found it via an actual ` +
+        `search result with a real date - never guess or invent a date, time, price, or URL. If you're not ` +
+        `confident something is real and currently scheduled, leave it out rather than include it. Aim for up to ` +
+        `40 results, spread across the whole month rather than clustered in the first few days. Once you've ` +
+        `searched enough to have a good list covering the full window, call record_activities with everything you ` +
+        `found - that call is mandatory, do not end your turn with only a text response.`,
       tools: [
-        { type: 'web_search_20250305', name: 'web_search', max_uses: 5 },
+        { type: 'web_search_20250305', name: 'web_search', max_uses: 10 },
         { name: 'record_activities', description: 'Record the activities found via web search.', input_schema: AI_SEARCH_SCHEMA },
       ],
       messages: [
