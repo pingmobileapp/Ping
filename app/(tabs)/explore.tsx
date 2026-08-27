@@ -228,7 +228,7 @@ export default function DiscoverScreen() {
                   {/* AI-search results aren't a real booking flow - this link
                       is how someone verifies the details themselves, so it
                       shouldn't imply a purchase the way "Book" does. */}
-                  <Text style={styles.bookButtonText}>{item.source === 'ai_search' ? 'View Source' : 'Book'}</Text>
+                  <Text style={styles.bookButtonText}>{item.source.startsWith('ai_search') ? 'View Source' : 'Book'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.calendarButton} onPress={() => handleAddToCalendar(item)}>
                   <Text style={styles.calendarButtonText}>Add to My Calendar</Text>

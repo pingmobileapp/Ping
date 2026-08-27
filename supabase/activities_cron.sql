@@ -29,3 +29,23 @@ select cron.schedule(
   );
   $$
 );
+
+-- Staggered 20 minutes after the run above - both functions share the
+-- geocode_cache table's Nominatim rate limit (a module-level clock local
+-- to each function's own isolate, not coordinated between them), so
+-- running them back-to-back rather than simultaneously keeps geocoding
+-- requests from the two functions from overlapping.
+select cron.schedule(
+  'refresh-activities-utahagenda-nightly',
+  '37 9 * * *', -- 9:37am UTC =~ 3:37am Mountain Time, daily
+  $$
+  select net.http_post(
+    url := 'https://rmooxzkinakbyhvxcivv.supabase.co/functions/v1/refresh-activities-utahagenda',
+    headers := jsonb_build_object(
+      'Authorization', 'Bearer sb_publishable_O97fJjA2cNuR4vvRumRsvQ_P3RuxrhO',
+      'Content-Type', 'application/json'
+    ),
+    body := '{}'::jsonb
+  );
+  $$
+);

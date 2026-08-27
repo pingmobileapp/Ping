@@ -212,12 +212,13 @@ async function fetchAiSearchActivities(
       },
       body: JSON.stringify({
         model: 'claude-sonnet-5',
-        // Each web search round (server_tool_use + web_search_tool_result +
-        // the model's own reasoning between rounds) burns real tokens before
-        // any of it becomes the final record_activities call - 4096 was
+        // Each web search/fetch round (server_tool_use + its result + the
+        // model's own reasoning between rounds) burns real tokens before any
+        // of it becomes the final record_activities call - 4096 was
         // exhausted mid-search, hitting max_tokens with no tool call at all.
         // Raised further alongside DAYS_AHEAD/max_uses below, since covering
-        // a full month means more search rounds and a longer result list.
+        // a full month (plus now fetching whole pages, not just search
+        // snippets) means more rounds and a longer result list.
         max_tokens: 24000,
         system:
           `Search the web to find real, currently-scheduled local activities and events near ${anchorLabel}, ` +
