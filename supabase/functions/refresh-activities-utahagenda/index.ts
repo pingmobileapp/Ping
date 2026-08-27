@@ -14,6 +14,38 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // source='ai_search_utahagenda' so this function's delete-and-replace each
 // run never touches refresh-activities' own 'ai_search' rows.
 
+// The AI reports times as read on the source page - local wall-clock time
+// in whatever zone the anchor location is in, not UTC. Building a
+// timestamp string with no zone/offset and handing it to Postgres gets
+// silently interpreted as UTC, which is wrong by a fixed 6-7 hour
+// (DST-dependent) margin. zonedDateTimeToUtcIso below does a real,
+// DST-aware conversion via Intl's own timezone database instead of a
+// naive string - shared logic with refresh-activities' own copy.
+const ANCHOR_TIMEZONE = Deno.env.get('DISCOVER_ANCHOR_TIMEZONE') || 'America/Denver';
+
+function zonedDateTimeToUtcIso(dateStr: string, timeStr: string, timeZone: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const [hh, mm] = timeStr.split(':').map(Number);
+  const guessUtcMs = Date.UTC(y, m - 1, d, hh, mm);
+
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = dtf.formatToParts(new Date(guessUtcMs));
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0);
+  const hour = get('hour') % 24;
+  const asIfLocalMs = Date.UTC(get('year'), get('month') - 1, get('day'), hour, get('minute'));
+
+  const offsetMs = guessUtcMs - asIfLocalMs;
+  return new Date(guessUtcMs + offsetMs).toISOString();
+}
+
 const CATEGORIES = [
   'movies',
   'music',
@@ -254,8 +286,8 @@ async function fetchUtahAgendaActivities(
     return rawActivities
       .filter((a: any) => a?.title && a?.date && a?.url && CATEGORIES.includes(a.category))
       .map((a: any): ActivityRow => {
-        const startsAt = a.start_time ? `${a.date}T${a.start_time}:00` : `${a.date}T00:00:00`;
-        const endsAt = a.end_time ? `${a.date}T${a.end_time}:00` : null;
+        const startsAt = zonedDateTimeToUtcIso(a.date, a.start_time || '00:00', ANCHOR_TIMEZONE);
+        const endsAt = a.end_time ? zonedDateTimeToUtcIso(a.date, a.end_time, ANCHOR_TIMEZONE) : null;
         return {
           source: 'ai_search_utahagenda',
           external_id: null,
