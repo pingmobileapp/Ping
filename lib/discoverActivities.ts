@@ -35,10 +35,13 @@ export type Activity = {
   category: ActivityCategory;
   description: string | null;
   location: string | null;
-  // Null until real per-user device location exists (see the Open Slots
-  // roadmap) - AI-search rows in particular have no reliable coordinates
-  // to measure from yet. The UI just omits distance when this is null
-  // rather than showing a fake number.
+  lat: number | null;
+  lng: number | null;
+  // The distance refresh-activities verified against its fixed anchor
+  // location, not the actual device - see distanceFromCoords below for the
+  // real per-user figure once location permission is granted. Null only
+  // means it couldn't be geocoded/verified at all, never "trust it, it's
+  // probably close."
   distanceMiles: number | null;
   startsAt: string; // ISO
   endsAt: string | null; // ISO
@@ -54,6 +57,8 @@ type ActivityRow = {
   category: string;
   description: string | null;
   location: string | null;
+  lat: number | null;
+  lng: number | null;
   starts_at: string;
   ends_at: string | null;
   price_label: string | null;
@@ -71,9 +76,8 @@ const toActivity = (row: ActivityRow): Activity => ({
   category: isKnownCategory(row.category) ? row.category : 'community',
   description: row.description,
   location: row.location,
-  // A real, geocoded-and-verified distance from refresh-activities - null
-  // only means it couldn't be verified (no geocoding match), never "trust
-  // the search, it's probably close."
+  lat: row.lat,
+  lng: row.lng,
   distanceMiles: row.distance_miles,
   startsAt: row.starts_at,
   endsAt: row.ends_at,
@@ -81,6 +85,24 @@ const toActivity = (row: ActivityRow): Activity => ({
   url: row.url,
   confidence: row.confidence === 'low' ? 'low' : 'high',
 });
+
+// Recomputes a real distance from the device's actual location once it's
+// available, rather than showing the figure refresh-activities verified
+// against its fixed anchor (see DISCOVER_ANCHOR_LAT/LNG) - falls back to
+// that server-verified distance if the activity has no coordinates of its
+// own (a geocoding miss) or the device hasn't granted location yet.
+export function distanceFromCoords(activity: Activity, coords: { latitude: number; longitude: number } | null): number | null {
+  if (!coords || activity.lat === null || activity.lng === null) return activity.distanceMiles;
+  const R = 3958.8;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(activity.lat - coords.latitude);
+  const dLng = toRad(activity.lng - coords.longitude);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(coords.latitude)) * Math.cos(toRad(activity.lat)) * Math.sin(dLng / 2) ** 2;
+  const distance = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(distance * 10) / 10;
+}
 
 // dateKey: scope to just that one day (yyyy-mm-dd), as when arriving from
 // a long-pressed gap in WeekGrid. Omitted for the plain "browse" case,
@@ -102,7 +124,7 @@ export async function fetchActivities(options: { dateKey?: string; daysAhead?: n
   const { data, error } = await supabase
     .from('activities')
     .select(
-      'id, source, title, category, description, location, starts_at, ends_at, price_label, url, confidence, distance_miles'
+      'id, source, title, category, description, location, lat, lng, starts_at, ends_at, price_label, url, confidence, distance_miles'
     )
     .gte('starts_at', rangeStart.toISOString())
     .lte('starts_at', rangeEnd.toISOString())

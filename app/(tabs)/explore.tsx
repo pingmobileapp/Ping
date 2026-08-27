@@ -15,6 +15,7 @@ import {
   Activity,
   ActivityCategory,
   CATEGORY_LABELS,
+  distanceFromCoords,
   fetchActivities,
 } from '../../lib/discoverActivities';
 import {
@@ -22,6 +23,13 @@ import {
   getCalendarPermissionStatus,
   requestCalendarAccess,
 } from '../../lib/calendarConflicts';
+import {
+  Coords,
+  LocationPermissionStatus,
+  getCurrentCoords,
+  getLocationPermissionStatus,
+  requestLocationAccess,
+} from '../../lib/location';
 
 const formatDateHeading = (date: Date): string =>
   date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
@@ -59,6 +67,8 @@ export default function DiscoverScreen() {
   const [showAllDay, setShowAllDay] = useState(false);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
+  const [locationPermission, setLocationPermission] = useState<LocationPermissionStatus | null>(null);
+  const [coords, setCoords] = useState<Coords | null>(null);
 
   const hasScope = !!params.date;
   const gapStartMinutes = params.gapStart ? Number(params.gapStart) : null;
@@ -70,6 +80,22 @@ export default function DiscoverScreen() {
       .then(setActivities)
       .finally(() => setLoading(false));
   }, [params.date]);
+
+  // Checks silently on load (no prompt) so returning users who already
+  // granted access get real per-user distance without an extra tap -
+  // first-time users see the inline banner below instead.
+  useEffect(() => {
+    getLocationPermissionStatus().then((status) => {
+      setLocationPermission(status);
+      if (status === 'granted') getCurrentCoords().then(setCoords);
+    });
+  }, []);
+
+  const handleEnableLocation = async () => {
+    const granted = await requestLocationAccess();
+    setLocationPermission(granted ? 'granted' : 'denied');
+    if (granted) setCoords(await getCurrentCoords());
+  };
 
   const timeScoped = useMemo(() => {
     if (showAllDay || gapStartMinutes === null || gapEndMinutes === null) return activities;
@@ -138,6 +164,12 @@ export default function DiscoverScreen() {
         )}
       </View>
 
+      {locationPermission === 'undetermined' && (
+        <TouchableOpacity style={styles.locationPromptRow} onPress={handleEnableLocation}>
+          <Text style={styles.locationPromptText}>📍 Use your location to see what&apos;s actually near you</Text>
+        </TouchableOpacity>
+      )}
+
       <FlatList
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -173,13 +205,13 @@ export default function DiscoverScreen() {
           data={visibleActivities}
           keyExtractor={(a) => a.id}
           contentContainerStyle={styles.listContent}
-          renderItem={({ item }) => (
+          renderItem={({ item }) => {
+            const distance = distanceFromCoords(item, coords);
+            return (
             <View style={styles.card}>
               <View style={styles.cardHeaderRow}>
                 <Text style={styles.cardCategory}>{CATEGORY_LABELS[item.category]}</Text>
-                {item.distanceMiles !== null && (
-                  <Text style={styles.cardDistance}>{item.distanceMiles.toFixed(1)} mi</Text>
-                )}
+                {distance !== null && <Text style={styles.cardDistance}>{distance.toFixed(1)} mi</Text>}
               </View>
               <Text style={styles.cardTitle}>{item.title}</Text>
               <Text style={styles.cardMeta}>
@@ -203,7 +235,8 @@ export default function DiscoverScreen() {
                 </TouchableOpacity>
               </View>
             </View>
-          )}
+            );
+          }}
           ListEmptyComponent={
             <Text style={styles.emptyText}>
               Nothing found for this window yet - try &quot;See all day&quot; or a different filter.
@@ -221,6 +254,8 @@ const styles = StyleSheet.create({
   title: { color: colors.textPrimary, fontSize: 26, fontWeight: '700' },
   subtitle: { color: colors.textSecondary, fontSize: 14, marginTop: 4 },
   toggleText: { color: colors.primary, fontSize: 13, fontWeight: '600', marginTop: 8 },
+  locationPromptRow: { paddingHorizontal: 20, marginBottom: 12 },
+  locationPromptText: { color: colors.primaryDark, fontSize: 13 },
   chipRow: { flexGrow: 0, marginBottom: 8 },
   chipRowContent: { paddingHorizontal: 20, gap: 8 },
   chip: {

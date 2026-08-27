@@ -72,6 +72,12 @@
           "cameraPermission": "Ping uses your camera to let you add a photo to events and your profile.",
           "microphonePermission": false
         }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Ping uses your location to show how far away nearby events and activities in Discover actually are."
+        }
       ]
     ],
     "experiments": {
