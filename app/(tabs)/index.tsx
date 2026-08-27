@@ -1090,7 +1090,7 @@ export default function HomeScreen() {
   // roomNeededForHalfway above). Height always simply tracks dragY 1:1.
   const animatedRowsBlockStyle = useAnimatedStyle(() => {
     // Never shown in Week mode - that view's downward drag grows the hour
-    // grid instead (see weekGridMaxHeight/animatedWeekGridWrapperStyle).
+    // grid's own ScrollView instead (see WeekGrid's animatedScrollAreaStyle).
     if (viewMode === "week") {
       return { opacity: 0, top: calFullHeight ?? 0, height: 0 };
     }
@@ -1115,14 +1115,6 @@ export default function HomeScreen() {
       ),
     };
   });
-
-  // Clips WeekGrid (always rendered at weekGridMaxHeight internally, see
-  // below) down to weekGridBaseHeight at rest, growing 1:1 with dragY as the
-  // handle is pulled down - purely a UI-thread height/overflow animation, so
-  // WeekGrid's own (heavier) component tree never re-renders mid-drag.
-  const animatedWeekGridWrapperStyle = useAnimatedStyle(() => ({
-    height: weekGridBaseHeight + (dragY.value > 0 ? Math.min(dragY.value, weekBottomLimit) : 0),
-  }));
 
   // The handle itself: a single, always-mounted element so the active
   // gesture never gets orphaned by a conditional remount mid-drag. It must
@@ -1336,22 +1328,21 @@ export default function HomeScreen() {
               customHeaderTitle={<View />}
             />
           ) : (
-            <Animated.View
-              style={[{ overflow: "hidden" }, ready && animatedWeekGridWrapperStyle]}
-            >
-              <WeekGrid
-                ref={weekGridRef}
-                rangeStart={weekGridRangeStart}
-                dayCount={WEEK_GRID_DAY_COUNT}
-                initialDayIndex={WEEK_GRID_LOOKBACK_DAYS}
-                eventsByDay={weekDayColumns}
-                allDayByDay={weekAllDayColumns}
-                height={weekGridMaxHeight}
-                onEventPress={handleWeekItemPress}
-                onVisibleWeekChange={setVisibleWeekStart}
-                onDiscoverRequest={handleDiscoverRequest}
-              />
-            </Animated.View>
+            <WeekGrid
+              ref={weekGridRef}
+              rangeStart={weekGridRangeStart}
+              dayCount={WEEK_GRID_DAY_COUNT}
+              initialDayIndex={WEEK_GRID_LOOKBACK_DAYS}
+              eventsByDay={weekDayColumns}
+              allDayByDay={weekAllDayColumns}
+              height={weekGridMaxHeight}
+              onEventPress={handleWeekItemPress}
+              onVisibleWeekChange={setVisibleWeekStart}
+              onDiscoverRequest={handleDiscoverRequest}
+              dragY={dragY}
+              visibleHeight={weekGridBaseHeight}
+              maxExtraHeight={weekBottomLimit}
+            />
           )}
         </View>
 

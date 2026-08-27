@@ -3,9 +3,11 @@ import { View, Text, TouchableOpacity, Pressable, StyleSheet, Dimensions } from 
 import Animated, {
   runOnJS,
   scrollTo,
+  SharedValue,
   useAnimatedReaction,
   useAnimatedRef,
   useAnimatedScrollHandler,
+  useAnimatedStyle,
   useSharedValue,
 } from 'react-native-reanimated';
 import { HOUR_BLOCK_HEIGHT } from 'react-native-calendars/src/timeline/Packer';
@@ -62,6 +64,17 @@ type Props = {
   // (bounded by whatever's on either side of it, or midnight) it landed in -
   // see handleColumnLongPress below.
   onDiscoverRequest: (dayKey: string, gapStartMinutes: number, gapEndMinutes: number) => void;
+  // The hour grid's own vertical ScrollView is given this as its actual
+  // frame height (visibleHeight at rest, growing 1:1 with dragY up to
+  // maxExtraHeight) rather than being left unbounded - a ScrollView with no
+  // explicit height takes on its full content size, which is what silently
+  // made it un-scrollable before (frame == content, nothing to scroll) and
+  // left dragging the Upcoming handle down as the only way to see more
+  // hours. Bounding it here restores normal swipe-to-scroll at rest, on top
+  // of (not instead of) the drag-to-grow behavior.
+  dragY: SharedValue<number>;
+  visibleHeight: number;
+  maxExtraHeight: number;
 };
 
 type DiscoverPrompt = { dayKey: string; top: number; gapStart: number; gapEnd: number };
@@ -96,6 +109,9 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       onEventPress,
       onVisibleWeekChange,
       onDiscoverRequest,
+      dragY,
+      visibleHeight,
+      maxExtraHeight,
     },
     ref,
   ) => {
@@ -103,6 +119,13 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     const dayColumnWidth = columnWidth / 7;
 
     const [discoverPrompt, setDiscoverPrompt] = useState<DiscoverPrompt | null>(null);
+
+    // The header row and all-day strip above the scroll area are fixed
+    // height - only the remainder is this ScrollView's own frame.
+    const scrollAreaBaseHeight = Math.max(0, visibleHeight - DAY_LABEL_ROW_HEIGHT - ALL_DAY_ROW_HEIGHT);
+    const animatedScrollAreaStyle = useAnimatedStyle(() => ({
+      height: scrollAreaBaseHeight + (dragY.value > 0 ? Math.min(dragY.value, maxExtraHeight) : 0),
+    }));
 
     useEffect(() => {
       if (!discoverPrompt) return;
@@ -258,7 +281,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
           </Animated.ScrollView>
         </View>
 
-        <Animated.ScrollView ref={verticalScrollRef} showsVerticalScrollIndicator={false}>
+        <Animated.ScrollView ref={verticalScrollRef} showsVerticalScrollIndicator={false} style={animatedScrollAreaStyle}>
           <View style={{ flexDirection: 'row' }}>
             <View style={{ width: TIMELINE_LEFT_INSET, height: GRID_HEIGHT }}>
               {Array.from({ length: 24 }, (_, hour) => (
