@@ -1,5 +1,5 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { View, Text, TouchableOpacity, Pressable, StyleSheet, Dimensions } from 'react-native';
 import Animated, {
   runOnJS,
   scrollTo,
@@ -19,6 +19,13 @@ const GRID_HEIGHT = 24 * HOUR_BLOCK_HEIGHT;
 // How far each card in a same-time cascade is nudged right of the one
 // behind it - see the stackIndex/stackSize comment where it's used below.
 const STACK_OFFSET = 10;
+// A long-press landing in a free gap smaller than this is too tight to be
+// worth suggesting anything for - avoids popping the Discover pill for a
+// sliver of a minute between two back-to-back events.
+const MIN_DISCOVER_GAP_MINUTES = 20;
+// How long the Discover pill stays up before it quietly goes away on its
+// own, if it isn't tapped.
+const DISCOVER_PROMPT_TIMEOUT_MS = 5000;
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const toDayKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -51,7 +58,13 @@ type Props = {
   height: number;
   onEventPress: (id: string) => void;
   onVisibleWeekChange: (weekStart: Date) => void;
+  // Long-pressing empty space in a day column calls this with the free gap
+  // (bounded by whatever's on either side of it, or midnight) it landed in -
+  // see handleColumnLongPress below.
+  onDiscoverRequest: (dayKey: string, gapStartMinutes: number, gapEndMinutes: number) => void;
 };
+
+type DiscoverPrompt = { dayKey: string; top: number; gapStart: number; gapEnd: number };
 
 // A continuously horizontally-scrollable multi-day hourly grid - built from
 // scratch rather than on top of react-native-calendars' Timeline, which has
@@ -73,11 +86,51 @@ type Props = {
 // thread, so there's no visible lag between the header/strip and the grid).
 const WeekGrid = forwardRef<WeekGridHandle, Props>(
   (
-    { rangeStart, dayCount, initialDayIndex, eventsByDay, allDayByDay, height, onEventPress, onVisibleWeekChange },
+    {
+      rangeStart,
+      dayCount,
+      initialDayIndex,
+      eventsByDay,
+      allDayByDay,
+      height,
+      onEventPress,
+      onVisibleWeekChange,
+      onDiscoverRequest,
+    },
     ref,
   ) => {
     const columnWidth = Dimensions.get('window').width - TIMELINE_LEFT_INSET;
     const dayColumnWidth = columnWidth / 7;
+
+    const [discoverPrompt, setDiscoverPrompt] = useState<DiscoverPrompt | null>(null);
+
+    useEffect(() => {
+      if (!discoverPrompt) return;
+      const timeout = setTimeout(() => setDiscoverPrompt(null), DISCOVER_PROMPT_TIMEOUT_MS);
+      return () => clearTimeout(timeout);
+    }, [discoverPrompt]);
+
+    // Finds the free gap a long-press at locationY falls in, bounded by the
+    // day's own events (or midnight/end-of-day) - null if it landed inside
+    // an existing event or the gap is too tight to bother suggesting
+    // anything for (see MIN_DISCOVER_GAP_MINUTES).
+    const findFreeGap = (locationY: number, dayEvents: DayColumnEvent[]): { start: number; end: number } | null => {
+      const minutes = Math.max(0, Math.min(24 * 60 - 1, (locationY / HOUR_BLOCK_HEIGHT) * 60));
+      const sorted = [...dayEvents].sort((a, b) => a.startMinutes - b.startMinutes);
+      let gapStart = 0;
+      for (const ev of sorted) {
+        if (minutes < ev.startMinutes) return { start: gapStart, end: ev.startMinutes };
+        if (minutes < ev.endMinutes) return null;
+        gapStart = Math.max(gapStart, ev.endMinutes);
+      }
+      return { start: gapStart, end: 24 * 60 };
+    };
+
+    const handleColumnLongPress = (key: string, dayEvents: DayColumnEvent[], locationY: number) => {
+      const gap = findFreeGap(locationY, dayEvents);
+      if (!gap || gap.end - gap.start < MIN_DISCOVER_GAP_MINUTES) return;
+      setDiscoverPrompt({ dayKey: key, top: Math.max(0, locationY - 18), gapStart: gap.start, gapEnd: gap.end });
+    };
 
     const dayKeys = useMemo(
       () =>
@@ -228,7 +281,12 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                 const key = toDayKey(d);
                 const dayEvents = eventsByDay[key] || [];
                 return (
-                  <View key={key} style={[styles.dayColumn, { width: dayColumnWidth }]}>
+                  <Pressable
+                    key={key}
+                    style={[styles.dayColumn, { width: dayColumnWidth }]}
+                    delayLongPress={450}
+                    onLongPress={(e) => handleColumnLongPress(key, dayEvents, e.nativeEvent.locationY)}
+                  >
                     {Array.from({ length: 23 }, (_, i) => (
                       <View key={i} style={[styles.hourLine, { top: (i + 1) * HOUR_BLOCK_HEIGHT }]} />
                     ))}
@@ -270,7 +328,18 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                         </TouchableOpacity>
                       );
                     })}
-                  </View>
+                    {discoverPrompt?.dayKey === key && (
+                      <TouchableOpacity
+                        style={[styles.discoverPill, { top: discoverPrompt.top }]}
+                        onPress={() => {
+                          onDiscoverRequest(key, discoverPrompt.gapStart, discoverPrompt.gapEnd);
+                          setDiscoverPrompt(null);
+                        }}
+                      >
+                        <Text style={styles.discoverPillText}>🔎 Discover</Text>
+                      </TouchableOpacity>
+                    )}
+                  </Pressable>
                 );
               })}
             </Animated.ScrollView>
@@ -315,4 +384,20 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   eventBlockText: { color: colors.textOnPrimary, fontSize: 11, fontWeight: '600' },
+  discoverPill: {
+    position: 'absolute',
+    left: 4,
+    right: 4,
+    backgroundColor: colors.primary,
+    borderRadius: 8,
+    paddingVertical: 6,
+    alignItems: 'center',
+    zIndex: 50,
+    shadowColor: colors.textPrimary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  discoverPillText: { color: colors.textOnPrimary, fontSize: 12, fontWeight: '700' },
 });

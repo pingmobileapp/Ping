@@ -548,6 +548,16 @@ export default function HomeScreen() {
     }
   };
 
+  // Long-pressing an empty gap in Week view (see WeekGrid's
+  // onDiscoverRequest) hands off to the Explore tab, pre-scoped to that day
+  // and free-time window rather than a generic "browse everything" view.
+  const handleDiscoverRequest = (dayKey: string, gapStartMinutes: number, gapEndMinutes: number) => {
+    router.push({
+      pathname: "/explore",
+      params: { date: dayKey, gapStart: String(gapStartMinutes), gapEnd: String(gapEndMinutes) },
+    });
+  };
+
   // Declined events are hidden from the calendar/lists by default (nothing
   // to act on there anymore) but never actually removed - toggling
   // showDeclinedOnly swaps to showing just those, so changing your mind is
@@ -1339,6 +1349,7 @@ export default function HomeScreen() {
                 height={weekGridMaxHeight}
                 onEventPress={handleWeekItemPress}
                 onVisibleWeekChange={setVisibleWeekStart}
+                onDiscoverRequest={handleDiscoverRequest}
               />
             </Animated.View>
           )}
