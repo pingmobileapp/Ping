@@ -65,3 +65,24 @@ select cron.schedule(
   );
   $$
 );
+
+-- Different cadence on purpose: refresh-city-days (each Utah city's annual
+-- "Days" summer festival) searches a full year ahead rather than a 30-day
+-- rolling window, since a given year's dates are set once cities announce
+-- them and don't change - no need to re-search nightly. Runs once a year,
+-- March 1st, early enough to catch dates as cities start announcing their
+-- summer schedules.
+select cron.schedule(
+  'refresh-city-days-yearly',
+  '17 8 1 3 *', -- 8:17am UTC on March 1st, every year
+  $$
+  select net.http_post(
+    url := 'https://rmooxzkinakbyhvxcivv.supabase.co/functions/v1/refresh-city-days',
+    headers := jsonb_build_object(
+      'Authorization', 'Bearer sb_publishable_O97fJjA2cNuR4vvRumRsvQ_P3RuxrhO',
+      'Content-Type', 'application/json'
+    ),
+    body := '{}'::jsonb
+  );
+  $$
+);
