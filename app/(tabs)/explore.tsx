@@ -340,6 +340,12 @@ export default function DiscoverScreen() {
                     <Text style={styles.cardPrice}>{item.priceLabel || 'See listing'}</Text>
                     {!!sourceDomain(item.url) && <Text style={styles.cardSource}>via {sourceDomain(item.url)}</Text>}
                   </View>
+                  {item.confidence === 'low' && (
+                    <Text style={styles.aiDisclaimer}>
+                      ⚠️ Found via AI search, not a ticketing platform - worth double-checking the details before
+                      you go.
+                    </Text>
+                  )}
                   <View style={styles.cardActionsRow}>
                     <TouchableOpacity style={styles.bookButton} onPress={() => handleBook(item)} disabled={!item.url}>
                       {/* AI-search results aren't a real booking flow - this link
@@ -419,6 +425,7 @@ const styles = StyleSheet.create({
   cardFooterRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 },
   cardPrice: { color: colors.textPrimary, fontSize: 14, fontWeight: '700' },
   cardSource: { color: colors.textMuted, fontSize: 12 },
+  aiDisclaimer: { color: colors.primaryDark, fontSize: 12, marginTop: 8, lineHeight: 16 },
   cardActionsRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
   bookButton: {
     flex: 1,
