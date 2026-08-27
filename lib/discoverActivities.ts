@@ -104,6 +104,87 @@ export function distanceFromCoords(activity: Activity, coords: { latitude: numbe
   return Math.round(distance * 10) / 10;
 }
 
+// Real-world events picked up by more than one source look like separate
+// rows to the database - the same BYU game can show up via Ticketmaster,
+// via the AI web search, and via the utahagenda.com crawl all at once,
+// with no shared id to tie them together. Title wording alone is a weak
+// signal ("BYU Football Game" vs "BYU Cougars Football vs. Utah State"),
+// so venue+time is the main confirming signal - but venue+time ALONE is
+// not safe either: a large venue like an expo center routinely hosts
+// multiple genuinely distinct events at the exact same start time (seen
+// live: "Crystal Festival" and "Rocky Mountain Gun Show," same venue,
+// same timestamp, two completely unrelated events). Titles must always
+// share at least some minimal real overlap before venue+time gets to
+// confirm a match at all - that's what keeps this from merging two
+// different things that just happen to share a building.
+const TIME_TOLERANCE_MS = 90 * 60000;
+const MIN_TITLE_OVERLAP = 0.12;
+const LOCATION_SIMILARITY_THRESHOLD = 0.4;
+const STRONG_TITLE_THRESHOLD = 0.6;
+
+// Ticketmaster/SeatGeek carry real prices, links, and venue data pulled
+// straight from the ticketing platform itself - when the same real event
+// also turns up via AI search, the ticketed listing is the one worth
+// keeping.
+const SOURCE_PRIORITY: Record<string, number> = {
+  ticketmaster: 3,
+  seatgeek: 3,
+  ai_search_utahagenda: 2,
+  ai_search: 1,
+};
+
+const wordSet = (s: string): Set<string> =>
+  new Set(
+    s
+      .toLowerCase()
+      .replace(/[^\w\s]/g, ' ')
+      .split(/\s+/)
+      .filter(Boolean)
+  );
+
+const jaccardSimilarity = (a: Set<string>, b: Set<string>): number => {
+  if (a.size === 0 || b.size === 0) return 0;
+  let intersection = 0;
+  for (const word of a) if (b.has(word)) intersection++;
+  return intersection / (a.size + b.size - intersection);
+};
+
+// Keeps the highest-priority activity out of each cluster of apparent
+// duplicates - order activities are compared in doesn't matter, since
+// every candidate is checked against the full priority-sorted "kept" list
+// built so far.
+export function dedupeActivities(activities: Activity[]): Activity[] {
+  const bySourcePriority = [...activities].sort(
+    (a, b) => (SOURCE_PRIORITY[b.source] ?? 0) - (SOURCE_PRIORITY[a.source] ?? 0)
+  );
+
+  const kept: Activity[] = [];
+  for (const candidate of bySourcePriority) {
+    const candidateStart = new Date(candidate.startsAt).getTime();
+    const candidateLocation = wordSet(candidate.location ?? '');
+    const candidateTitle = wordSet(candidate.title);
+
+    const isDuplicate = kept.some((existing) => {
+      if (Math.abs(new Date(existing.startsAt).getTime() - candidateStart) > TIME_TOLERANCE_MS) return false;
+
+      const titleSimilarity = jaccardSimilarity(candidateTitle, wordSet(existing.title));
+      // Titles sharing basically nothing are never the same event, no
+      // matter how well the venue/time line up - this is what protects
+      // two unrelated events at the same venue/time from merging.
+      if (titleSimilarity < MIN_TITLE_OVERLAP) return false;
+      if (titleSimilarity >= STRONG_TITLE_THRESHOLD) return true;
+
+      const existingLocation = wordSet(existing.location ?? '');
+      if (candidateLocation.size === 0 || existingLocation.size === 0) return false;
+      return jaccardSimilarity(candidateLocation, existingLocation) >= LOCATION_SIMILARITY_THRESHOLD;
+    });
+
+    if (!isDuplicate) kept.push(candidate);
+  }
+
+  return kept.sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+}
+
 // dateKey: scope to just that one day (yyyy-mm-dd), as when arriving from
 // a long-pressed gap in WeekGrid. Omitted for the plain "browse" case,
 // which instead looks ahead daysAhead days from now.
@@ -135,5 +216,5 @@ export async function fetchActivities(options: { dateKey?: string; daysAhead?: n
     return [];
   }
 
-  return (data as ActivityRow[]).map(toActivity);
+  return dedupeActivities((data as ActivityRow[]).map(toActivity));
 }
