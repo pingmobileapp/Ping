@@ -13,7 +13,12 @@ import {
 } from '../lib/calendarConflicts';
 import RecurrencePicker from './RecurrencePicker';
 import { RecurrenceConfig, toExpoRecurrenceRule, fromExpoRecurrenceRule } from '../lib/recurrence';
-import { REMINDER_OPTIONS } from '../lib/eventReminders';
+import {
+  REMINDER_OPTIONS,
+  schedulePersonalItemReminder,
+  cancelPersonalItemReminder,
+  getPersonalItemReminderMinutes,
+} from '../lib/eventReminders';
 
 type Props = {
   visible: boolean;
@@ -105,7 +110,10 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
       setTitle(editingEvent.title);
       setDetails(editingEvent.details);
       setRecurrence(editingEvent.recurrenceRule ? fromExpoRecurrenceRule(editingEvent.recurrenceRule) : null);
-      setReminderMinutes(editingEvent.reminderMinutesBefore);
+      // Not editingEvent.reminderMinutesBefore - that reads the calendar
+      // event's own native alarm, which this deliberately never sets (see
+      // schedulePersonalItemReminder). The real selection lives here instead.
+      getPersonalItemReminderMinutes(editingEvent.id).then(setReminderMinutes);
       setStartDate(new Date(editingEvent.startDate));
       setEndDate(new Date(editingEvent.endDate));
       setIsAllDay(editingEvent.allDay);
@@ -196,6 +204,11 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
         end = new Date(start.getTime() + 60 * 60000);
       }
 
+      // null (not reminderMinutes) for the native calendar alarm - a
+      // native EventKit alert shows as a generic "Calendar" notification,
+      // not one Ping gets any credit for. schedulePersonalItemReminder
+      // below is what actually fires it as a Ping-branded reminder.
+      let calendarEventId: string;
       if (editingEvent) {
         await updateCalendarEvent(
           editingEvent.id,
@@ -210,19 +223,27 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
           // existing series' rule is preserved untouched (futureEvents
           // above is what scopes the rest of this edit instead).
           !isExistingRecurring && recurrence ? toExpoRecurrenceRule(recurrence) : undefined,
-          reminderMinutes
+          null
         );
+        calendarEventId = editingEvent.id;
       } else {
-        await createPersonalCalendarEvent(
+        calendarEventId = await createPersonalCalendarEvent(
           title.trim(),
           start,
           end,
           isAllDay,
           details,
           recurrence ? toExpoRecurrenceRule(recurrence) : undefined,
-          reminderMinutes
+          null
         );
       }
+
+      if (reminderMinutes !== null) {
+        await schedulePersonalItemReminder(calendarEventId, title.trim(), start, reminderMinutes);
+      } else {
+        await cancelPersonalItemReminder(calendarEventId);
+      }
+
       onSaved();
     } catch (err) {
       console.error('Error saving personal calendar item:', err);
@@ -255,6 +276,7 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
     setSubmitting(true);
     try {
       await deleteCalendarEvent(editingEvent.id, futureEvents, editingEvent.startDate);
+      await cancelPersonalItemReminder(editingEvent.id);
       onSaved();
     } catch (err) {
       console.error('Error deleting calendar item:', err);

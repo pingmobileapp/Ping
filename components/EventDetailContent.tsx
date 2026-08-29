@@ -24,6 +24,7 @@ import Avatar from './Avatar';
 import { colors, cardFrameGradient, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
 import { notify } from '../lib/notify';
 import { submitRsvp, RsvpStatus } from '../lib/rsvp';
+import { removeEventFromDeviceCalendar, syncAcceptedEventToDeviceCalendar } from '../lib/pingCalendarSync';
 import { scheduleEventReminder, cancelEventReminder, REMINDER_OPTIONS } from '../lib/eventReminders';
 import { displayName } from '../lib/displayName';
 import { formatEventDate, formatEventTime } from '../lib/eventDate';
@@ -224,26 +225,36 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
   // moment the event opens - self-joining only happens once they actually
   // tap a specific option, and it's inserted with exactly that status.
   const handleDiscoverJoin = async (status: 'accepted' | 'declined' | 'interested') => {
-    if (!session?.user?.id) return;
+    if (!session?.user?.id || !event) return;
     setUpdating(true);
-    const { error } = await supabase.from('invitees').insert([
-      {
-        event_id: eventId,
-        user_id: session.user.id,
-        rsvp_status: status,
-        // Distinct from 'app' (used for a real host invite) so tapping the
-        // same option again knows it's safe to fully un-join rather than
-        // just clear a real invitee's response - see handlePressRsvpOption.
-        invited_via: 'discover',
-        responded_at: new Date().toISOString(),
-      },
-    ]);
-    if (error) {
-      console.error('Error joining discoverable event:', error);
-      Alert.alert('Error', 'Could not update your response.');
-    } else {
-      await fetchData();
-    }
+    // myName() looks up the caller's own row in `invitees`, which doesn't
+    // exist yet for a first-time self-join - it'd fall back to "Someone" in
+    // the host's notification. Fetching the profile directly gets the real
+    // name regardless.
+    const { data: myProfile } = await supabase
+      .from('profiles')
+      .select('full_name, email, avatar_url')
+      .eq('id', session.user.id)
+      .maybeSingle();
+    // Routed through the same submitRsvp both the normal RSVP row and
+    // InvitePopup use - hand-rolling the insert here (as an earlier version
+    // did) skipped its host-notification step entirely, so the host never
+    // heard that anyone had joined.
+    await submitRsvp({
+      eventId,
+      hostIds: allHostIds,
+      eventTitle: event.title,
+      userId: session.user.id,
+      myInviteeId: null,
+      responderName: displayName(myProfile),
+      status,
+      // Distinct from 'app' (used for a real host invite) so tapping the
+      // same option again knows it's safe to fully un-join rather than
+      // just clear a real invitee's response - see handlePressRsvpOption.
+      invitedVia: 'discover',
+    });
+    await syncAcceptedEventToDeviceCalendar(event, status);
+    await fetchData();
     setUpdating(false);
   };
 
@@ -260,6 +271,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     await supabase.from('item_claims').delete().eq('invitee_id', myInvitee.id);
     await supabase.from('items').update({ assigned_to: null }).eq('assigned_to', myInvitee.id);
     await cancelEventReminder(session.user.id, event.id);
+    await removeEventFromDeviceCalendar(event.id);
     const { error } = await supabase.from('invitees').delete().eq('id', myInvitee.id);
     if (error) {
       console.error('Error leaving discoverable event:', error);
@@ -295,6 +307,11 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
       responderName: myName(),
       status,
     });
+
+    // So an accepted Ping actually shows up somewhere you'll see it even
+    // with the app closed - removes it again if you've switched away from
+    // accepted.
+    await syncAcceptedEventToDeviceCalendar(event, status);
 
     await fetchData();
     setUpdating(false);

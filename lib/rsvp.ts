@@ -12,12 +12,18 @@ type SubmitRsvpOptions = {
   myInviteeId: string | null;
   responderName: string;
   status: 'accepted' | 'declined' | 'interested';
+  // Only meaningful when myInviteeId is null (a fresh invitee row gets
+  // created) - 'discover' marks a Discover self-join so it can later be
+  // told apart from a real host invite (see EventDetailContent's
+  // handleDiscoverLeave, which self-deletes only invited_via='discover'
+  // rows). Defaults to 'app', matching every existing caller.
+  invitedVia?: 'app' | 'discover';
 };
 
 // Shared by EventDetailContent's RSVP row and InvitePopup so both surfaces
 // mutate `invitees` the same way and never drift out of sync.
 export async function submitRsvp(opts: SubmitRsvpOptions): Promise<string | null> {
-  const { eventId, hostIds, eventTitle, userId, myInviteeId, responderName, status } = opts;
+  const { eventId, hostIds, eventTitle, userId, myInviteeId, responderName, status, invitedVia = 'app' } = opts;
 
   let inviteeId = myInviteeId;
 
@@ -35,7 +41,7 @@ export async function submitRsvp(opts: SubmitRsvpOptions): Promise<string | null
           event_id: eventId,
           user_id: userId,
           rsvp_status: status,
-          invited_via: 'app',
+          invited_via: invitedVia,
           responded_at: new Date().toISOString(),
         },
       ])

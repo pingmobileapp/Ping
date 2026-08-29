@@ -248,16 +248,18 @@ export async function createPersonalCalendarEvent(
   allDay: boolean,
   details?: string,
   recurrenceRule?: Calendar.RecurrenceRule,
-  reminderMinutesBefore?: number | null
-): Promise<void> {
+  reminderMinutesBefore?: number | null,
+  location?: string
+): Promise<string> {
   const calendarId = await getOrCreatePingCalendarId();
   const alarms = minutesToAlarms(reminderMinutesBefore);
-  await Calendar.createEventAsync(calendarId, {
+  return Calendar.createEventAsync(calendarId, {
     title,
     startDate,
     endDate,
     allDay,
     notes: buildNotes(details, true),
+    ...(location ? { location } : {}),
     ...(recurrenceRule ? { recurrenceRule } : {}),
     ...(alarms !== undefined ? { alarms } : {}),
   });
@@ -288,7 +290,8 @@ export async function updateCalendarEvent(
   details?: string,
   futureEvents?: boolean,
   recurrenceRule?: Calendar.RecurrenceRule,
-  reminderMinutesBefore?: number | null
+  reminderMinutesBefore?: number | null,
+  location?: string
 ): Promise<void> {
   const alarms = minutesToAlarms(reminderMinutesBefore);
   const updates: Partial<Calendar.Event> = {
@@ -297,6 +300,7 @@ export async function updateCalendarEvent(
     endDate,
     allDay,
     notes: buildNotes(details, isPersonal),
+    ...(location !== undefined ? { location } : {}),
     ...(recurrenceRule ? { recurrenceRule } : {}),
     ...(alarms !== undefined ? { alarms } : {}),
   };

@@ -57,6 +57,7 @@ import {
   requestCalendarAccess,
 } from "../../lib/calendarConflicts";
 import { getHiddenEventIds, hideEvent, unhideEvent } from "../../lib/hiddenEvents";
+import { DailyWeather, fetchWeatherForEvents } from "../../lib/eventWeather";
 import { pickEventImage } from "../../lib/imagePicker";
 import { extractScheduleEvents, ExtractedEvent } from "../../lib/scheduleImport";
 import { dismissProfilePrompt, useProfilePhone } from "../../lib/useProfilePhone";
@@ -97,6 +98,7 @@ export default function HomeScreen() {
   const { shouldPrompt: shouldPromptPhone, refresh: refreshProfilePhone } = useProfilePhone(session?.user?.id);
   const [phoneBannerDismissed, setPhoneBannerDismissed] = useState(false);
   const [events, setEvents] = useState<PingEvent[]>([]);
+  const [weatherByEventId, setWeatherByEventId] = useState<Record<string, DailyWeather>>({});
   const [loading, setLoading] = useState(true);
   const [eventsLoadError, setEventsLoadError] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
@@ -829,6 +831,31 @@ export default function HomeScreen() {
     monthEnd,
   ]);
 
+  // Only Ping cards show weather (see EventCard) - external calendar rows
+  // render as compact ExternalEventRow entries with no room for it. Keyed
+  // on id+location+date rather than the whole item list, so switching
+  // filters that don't change which Pings are visible (e.g. toggling
+  // showHiddenOnly) doesn't trigger a redundant re-fetch.
+  const pingWeatherKey = useMemo(
+    () =>
+      upcomingListItems
+        .filter((item) => item.kind === "ping")
+        .map((item) => `${item.event.id}|${item.event.location || ""}|${item.event.event_date}`)
+        .join(","),
+    [upcomingListItems],
+  );
+
+  useEffect(() => {
+    const pingEvents = upcomingListItems
+      .filter((item) => item.kind === "ping")
+      .map((item) => item.event as PingEvent);
+    if (pingEvents.length === 0) return;
+    fetchWeatherForEvents(pingEvents).then((result) =>
+      setWeatherByEventId((prev) => ({ ...prev, ...result })),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pingWeatherKey]);
+
   // The Message Board (unlike the date-sorted Upcoming list above it) reads
   // like a texting app's conversation list - most recently active thread
   // first, not soonest-upcoming first. Events with no messages yet fall
@@ -1468,6 +1495,7 @@ export default function HomeScreen() {
                   highlight={item.event.id === justCreatedId}
                   onPress={openEvent}
                   rsvpStatus={myRsvpByEvent[item.event.id] as any}
+                  weather={weatherByEventId[item.event.id]}
                 />
               ) : showHiddenOnly ? (
                 <ExternalEventRow

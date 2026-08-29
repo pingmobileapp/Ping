@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, Image, StyleSheet, TouchableOpacity } from 'react-native';
 import { colors, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
 import { formatEventDate, formatEventTime } from '../lib/eventDate';
+import { DailyWeather } from '../lib/eventWeather';
 
 export type PingEvent = {
   id: string;
@@ -36,9 +37,13 @@ type Props = {
   // Your own response, shown as a small badge so you don't have to open
   // the card just to remember what you already told the host.
   rsvpStatus?: RsvpStatus;
+  // See lib/eventWeather.ts - null means resolved but unavailable
+  // (forecast out of range, or no location to anchor it to at all),
+  // undefined/omitted means not resolved yet.
+  weather?: DailyWeather;
 };
 
-export default function EventCard({ event, onPress, highlight, rsvpStatus }: Props) {
+export default function EventCard({ event, onPress, highlight, rsvpStatus, weather }: Props) {
   const rsvpDotColor = rsvpStatus && rsvpStatus !== 'pending' ? RSVP_DOT_COLOR[rsvpStatus] : null;
   const dateLabel = formatEventDate(event.event_date, event.end_date, 'short');
   const timeLabel = formatEventTime(event.event_date, event.is_all_day, event.end_date);
@@ -77,6 +82,14 @@ export default function EventCard({ event, onPress, highlight, rsvpStatus }: Pro
             </Text>
           )}
         </View>
+
+        {!!weather && (
+          <View style={styles.weatherBadge}>
+            <Text style={styles.weatherText}>
+              {weather.icon} {weather.tempF}°
+            </Text>
+          </View>
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -124,4 +137,6 @@ const styles = StyleSheet.create({
   title: { color: colors.textPrimary, fontSize: 18, fontWeight: '800', marginBottom: 6 },
   statBar: { borderTopWidth: 1, borderTopColor: colors.divider, paddingTop: 6, gap: 2 },
   statText: { color: colors.textSecondary, fontSize: 13 },
+  weatherBadge: { position: 'absolute', bottom: 10, right: 12 },
+  weatherText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
 });

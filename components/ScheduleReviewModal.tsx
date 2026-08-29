@@ -224,7 +224,11 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
           end = row.endTime ? parseDateAndTime(row.date!, row.endTime) : new Date(start.getTime() + 60 * 60000);
           if (end.getTime() <= start.getTime()) end = new Date(start.getTime() + 60 * 60000);
         }
-        await createPersonalCalendarEvent(row.title, start, end, allDay, row.details || undefined);
+        // null (not omitted) for reminderMinutesBefore - otherwise the
+        // OS/calendar account's own default alert can attach a generic
+        // "Calendar" notification to a bulk-imported item that never had a
+        // reminder requested for it at all.
+        await createPersonalCalendarEvent(row.title, start, end, allDay, row.details || undefined, undefined, null);
         addedCount += 1;
       } catch (err) {
         console.error('Error creating event from schedule scan:', row.title, err);

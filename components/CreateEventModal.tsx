@@ -943,7 +943,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
               <View style={{ flex: 1 }}>
                 <Text style={styles.publicRowTitle}>Make this event shareable</Text>
                 <Text style={styles.publicRowSubtitle}>
-                  {isPublic ? 'Invitees can share this Ping with others' : 'Only you can select who gets invited'}
+                  {isPublic ? 'Only those you invite can invite others' : 'Only you can select who gets invited'}
                 </Text>
               </View>
             </TouchableOpacity>
