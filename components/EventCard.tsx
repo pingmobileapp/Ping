@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Image, StyleSheet, TouchableOpacity } from 'react-native';
+import { Alert, Linking, View, Text, Image, StyleSheet, TouchableOpacity } from 'react-native';
 import { colors, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
 import { formatEventDate, formatEventTime } from '../lib/eventDate';
 import { DailyWeather } from '../lib/eventWeather';
@@ -48,6 +48,17 @@ export default function EventCard({ event, onPress, highlight, rsvpStatus, weath
   const dateLabel = formatEventDate(event.event_date, event.end_date, 'short');
   const timeLabel = formatEventTime(event.event_date, event.is_all_day, event.end_date);
 
+  // Apple doesn't publish an official way for another app to deep-link
+  // into its own Weather app (unlike Maps/Music) - this scheme is
+  // commonly reported to work but isn't documented, so it's not
+  // guaranteed across every iOS version. Falls back to a plain alert
+  // rather than silently doing nothing if it can't be opened.
+  const handleWeatherPress = () => {
+    Linking.openURL('weather://').catch(() => {
+      Alert.alert('Could not open Weather', "Your phone's Weather app couldn't be opened.");
+    });
+  };
+
   return (
     <TouchableOpacity
       style={[styles.wrapper, highlight && styles.wrapperHighlight]}
@@ -84,11 +95,15 @@ export default function EventCard({ event, onPress, highlight, rsvpStatus, weath
         </View>
 
         {!!weather && (
-          <View style={styles.weatherBadge}>
+          <TouchableOpacity
+            style={styles.weatherBadge}
+            onPress={handleWeatherPress}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
             <Text style={styles.weatherText}>
               {weather.icon} {weather.tempF}°
             </Text>
-          </View>
+          </TouchableOpacity>
         )}
       </View>
     </TouchableOpacity>

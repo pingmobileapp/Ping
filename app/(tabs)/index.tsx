@@ -193,6 +193,14 @@ export default function HomeScreen() {
   const [myRsvpByEvent, setMyRsvpByEvent] = useState<Record<string, string>>({});
   const [externalEvents, setExternalEvents] = useState<ExternalEvent[]>([]);
   const [calendarPermission, setCalendarPermission] = useState<CalendarPermissionStatus | null>(null);
+  // Separate from calendarPermission on purpose - iOS grants calendar
+  // access to the app+device pairing, not to whichever Ping account is
+  // signed in, so a second account signing in on an already-permitted
+  // phone would otherwise see calendarPermission as "granted" and start
+  // syncing the real device calendar immediately, with no chance to
+  // consent as that account. null means not loaded yet (never sync while
+  // still unknown - see the gated effects below).
+  const [calendarSyncEnabled, setCalendarSyncEnabled] = useState<boolean | null>(null);
 
   const [boardView, setBoardView] = useState<"events" | "groups">("events");
   const [groups, setGroups] = useState<PingGroup[]>([]);
@@ -357,9 +365,24 @@ export default function HomeScreen() {
   useEffect(() => {
     getCalendarPermissionStatus().then((status) => {
       setCalendarPermission(status);
-      if (status === "granted") fetchExternalEvents();
+      if (status === "granted" && calendarSyncEnabled) fetchExternalEvents();
     });
-  }, [fetchExternalEvents]);
+  }, [fetchExternalEvents, calendarSyncEnabled]);
+
+  // Per-account opt-in (see calendarSyncEnabled above) - loaded once per
+  // signed-in user, separately from the device-level OS permission check.
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    supabase
+      .from("profiles")
+      .select("calendar_sync_enabled")
+      .eq("id", session.user.id)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (error) console.error("Error loading calendar sync preference:", error);
+        setCalendarSyncEnabled(!!data?.calendar_sync_enabled);
+      });
+  }, [session?.user?.id]);
 
   // Without this, anything written straight to the phone calendar from
   // somewhere other than this exact screen - Discover's "Add to My
@@ -373,14 +396,25 @@ export default function HomeScreen() {
   // back to this screen.
   useFocusEffect(
     useCallback(() => {
-      if (calendarPermission === "granted") fetchExternalEvents();
-    }, [calendarPermission, fetchExternalEvents]),
+      if (calendarPermission === "granted" && calendarSyncEnabled) fetchExternalEvents();
+    }, [calendarPermission, calendarSyncEnabled, fetchExternalEvents]),
   );
 
   const handleEnableExternalCalendar = async () => {
-    const granted = await requestCalendarAccess();
+    // Already granted at the OS level from a different account on this
+    // same device - no native dialog to show, just record that this
+    // account itself has now opted in too.
+    const granted = calendarPermission === "granted" ? true : await requestCalendarAccess();
     setCalendarPermission(granted ? "granted" : "denied");
-    if (granted) await fetchExternalEvents();
+    if (granted && session?.user?.id) {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ calendar_sync_enabled: true })
+        .eq("id", session.user.id);
+      if (error) console.error("Error saving calendar sync preference:", error);
+      setCalendarSyncEnabled(true);
+      await fetchExternalEvents();
+    }
   };
 
   const handleDismissPhoneBanner = async () => {
@@ -913,7 +947,7 @@ export default function HomeScreen() {
       return;
     }
     await fetchEvents();
-    if (calendarPermission === "granted") await fetchExternalEvents();
+    if (calendarPermission === "granted" && calendarSyncEnabled) await fetchExternalEvents();
     if (isCompactMode) {
       await refreshLatestMessages(visibleEvents.map((e) => e.id));
     }
@@ -925,6 +959,7 @@ export default function HomeScreen() {
     groups,
     fetchEvents,
     calendarPermission,
+    calendarSyncEnabled,
     fetchExternalEvents,
     refreshLatestMessages,
     visibleEvents,
@@ -1441,7 +1476,8 @@ export default function HomeScreen() {
               </Text>
             </TouchableOpacity>
           )}
-          {calendarPermission === "undetermined" &&
+          {(calendarPermission === "undetermined" ||
+            (calendarPermission === "granted" && calendarSyncEnabled === false)) &&
             !showDraftsOnly &&
             !showDeclinedOnly && (
               <TouchableOpacity
