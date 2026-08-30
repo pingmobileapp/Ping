@@ -287,9 +287,12 @@ async function fetchCityDaysActivities(
     debug.citydays = { rawCount: rawActivities.length };
 
     return rawActivities
-      .filter((a: any) => a?.title && a?.date && a?.url && CATEGORIES.includes(a.category))
+      // start_time required, not defaulted to midnight - see the matching
+      // fix in refresh-activities-utahagenda for the live duplicate bug
+      // this caused.
+      .filter((a: any) => a?.title && a?.date && a?.start_time && a?.url && CATEGORIES.includes(a.category))
       .map((a: any): ActivityRow => {
-        const startsAt = zonedDateTimeToUtcIso(a.date, a.start_time || '00:00', ANCHOR_TIMEZONE);
+        const startsAt = zonedDateTimeToUtcIso(a.date, a.start_time, ANCHOR_TIMEZONE);
         const endsAt = a.end_time ? zonedDateTimeToUtcIso(a.date, a.end_time, ANCHOR_TIMEZONE) : null;
         return {
           source: 'ai_search_citydays',

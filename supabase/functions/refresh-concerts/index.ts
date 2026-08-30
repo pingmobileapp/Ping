@@ -252,11 +252,15 @@ async function fetchConcertActivities(
     debug.concerts = { rawCount: rawShows.length };
 
     return rawShows
-      .filter((s: any) => s?.title && s?.venue && s?.date && s?.url)
+      // start_time required, not defaulted to 19:00 - see the matching fix
+      // in refresh-activities-utahagenda for the live duplicate bug a
+      // fabricated default time caused there (same risk here in principle,
+      // even though 19:00 is a less obviously-wrong guess than midnight).
+      .filter((s: any) => s?.title && s?.venue && s?.date && s?.start_time && s?.url)
       .map((s: any): ActivityRow => {
         const venueMatch = VENUES.find((v) => v.name === s.venue);
         const location = venueMatch ? `${venueMatch.name}, ${venueMatch.city}` : s.venue;
-        const startsAt = zonedDateTimeToUtcIso(s.date, s.start_time || '19:00', ANCHOR_TIMEZONE);
+        const startsAt = zonedDateTimeToUtcIso(s.date, s.start_time, ANCHOR_TIMEZONE);
         return {
           source: 'ai_search_concerts',
           external_id: null,

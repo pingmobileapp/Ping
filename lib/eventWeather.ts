@@ -1,6 +1,22 @@
 import { supabase } from '../supabase';
 import { getCurrentCoords, getLocationPermissionStatus } from './location';
 
+// Neither supabase-js's functions.invoke nor a plain fetch() has a default
+// timeout - on a stalled/flaky connection either can hang indefinitely
+// rather than failing cleanly. This runs on Home every time a new Ping
+// enters the visible list (including one that just arrived via a live
+// push notification), sequentially per unique location - a single stuck
+// call here blocks every location after it in the same batch. Not
+// confirmed as the cause of a real one-time full-app freeze, but it's
+// exactly the kind of unbounded wait worth closing regardless.
+const NETWORK_TIMEOUT_MS = 8000;
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timed out')), ms)),
+  ]);
+}
+
 // Shows expected weather on the lower-right of a Ping's card (see
 // EventCard.tsx). A specific, real-sounding location ("Creekside Park",
 // "123 Main St, Provo, UT") gets its own actual forecast via geocoding;
@@ -57,7 +73,10 @@ async function geocodeEventLocation(location: string): Promise<{ lat: number; ln
 
   let result: { lat: number; lng: number } | null = null;
   try {
-    const { data, error } = await supabase.functions.invoke('geocode-location', { body: { location } });
+    const { data, error } = await withTimeout(
+      supabase.functions.invoke('geocode-location', { body: { location } }),
+      NETWORK_TIMEOUT_MS
+    );
     if (!error && data && data.lat != null && data.lng != null) {
       result = { lat: data.lat, lng: data.lng };
     }
@@ -80,7 +99,7 @@ async function fetchForecastForCoords(lat: number, lng: number): Promise<Record<
     const url =
       `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
       `&daily=temperature_2m_max,temperature_2m_min,weathercode&temperature_unit=fahrenheit&timezone=auto&forecast_days=16`;
-    const res = await fetch(url);
+    const res = await withTimeout(fetch(url), NETWORK_TIMEOUT_MS);
     if (res.ok) {
       const json = await res.json();
       const days: string[] = json?.daily?.time ?? [];

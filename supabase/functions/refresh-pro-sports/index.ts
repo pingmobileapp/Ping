@@ -251,9 +251,17 @@ async function fetchProSportsActivities(
     debug.prosports = { rawCount: rawGames.length };
 
     return rawGames
-      .filter((g: any) => g?.title && g?.date && g?.url)
+      // start_time required, not defaulted to midnight - a real game was
+      // seen live sitting at a confident-looking "12:00 AM" (the model
+      // hadn't actually found this source's start time) while the exact
+      // same game from another source correctly showed 6:35 PM, ~18 hours
+      // apart - far outside dedup's matching window, so both stayed
+      // visible as if they were different games. A wrong-but-plausible
+      // timestamp is worse than dropping the row - the real time is
+      // usually still findable from a source that did report it.
+      .filter((g: any) => g?.title && g?.date && g?.start_time && g?.url)
       .map((g: any): ActivityRow => {
-        const startsAt = zonedDateTimeToUtcIso(g.date, g.start_time || '00:00', ANCHOR_TIMEZONE);
+        const startsAt = zonedDateTimeToUtcIso(g.date, g.start_time, ANCHOR_TIMEZONE);
         const endsAt = g.end_time ? zonedDateTimeToUtcIso(g.date, g.end_time, ANCHOR_TIMEZONE) : null;
         return {
           source: 'ai_search_prosports',

@@ -511,7 +511,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: 16,
   },
-  starButton: { position: 'absolute', top: 14, right: 14, zIndex: 2 },
+  starButton: { position: 'absolute', top: 36, right: 14, zIndex: 2 },
   starIcon: { fontSize: 24, color: colors.warning },
   cardHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   cardCategory: { color: colors.primaryDark, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },

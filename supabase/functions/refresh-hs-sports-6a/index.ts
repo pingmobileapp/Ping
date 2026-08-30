@@ -273,9 +273,15 @@ async function fetchHsSportsActivities(
     debug.hs6a = { rawCount: rawGames.length };
 
     return rawGames
-      .filter((g: any) => g?.title && g?.date && g?.url)
+      // start_time required, not defaulted to midnight - seen live in the
+      // sibling pro-sports crawler causing the exact same real game to
+      // show twice (a confident-looking "12:00 AM" from one source, the
+      // correct time from another, ~18 hours apart and so outside dedup's
+      // matching window). A wrong-but-plausible timestamp is worse than
+      // dropping the row.
+      .filter((g: any) => g?.title && g?.date && g?.start_time && g?.url)
       .map((g: any): ActivityRow => {
-        const startsAt = zonedDateTimeToUtcIso(g.date, g.start_time || '00:00', ANCHOR_TIMEZONE);
+        const startsAt = zonedDateTimeToUtcIso(g.date, g.start_time, ANCHOR_TIMEZONE);
         const endsAt = g.end_time ? zonedDateTimeToUtcIso(g.date, g.end_time, ANCHOR_TIMEZONE) : null;
         return {
           source: 'ai_search_hs6a',

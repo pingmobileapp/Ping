@@ -23,13 +23,9 @@ const GRID_HEIGHT = 24 * HOUR_BLOCK_HEIGHT;
 // How far each card in a same-time cascade is nudged right of the one
 // behind it - see the stackIndex/stackSize comment where it's used below.
 const STACK_OFFSET = 10;
-// A long-press landing in a free gap smaller than this is too tight to be
-// worth suggesting anything for - avoids popping the Discover pill for a
-// sliver of a minute between two back-to-back events.
-const MIN_DISCOVER_GAP_MINUTES = 20;
-// How long the Discover pill stays up before it quietly goes away on its
-// own, if it isn't tapped.
-const DISCOVER_PROMPT_TIMEOUT_MS = 5000;
+// How long the "+ Add Personal Item" pill stays up before it quietly goes
+// away on its own, if it isn't tapped.
+const EMPTY_SLOT_PROMPT_TIMEOUT_MS = 5000;
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const toDayKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -62,10 +58,17 @@ type Props = {
   height: number;
   onEventPress: (id: string) => void;
   onVisibleWeekChange: (weekStart: Date) => void;
-  // Long-pressing empty space in a day column calls this with the free gap
-  // (bounded by whatever's on either side of it, or midnight) it landed in -
-  // see handleColumnLongPress below.
-  onDiscoverRequest: (dayKey: string, gapStartMinutes: number, gapEndMinutes: number) => void;
+  // Long-pressing empty space in a day column (not on top of an existing
+  // event - see isFreeSlot) shows a pill right where the press landed;
+  // tapping it calls this with the day and the exact minutes-since-midnight
+  // it landed at, opening Add Personal Item prefilled to that specific
+  // time - a quick personal reminder that can always be converted to a
+  // real Ping later if it turns out to need one.
+  onEmptySlotLongPress: (dayKey: string, minutes: number) => void;
+  // Long-pressing a day's header cell (the "Sun 30" label above the grid,
+  // not the grid body itself) - opens Discover scoped to that whole day,
+  // no specific free-time gap.
+  onDateHeaderLongPress: (dayKey: string) => void;
   // The hour grid's own vertical ScrollView is given this as its actual
   // frame height (visibleHeight at rest, growing 1:1 with dragY up to
   // maxExtraHeight) rather than being left unbounded - a ScrollView with no
@@ -82,8 +85,6 @@ type Props = {
   // rest position in app/(tabs)/index.tsx (animatedCardsSheetStyle).
   defaultExpansion: number;
 };
-
-type DiscoverPrompt = { dayKey: string; top: number; gapStart: number; gapEnd: number };
 
 // A continuously horizontally-scrollable multi-day hourly grid - built from
 // scratch rather than on top of react-native-calendars' Timeline, which has
@@ -114,7 +115,8 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       height,
       onEventPress,
       onVisibleWeekChange,
-      onDiscoverRequest,
+      onEmptySlotLongPress,
+      onDateHeaderLongPress,
       dragY,
       visibleHeight,
       maxExtraHeight,
@@ -125,7 +127,15 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     const columnWidth = Dimensions.get('window').width - TIMELINE_LEFT_INSET;
     const dayColumnWidth = columnWidth / 7;
 
-    const [discoverPrompt, setDiscoverPrompt] = useState<DiscoverPrompt | null>(null);
+    const [emptySlotPrompt, setEmptySlotPrompt] = useState<{ dayKey: string; top: number; minutes: number } | null>(
+      null,
+    );
+
+    useEffect(() => {
+      if (!emptySlotPrompt) return;
+      const timeout = setTimeout(() => setEmptySlotPrompt(null), EMPTY_SLOT_PROMPT_TIMEOUT_MS);
+      return () => clearTimeout(timeout);
+    }, [emptySlotPrompt]);
 
     // The header row and all-day strip above the scroll area are fixed
     // height - only the remainder is this ScrollView's own frame.
@@ -145,32 +155,19 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       };
     });
 
-    useEffect(() => {
-      if (!discoverPrompt) return;
-      const timeout = setTimeout(() => setDiscoverPrompt(null), DISCOVER_PROMPT_TIMEOUT_MS);
-      return () => clearTimeout(timeout);
-    }, [discoverPrompt]);
-
-    // Finds the free gap a long-press at locationY falls in, bounded by the
-    // day's own events (or midnight/end-of-day) - null if it landed inside
-    // an existing event or the gap is too tight to bother suggesting
-    // anything for (see MIN_DISCOVER_GAP_MINUTES).
-    const findFreeGap = (locationY: number, dayEvents: DayColumnEvent[]): { start: number; end: number } | null => {
+    // Minutes-since-midnight a long-press at locationY falls at, or null if
+    // it landed on top of an existing event - the pill shouldn't offer to
+    // add something new right on top of something already there.
+    const freeSlotMinutes = (locationY: number, dayEvents: DayColumnEvent[]): number | null => {
       const minutes = Math.max(0, Math.min(24 * 60 - 1, (locationY / HOUR_BLOCK_HEIGHT) * 60));
-      const sorted = [...dayEvents].sort((a, b) => a.startMinutes - b.startMinutes);
-      let gapStart = 0;
-      for (const ev of sorted) {
-        if (minutes < ev.startMinutes) return { start: gapStart, end: ev.startMinutes };
-        if (minutes < ev.endMinutes) return null;
-        gapStart = Math.max(gapStart, ev.endMinutes);
-      }
-      return { start: gapStart, end: 24 * 60 };
+      const insideEvent = dayEvents.some((ev) => minutes >= ev.startMinutes && minutes < ev.endMinutes);
+      return insideEvent ? null : minutes;
     };
 
     const handleColumnLongPress = (key: string, dayEvents: DayColumnEvent[], locationY: number) => {
-      const gap = findFreeGap(locationY, dayEvents);
-      if (!gap || gap.end - gap.start < MIN_DISCOVER_GAP_MINUTES) return;
-      setDiscoverPrompt({ dayKey: key, top: Math.max(0, locationY - 18), gapStart: gap.start, gapEnd: gap.end });
+      const minutes = freeSlotMinutes(locationY, dayEvents);
+      if (minutes === null) return;
+      setEmptySlotPrompt({ dayKey: key, top: Math.max(0, locationY - 18), minutes });
     };
 
     const dayKeys = useMemo(
@@ -267,10 +264,15 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
             {dayKeys.map((d) => {
               const key = toDayKey(d);
               return (
-                <View key={key} style={[styles.dayLabelCell, { width: dayColumnWidth }]}>
+                <Pressable
+                  key={key}
+                  style={[styles.dayLabelCell, { width: dayColumnWidth }]}
+                  delayLongPress={450}
+                  onLongPress={() => onDateHeaderLongPress(key)}
+                >
                   <Text style={styles.dayLabelDow}>{d.toLocaleDateString(undefined, { weekday: 'short' })}</Text>
                   <Text style={[styles.dayLabelNum, key === today && styles.dayLabelNumToday]}>{d.getDate()}</Text>
-                </View>
+                </Pressable>
               );
             })}
           </Animated.ScrollView>
@@ -369,15 +371,15 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                         </TouchableOpacity>
                       );
                     })}
-                    {discoverPrompt?.dayKey === key && (
+                    {emptySlotPrompt?.dayKey === key && (
                       <TouchableOpacity
-                        style={[styles.discoverPill, { top: discoverPrompt.top }]}
+                        style={[styles.emptySlotPill, { top: emptySlotPrompt.top }]}
                         onPress={() => {
-                          onDiscoverRequest(key, discoverPrompt.gapStart, discoverPrompt.gapEnd);
-                          setDiscoverPrompt(null);
+                          onEmptySlotLongPress(key, emptySlotPrompt.minutes);
+                          setEmptySlotPrompt(null);
                         }}
                       >
-                        <Text style={styles.discoverPillText}>🔎 Discover</Text>
+                        <Text style={styles.emptySlotPillText}>+ Add Personal Item</Text>
                       </TouchableOpacity>
                     )}
                   </Pressable>
@@ -425,7 +427,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   eventBlockText: { color: colors.textOnPrimary, fontSize: 11, fontWeight: '600' },
-  discoverPill: {
+  emptySlotPill: {
     position: 'absolute',
     left: 4,
     right: 4,
@@ -440,5 +442,5 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 4,
   },
-  discoverPillText: { color: colors.textOnPrimary, fontSize: 12, fontWeight: '700' },
+  emptySlotPillText: { color: colors.textOnPrimary, fontSize: 12, fontWeight: '700' },
 });

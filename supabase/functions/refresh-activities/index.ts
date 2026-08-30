@@ -309,11 +309,15 @@ async function fetchAiSearchActivities(
 
     // A url is what makes a result verifiable - if the model didn't give
     // one (even though the schema requires it), drop the row rather than
-    // show something no one can double-check.
+    // show something no one can double-check. Same reasoning for
+    // start_time (no longer defaulted to midnight) - a wrong-but-plausible
+    // "12:00 AM" caused a live duplicate against another source that had
+    // this same real event's actual time, ~18 hours apart and so outside
+    // dedup's matching window.
     return rawActivities
-      .filter((a: any) => a?.title && a?.date && a?.url && CATEGORIES.includes(a.category))
+      .filter((a: any) => a?.title && a?.date && a?.start_time && a?.url && CATEGORIES.includes(a.category))
       .map((a: any): ActivityRow => {
-        const startsAt = zonedDateTimeToUtcIso(a.date, a.start_time || '00:00', ANCHOR_TIMEZONE);
+        const startsAt = zonedDateTimeToUtcIso(a.date, a.start_time, ANCHOR_TIMEZONE);
         const endsAt = a.end_time ? zonedDateTimeToUtcIso(a.date, a.end_time, ANCHOR_TIMEZONE) : null;
         return {
           source: 'ai_search',
@@ -384,10 +388,29 @@ async function fetchTicketmasterActivities(lat: number, lng: number): Promise<Ac
     // "Tickets for this event are not currently available."
     return events
       .filter((e: any) => e.dates?.status?.code === 'onsale')
-      .map((e: any): ActivityRow => {
+      .map((e: any): ActivityRow | null => {
       const venue = e._embedded?.venues?.[0];
       const classification = e.classifications?.[0];
       const priceRange = e.priceRanges?.[0];
+
+      // dates.start.dateTime, when Ticketmaster provides it, is already a
+      // real UTC instant - use it as-is. When it's missing (a confirmed
+      // date but no confirmed time yet), the old fallback built
+      // `${localDate}T00:00:00` with no zone info at all - Postgres then
+      // read that as UTC midnight, which is actually the evening BEFORE
+      // the real local date once converted back (e.g. a real Saturday
+      // 6pm Mountain game stored and displayed as Friday). Combining
+      // localDate with localTime through the same DST-aware conversion
+      // every AI-search source already uses is what actually fixes that;
+      // if there's truly no localTime either, the event is skipped rather
+      // than stamped with a fabricated time, same principle applied to
+      // every other source after the "12:00 AM" duplicate bug.
+      let startsAt: string | null = e.dates?.start?.dateTime || null;
+      if (!startsAt && e.dates?.start?.localDate && e.dates?.start?.localTime) {
+        startsAt = zonedDateTimeToUtcIso(e.dates.start.localDate, e.dates.start.localTime, ANCHOR_TIMEZONE);
+      }
+      if (!startsAt) return null;
+
       return {
         source: 'ticketmaster',
         external_id: e.id,
@@ -397,14 +420,15 @@ async function fetchTicketmasterActivities(lat: number, lng: number): Promise<Ac
         location: venue?.name || null,
         lat: venue?.location?.latitude ? Number(venue.location.latitude) : null,
         lng: venue?.location?.longitude ? Number(venue.location.longitude) : null,
-        starts_at: e.dates?.start?.dateTime || `${e.dates?.start?.localDate}T00:00:00`,
+        starts_at: startsAt,
         ends_at: null,
         price_label: priceRange ? `$${priceRange.min}${priceRange.max !== priceRange.min ? `-$${priceRange.max}` : ''}` : 'See listing',
         url: e.url || null,
         confidence: 'high',
         distance_miles: null,
       };
-    });
+    })
+    .filter((row): row is ActivityRow => row !== null);
   } catch (err) {
     console.error('Ticketmaster fetch failed:', err);
     return [];
@@ -427,22 +451,35 @@ async function fetchSeatGeekActivities(lat: number, lng: number): Promise<Activi
     }
     const data = await res.json();
     const events = data?.events || [];
-    return events.map((e: any): ActivityRow => ({
-      source: 'seatgeek',
-      external_id: String(e.id),
-      title: e.title,
-      category: e.type === 'movie' ? 'movies' : e.type?.includes('sports') || e.type === 'baseball' || e.type === 'basketball' ? 'sports' : e.type === 'concert' ? 'music' : 'community',
-      description: null,
-      location: e.venue?.name || null,
-      lat: e.venue?.location?.lat ?? null,
-      lng: e.venue?.location?.lon ?? null,
-      starts_at: e.datetime_local,
-      ends_at: null,
-      price_label: e.stats?.lowest_price ? `$${e.stats.lowest_price}+` : 'See listing',
-      url: e.url || null,
-      confidence: 'high',
-      distance_miles: null,
-    }));
+    return events
+      .map((e: any): ActivityRow | null => {
+        // datetime_local (e.g. "2026-09-05T18:00:00") has no offset at all
+        // - stored as-is into a timestamptz column, Postgres reads it as
+        // UTC, which is wrong by this venue's real UTC offset (the same
+        // class of bug just fixed for Ticketmaster's fallback path, just
+        // via a different field). Split and run through the same
+        // DST-aware conversion every other source uses.
+        if (!e.datetime_local) return null;
+        const [datePart, timePart] = e.datetime_local.split('T');
+        if (!datePart || !timePart) return null;
+        return {
+          source: 'seatgeek',
+          external_id: String(e.id),
+          title: e.title,
+          category: e.type === 'movie' ? 'movies' : e.type?.includes('sports') || e.type === 'baseball' || e.type === 'basketball' ? 'sports' : e.type === 'concert' ? 'music' : 'community',
+          description: null,
+          location: e.venue?.name || null,
+          lat: e.venue?.location?.lat ?? null,
+          lng: e.venue?.location?.lon ?? null,
+          starts_at: zonedDateTimeToUtcIso(datePart, timePart, ANCHOR_TIMEZONE),
+          ends_at: null,
+          price_label: e.stats?.lowest_price ? `$${e.stats.lowest_price}+` : 'See listing',
+          url: e.url || null,
+          confidence: 'high',
+          distance_miles: null,
+        };
+      })
+      .filter((row): row is ActivityRow => row !== null);
   } catch (err) {
     console.error('SeatGeek fetch failed:', err);
     return [];

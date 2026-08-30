@@ -110,6 +110,13 @@ export default function HomeScreen() {
   const [eventsLoadError, setEventsLoadError] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [fabMenuVisible, setFabMenuVisible] = useState(false);
+  // Set only by long-pressing an empty Week-view slot (see
+  // handleEmptySlotLongPress) - takes priority over selectedDate for the
+  // create modals' initialDate below, without touching selectedDate itself
+  // (which also drives the Upcoming list's day filter - a Week-view
+  // long-press shouldn't jump that too).
+  const [createPrefillDate, setCreatePrefillDate] = useState<string | null>(null);
+  const [createPrefillMinutes, setCreatePrefillMinutes] = useState<number | null>(null);
   const [personalItemModalVisible, setPersonalItemModalVisible] = useState(false);
   const [editingPersonalEvent, setEditingPersonalEvent] = useState<ExternalEvent | null>(null);
   const [convertPrefill, setConvertPrefill] = useState<{
@@ -635,14 +642,25 @@ export default function HomeScreen() {
     }
   };
 
-  // Long-pressing an empty gap in Week view (see WeekGrid's
-  // onDiscoverRequest) hands off to the Explore tab, pre-scoped to that day
-  // and free-time window rather than a generic "browse everything" view.
-  const handleDiscoverRequest = (dayKey: string, gapStartMinutes: number, gapEndMinutes: number) => {
-    router.push({
-      pathname: "/explore",
-      params: { date: dayKey, gapStart: String(gapStartMinutes), gapEnd: String(gapEndMinutes) },
-    });
+  // Long-pressing empty grid space in Week view (see WeekGrid's pill,
+  // onEmptySlotLongPress) opens Add Personal Item directly - a quick
+  // reminder for that exact day/time, not a menu of choices, since it can
+  // always be converted to a real Ping afterward if it turns out to need
+  // one (see AddPersonalItemModal's own onConvertToPing). createPrefillDate
+  // takes priority over selectedDate (see the modal's initialDate prop
+  // below) so this doesn't also change what the Upcoming list is filtered
+  // to, the way tapping a day on the Month calendar does.
+  const handleEmptySlotLongPress = (dayKey: string, minutes: number) => {
+    setCreatePrefillDate(dayKey);
+    setCreatePrefillMinutes(minutes);
+    setPersonalItemModalVisible(true);
+  };
+
+  // Long-pressing a day's header cell in Week view (see WeekGrid's
+  // onDateHeaderLongPress) hands off to the Explore tab scoped to that
+  // whole day, not a specific free-time gap.
+  const handleDateHeaderLongPress = (dayKey: string) => {
+    router.push({ pathname: "/explore", params: { date: dayKey } });
   };
 
   // Declined events are hidden from the calendar/lists by default (nothing
@@ -1499,7 +1517,8 @@ export default function HomeScreen() {
               height={weekGridMaxHeight}
               onEventPress={handleWeekItemPress}
               onVisibleWeekChange={setVisibleWeekStart}
-              onDiscoverRequest={handleDiscoverRequest}
+              onEmptySlotLongPress={handleEmptySlotLongPress}
+              onDateHeaderLongPress={handleDateHeaderLongPress}
               dragY={dragY}
               visibleHeight={weekGridBaseHeight}
               maxExtraHeight={weekBottomLimit}
@@ -1735,23 +1754,32 @@ export default function HomeScreen() {
           setModalVisible(false);
           setConvertPrefill(null);
           setConvertSource(null);
+          setCreatePrefillDate(null);
         }}
-        onCreated={handleCreated}
-        initialDate={selectedDate}
+        onCreated={(status) => {
+          setCreatePrefillDate(null);
+          handleCreated(status);
+        }}
+        initialDate={createPrefillDate ?? selectedDate}
         prefill={convertPrefill}
       />
 
       <AddPersonalItemModal
         visible={personalItemModalVisible || !!editingPersonalEvent}
         editingEvent={editingPersonalEvent}
-        initialDate={selectedDate}
+        initialDate={createPrefillDate ?? selectedDate}
+        initialMinutes={editingPersonalEvent ? null : createPrefillMinutes}
         onClose={() => {
           setPersonalItemModalVisible(false);
           setEditingPersonalEvent(null);
+          setCreatePrefillDate(null);
+          setCreatePrefillMinutes(null);
         }}
         onSaved={async () => {
           setPersonalItemModalVisible(false);
           setEditingPersonalEvent(null);
+          setCreatePrefillDate(null);
+          setCreatePrefillMinutes(null);
           setCalendarPermission("granted");
           await fetchExternalEvents();
         }}

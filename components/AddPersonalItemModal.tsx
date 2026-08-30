@@ -23,6 +23,11 @@ import {
 type Props = {
   visible: boolean;
   initialDate?: string | null;
+  // Minutes since midnight - only meaningful alongside initialDate, for a
+  // creation (not edit) opened from a specific spot in Week view's grid
+  // (see WeekGrid's long-press pill) rather than a generic "+" tap, which
+  // has no particular time in mind.
+  initialMinutes?: number | null;
   editingEvent?: ExternalEvent | null;
   onClose: () => void;
   onSaved: () => void;
@@ -55,7 +60,7 @@ const errorMessage = (err: unknown): string => (err instanceof Error ? err.messa
 // tapped from Upcoming (see ExternalEvent.editable), not just ones Ping
 // created - editingEvent.isPersonal only changes the messaging/marker
 // handling, not whether editing is allowed.
-export default function AddPersonalItemModal({ visible, initialDate, editingEvent, onClose, onSaved, onConvertToPing }: Props) {
+export default function AddPersonalItemModal({ visible, initialDate, initialMinutes, editingEvent, onClose, onSaved, onConvertToPing }: Props) {
   const [title, setTitle] = useState('');
   const [details, setDetails] = useState('');
   const [recurrence, setRecurrence] = useState<RecurrenceConfig | null>(null);
@@ -129,11 +134,18 @@ export default function AddPersonalItemModal({ visible, initialDate, editingEven
       const [y, m, d] = initialDate.split('-').map(Number);
       const next = new Date();
       next.setFullYear(y, m - 1, d);
+      // Rounded to the nearest 15 minutes, matching the time picker's own
+      // minuteInterval - a long-press lands wherever the finger happened
+      // to be, not necessarily on a clean quarter-hour.
+      if (initialMinutes != null) {
+        const rounded = Math.round(initialMinutes / 15) * 15;
+        next.setHours(Math.floor(rounded / 60), rounded % 60, 0, 0);
+      }
       return next;
     })() : new Date();
     setStartDate(start);
     setEndDate(new Date(start.getTime() + 60 * 60000));
-  }, [visible, editingEvent, initialDate]);
+  }, [visible, editingEvent, initialDate, initialMinutes]);
 
   const formatDate = (d: Date) =>
     d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
