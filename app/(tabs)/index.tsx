@@ -58,6 +58,12 @@ import {
 } from "../../lib/calendarConflicts";
 import { getHiddenEventIds, hideEvent, unhideEvent } from "../../lib/hiddenEvents";
 import { DailyWeather, fetchWeatherForEvents } from "../../lib/eventWeather";
+import InterestedActivityCard from "../../components/InterestedActivityCard";
+import {
+  InterestedActivity,
+  fetchInterestedActivities,
+  removeInterestByKey,
+} from "../../lib/discoverActivities";
 import { pickEventImage } from "../../lib/imagePicker";
 import { extractScheduleEvents, ExtractedEvent } from "../../lib/scheduleImport";
 import { dismissProfilePrompt, useProfilePhone } from "../../lib/useProfilePhone";
@@ -99,6 +105,7 @@ export default function HomeScreen() {
   const [phoneBannerDismissed, setPhoneBannerDismissed] = useState(false);
   const [events, setEvents] = useState<PingEvent[]>([]);
   const [weatherByEventId, setWeatherByEventId] = useState<Record<string, DailyWeather>>({});
+  const [interestedActivities, setInterestedActivities] = useState<InterestedActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [eventsLoadError, setEventsLoadError] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
@@ -348,6 +355,34 @@ export default function HomeScreen() {
   useEffect(() => {
     fetchEvents().finally(() => setLoading(false));
   }, [fetchEvents]);
+
+  // Wide enough to cover anything the Upcoming list's own month/day
+  // scoping might show - the memo below does the actual narrowing, same
+  // as how externalEvents is fetched broadly and filtered per-view.
+  const fetchInterested = useCallback(async () => {
+    const rangeStart = new Date();
+    const rangeEnd = new Date();
+    rangeEnd.setDate(rangeEnd.getDate() + 90);
+    setInterestedActivities(await fetchInterestedActivities(rangeStart, rangeEnd));
+  }, []);
+
+  useEffect(() => {
+    fetchInterested();
+  }, [fetchInterested]);
+
+  // Refetch on return to Home - starring/unstarring happens on the
+  // Discover screen, so without this, coming back wouldn't reflect a
+  // change made there until some unrelated refresh happened to fire.
+  useFocusEffect(
+    useCallback(() => {
+      fetchInterested();
+    }, [fetchInterested]),
+  );
+
+  const handleUnstarInterested = async (activity: InterestedActivity) => {
+    setInterestedActivities((prev) => prev.filter((a) => a.activityKey !== activity.activityKey));
+    await removeInterestByKey(activity.activityKey);
+  };
 
   // Only call once permission is confirmed granted - see the matching note
   // on getUpcomingExternalEvents.
@@ -776,7 +811,8 @@ export default function HomeScreen() {
   // has to know they exist.
   type UpcomingListItem =
     | { kind: "ping"; key: string; date: Date; event: PingEvent }
-    | { kind: "external"; key: string; date: Date; event: ExternalEvent };
+    | { kind: "external"; key: string; date: Date; event: ExternalEvent }
+    | { kind: "interested"; key: string; date: Date; event: InterestedActivity };
 
   // Bounds of the calendar's currently displayed month, used below to cap
   // the default Upcoming list to one month at a time instead of every
@@ -849,7 +885,18 @@ export default function HomeScreen() {
       event: e,
     }));
 
-    return [...pingItems, ...externalItems].sort(
+    const interestedFiltered = selectedDate
+      ? interestedActivities.filter((a) => toDateKey(new Date(a.startsAt)) === selectedDate)
+      : interestedActivities.filter((a) => inVisibleMonth(new Date(a.startsAt), null));
+
+    const interestedItems: UpcomingListItem[] = interestedFiltered.map((a) => ({
+      kind: "interested",
+      key: `interest-${a.activityKey}`,
+      date: new Date(a.startsAt),
+      event: a,
+    }));
+
+    return [...pingItems, ...externalItems, ...interestedItems].sort(
       (a, b) => a.date.getTime() - b.date.getTime(),
     );
   }, [
@@ -857,6 +904,7 @@ export default function HomeScreen() {
     showHiddenOnly,
     hiddenEventIds,
     externalEvents,
+    interestedActivities,
     selectedDate,
     showDraftsOnly,
     showDeclinedOnly,
@@ -1532,6 +1580,12 @@ export default function HomeScreen() {
                   onPress={openEvent}
                   rsvpStatus={myRsvpByEvent[item.event.id] as any}
                   weather={weatherByEventId[item.event.id]}
+                />
+              ) : item.kind === "interested" ? (
+                <InterestedActivityCard
+                  activity={item.event}
+                  onPress={() => router.push({ pathname: "/explore", params: { date: toDateKey(item.date) } })}
+                  onUnstar={handleUnstarInterested}
                 />
               ) : showHiddenOnly ? (
                 <ExternalEventRow

@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Linking,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -16,10 +17,13 @@ import { colors } from '../../lib/theme';
 import {
   Activity,
   ActivityCategory,
+  activityKey,
   CATEGORY_LABELS,
   distanceFromCoords,
   fetchActivities,
+  fetchInterestedKeys,
   isFreeActivity,
+  toggleInterest,
 } from '../../lib/discoverActivities';
 import {
   createPersonalCalendarEvent,
@@ -33,6 +37,7 @@ import {
   getLocationPermissionStatus,
   requestLocationAccess,
 } from '../../lib/location';
+import { DailyWeather, fetchWeatherForEvents } from '../../lib/eventWeather';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const toDateKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -92,6 +97,8 @@ export default function DiscoverScreen() {
   const [freeOnly, setFreeOnly] = useState(false);
   const [showAllDay, setShowAllDay] = useState(false);
   const [activities, setActivities] = useState<Activity[]>([]);
+  const [weatherByPingId, setWeatherByPingId] = useState<Record<string, DailyWeather>>({});
+  const [interestedKeys, setInterestedKeys] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [locationPermission, setLocationPermission] = useState<LocationPermissionStatus | null>(null);
   const [coords, setCoords] = useState<Coords | null>(null);
@@ -118,6 +125,45 @@ export default function DiscoverScreen() {
       .then(setActivities)
       .finally(() => setLoading(false));
   }, [selectedDate]);
+
+  useEffect(() => {
+    fetchInterestedKeys().then(setInterestedKeys);
+  }, [selectedDate]);
+
+  // Optimistic - flips the star immediately rather than waiting on the
+  // round trip, reverting only if the write actually failed.
+  const handleToggleInterest = async (activity: Activity) => {
+    const key = activityKey(activity);
+    const wasInterested = interestedKeys.has(key);
+    setInterestedKeys((prev) => {
+      const next = new Set(prev);
+      if (wasInterested) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+    const ok = await toggleInterest(activity, !wasInterested);
+    if (!ok) {
+      setInterestedKeys((prev) => {
+        const next = new Set(prev);
+        if (wasInterested) next.add(key);
+        else next.delete(key);
+        return next;
+      });
+    }
+  };
+
+  // Weather only for Ping-sourced listings, not the aggregator activities
+  // (Ticketmaster etc.) - those weren't part of this ask, and already show
+  // their own verified distance instead.
+  useEffect(() => {
+    const pingItems = activities
+      .filter((a) => a.source === 'ping' && a.pingEventId)
+      .map((a) => ({ id: a.pingEventId!, location: a.location, event_date: a.startsAt }));
+    if (pingItems.length === 0) return;
+    fetchWeatherForEvents(pingItems).then((result) =>
+      setWeatherByPingId((prev) => ({ ...prev, ...result }))
+    );
+  }, [activities]);
 
   // Checks silently on load (no prompt) so returning users who already
   // granted access get real per-user distance without an extra tap -
@@ -202,6 +248,14 @@ export default function DiscoverScreen() {
       console.error('Error adding activity to calendar:', err);
       Alert.alert('Error', 'Could not add that to your calendar.');
     }
+  };
+
+  // See EventCard.tsx's matching comment - same undocumented-but-commonly-
+  // reported scheme, same graceful fallback if it can't be opened.
+  const handleWeatherPress = () => {
+    Linking.openURL('weather://').catch(() => {
+      Alert.alert('Could not open Weather', "Your phone's Weather app couldn't be opened.");
+    });
   };
 
   const handleViewListing = (activity: Activity) => {
@@ -330,16 +384,39 @@ export default function DiscoverScreen() {
             contentContainerStyle={styles.listContent}
             renderItem={({ item }) => {
               const distance = distanceFromCoords(item, coords);
+              const weather = item.pingEventId ? weatherByPingId[item.pingEventId] : null;
+              const interested = interestedKeys.has(activityKey(item));
               return (
                 <View style={styles.card}>
+                  {/* Not for a Ping you're hosting/joined - that already has its
+                      own RSVP, starring it too would just be a confusing second
+                      way to say the same thing. */}
+                  {item.source !== 'ping' && (
+                    <TouchableOpacity
+                      style={styles.starButton}
+                      onPress={() => handleToggleInterest(item)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Text style={styles.starIcon}>{interested ? '★' : '☆'}</Text>
+                    </TouchableOpacity>
+                  )}
                   <View style={styles.cardHeaderRow}>
                     <Text style={styles.cardCategory}>{CATEGORY_LABELS[item.category]}</Text>
                     {distance !== null && <Text style={styles.cardDistance}>{distance.toFixed(1)} mi</Text>}
                   </View>
-                  <Text style={styles.cardTitle}>{item.title}</Text>
-                  <Text style={styles.cardMeta}>
-                    {formatDateHeading(new Date(item.startsAt))} · {formatActivityTime(item)}
-                  </Text>
+                  <Text style={[styles.cardTitle, { paddingRight: 28 }]}>{item.title}</Text>
+                  <View style={styles.cardMetaRow}>
+                    <Text style={[styles.cardMeta, { flexShrink: 1 }]} numberOfLines={1}>
+                      {formatDateHeading(new Date(item.startsAt))} · {formatActivityTime(item)}
+                    </Text>
+                    {!!weather && (
+                      <TouchableOpacity onPress={handleWeatherPress} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                        <Text style={styles.cardWeatherText}>
+                          {weather.icon} {weather.highF}°/{weather.lowF}°
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                   {!!item.location && <Text style={styles.cardMeta}>{item.location}</Text>}
                   {!!item.description && <Text style={styles.cardDescription}>{item.description}</Text>}
                   <View style={styles.cardFooterRow}>
@@ -434,11 +511,15 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: 16,
   },
+  starButton: { position: 'absolute', top: 14, right: 14, zIndex: 2 },
+  starIcon: { fontSize: 24, color: colors.warning },
   cardHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   cardCategory: { color: colors.primaryDark, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
   cardDistance: { color: colors.textMuted, fontSize: 12 },
   cardTitle: { color: colors.textPrimary, fontSize: 17, fontWeight: '700', marginBottom: 4 },
   cardMeta: { color: colors.textSecondary, fontSize: 13, marginBottom: 2 },
+  cardMetaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  cardWeatherText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 2 },
   cardDescription: { color: colors.textMuted, fontSize: 13, marginTop: 4, fontStyle: 'italic' },
   cardFooterRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 },
   cardPrice: { color: colors.textPrimary, fontSize: 14, fontWeight: '700' },

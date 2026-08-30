@@ -10,7 +10,7 @@ import { getCurrentCoords, getLocationPermissionStatus } from './location';
 // permission itself (Home isn't where someone opted into that) - only
 // uses it if already granted, e.g. from using Discover.
 
-export type DailyWeather = { tempF: number; icon: string } | null;
+export type DailyWeather = { highF: number; lowF: number; icon: string } | null;
 
 const WEATHER_ICONS: Record<number, string> = {
   0: '☀️',
@@ -79,16 +79,17 @@ async function fetchForecastForCoords(lat: number, lng: number): Promise<Record<
   try {
     const url =
       `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}` +
-      `&daily=temperature_2m_max,weathercode&temperature_unit=fahrenheit&timezone=auto&forecast_days=16`;
+      `&daily=temperature_2m_max,temperature_2m_min,weathercode&temperature_unit=fahrenheit&timezone=auto&forecast_days=16`;
     const res = await fetch(url);
     if (res.ok) {
       const json = await res.json();
       const days: string[] = json?.daily?.time ?? [];
       const highs: number[] = json?.daily?.temperature_2m_max ?? [];
+      const lows: number[] = json?.daily?.temperature_2m_min ?? [];
       const codes: number[] = json?.daily?.weathercode ?? [];
       days.forEach((dateKey, i) => {
-        if (highs[i] == null) return;
-        map[dateKey] = { tempF: Math.round(highs[i]), icon: WEATHER_ICONS[codes[i]] ?? '🌡️' };
+        if (highs[i] == null || lows[i] == null) return;
+        map[dateKey] = { highF: Math.round(highs[i]), lowF: Math.round(lows[i]), icon: WEATHER_ICONS[codes[i]] ?? '🌡️' };
       });
     }
   } catch (err) {

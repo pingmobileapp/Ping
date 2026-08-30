@@ -54,6 +54,14 @@ export type Activity = {
   pingEventId?: string;
 };
 
+// The join key discover_interests actually keys on - see that table's own
+// comment for why this is title+time rather than the activity's own id
+// (every ai_search_* source deletes and reinserts nightly with fresh ids,
+// so a star tied to the raw id would vanish the very next refresh even
+// for the exact same real-world event).
+export const activityKey = (activity: { title: string; startsAt: string }): string =>
+  `${activity.title.trim().toLowerCase()}|${activity.startsAt}`;
+
 type ActivityRow = {
   id: string;
   source: string;
@@ -141,6 +149,10 @@ const SOURCE_PRIORITY: Record<string, number> = {
   ticketmaster: 3,
   seatgeek: 3,
   ai_search_utahagenda: 2,
+  ai_search_collegesports: 2,
+  ai_search_prosports: 2,
+  ai_search_concerts: 2,
+  ai_search_hs6a: 2,
   ai_search: 1,
 };
 
@@ -286,4 +298,97 @@ export async function fetchActivities(options: { dateKey?: string; daysAhead?: n
   return [...deduped, ...listings].sort(
     (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()
   );
+}
+
+// The full set of the current user's starred activity_keys - Discover
+// checks each card it renders against this to decide filled vs. hollow.
+export async function fetchInterestedKeys(): Promise<Set<string>> {
+  const { data, error } = await supabase.from('discover_interests').select('activity_key');
+  if (error) {
+    console.error('Error fetching Discover interests:', error);
+    return new Set();
+  }
+  return new Set((data || []).map((r) => r.activity_key));
+}
+
+// Stars/unstars one activity. A full snapshot of its display fields is
+// stored on star (see discover_interests.sql) so Home can render it
+// straight from this table later with no join back to activities needed -
+// that source row may not even exist anymore by the time Home reads it
+// back, since AI-search sources delete-and-reinsert nightly.
+export async function toggleInterest(activity: Activity, interested: boolean): Promise<boolean> {
+  const key = activityKey(activity);
+  if (interested) {
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData.user?.id;
+    if (!userId) return false;
+    const { error } = await supabase.from('discover_interests').insert({
+      user_id: userId,
+      activity_key: key,
+      title: activity.title,
+      category: activity.category,
+      description: activity.description,
+      location: activity.location,
+      starts_at: activity.startsAt,
+      ends_at: activity.endsAt,
+      price_label: activity.priceLabel,
+      url: activity.url,
+    });
+    if (error) {
+      console.error('Error starring activity:', error);
+      return false;
+    }
+  } else {
+    const { error } = await supabase.from('discover_interests').delete().eq('activity_key', key);
+    if (error) {
+      console.error('Error unstarring activity:', error);
+      return false;
+    }
+  }
+  return true;
+}
+
+// Unstars by key alone - for callers (Home) that only have the lightweight
+// discover_interests snapshot on hand, not a full Activity to pass through
+// toggleInterest.
+export async function removeInterestByKey(key: string): Promise<boolean> {
+  const { error } = await supabase.from('discover_interests').delete().eq('activity_key', key);
+  if (error) {
+    console.error('Error unstarring activity:', error);
+    return false;
+  }
+  return true;
+}
+
+export type InterestedActivity = {
+  activityKey: string;
+  title: string;
+  location: string | null;
+  startsAt: string;
+  endsAt: string | null;
+};
+
+// Powers Home's light-yellow "interested" cards - a full read from
+// discover_interests, not activities, so it shows exactly what the user
+// starred even if that night's crawl didn't happen to re-find it.
+export async function fetchInterestedActivities(rangeStart: Date, rangeEnd: Date): Promise<InterestedActivity[]> {
+  const { data, error } = await supabase
+    .from('discover_interests')
+    .select('activity_key, title, location, starts_at, ends_at')
+    .gte('starts_at', rangeStart.toISOString())
+    .lte('starts_at', rangeEnd.toISOString())
+    .order('starts_at', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching interested activities:', error);
+    return [];
+  }
+
+  return (data || []).map((row) => ({
+    activityKey: row.activity_key,
+    title: row.title,
+    location: row.location,
+    startsAt: row.starts_at,
+    endsAt: row.ends_at,
+  }));
 }

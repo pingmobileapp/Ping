@@ -18,6 +18,7 @@ export const colors = {
 
   success: '#3FA34D',
   warning: '#FFD400',
+  warningPale: '#FFF3B8',
   danger: '#D9534F',
 
   white: '#FFFFFF',

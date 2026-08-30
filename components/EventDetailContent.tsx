@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Linking,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '../supabase';
@@ -28,6 +29,7 @@ import { removeEventFromDeviceCalendar, syncAcceptedEventToDeviceCalendar } from
 import { scheduleEventReminder, cancelEventReminder, REMINDER_OPTIONS } from '../lib/eventReminders';
 import { displayName } from '../lib/displayName';
 import { formatEventDate, formatEventTime } from '../lib/eventDate';
+import { DailyWeather, fetchWeatherForEvents } from '../lib/eventWeather';
 
 type EventDetail = {
   id: string;
@@ -93,6 +95,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
   const [groupName, setGroupName] = useState<string | null>(null);
   const [invitees, setInvitees] = useState<InviteeRow[]>([]);
   const [items, setItems] = useState<ItemRow[]>([]);
+  const [weather, setWeather] = useState<DailyWeather>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [newItemName, setNewItemName] = useState('');
@@ -200,6 +203,16 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     setLoading(true);
     fetchData().finally(() => setLoading(false));
   }, [fetchData]);
+
+  // Same weather lookup EventCard/Discover use - keyed on the specific
+  // fields that'd actually change the result, not the whole event object
+  // (which gets a new reference on every fetchData refresh).
+  useEffect(() => {
+    if (!event) return;
+    fetchWeatherForEvents([{ id: event.id, location: event.location, event_date: event.event_date }]).then(
+      (result) => setWeather(result[event.id] ?? null)
+    );
+  }, [event?.id, event?.location, event?.event_date]);
 
   // Without this, a host looking at the guest list has no way to see an
   // RSVP someone else just submitted short of closing and reopening the
@@ -500,6 +513,14 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
   const dateLabel = formatEventDate(event.event_date, event.end_date, 'long');
   const timeLabel = formatEventTime(event.event_date, event.is_all_day, event.end_date);
 
+  // See EventCard.tsx's matching comment - same undocumented-but-commonly-
+  // reported scheme, same graceful fallback if it can't be opened.
+  const handleWeatherPress = () => {
+    Linking.openURL('weather://').catch(() => {
+      Alert.alert('Could not open Weather', "Your phone's Weather app couldn't be opened.");
+    });
+  };
+
   const counts = invitees.reduce(
     (acc, inv) => {
       acc[inv.rsvp_status] = (acc[inv.rsvp_status] || 0) + 1;
@@ -556,8 +577,19 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
         <Text style={styles.title}>{event.title}</Text>
         {!!event.recurrence_id && <Text style={styles.meta}>↻ Part of a repeating series</Text>}
         {!!groupName && <Text style={styles.meta}>Part of the {groupName} group</Text>}
-        <Text style={styles.meta}>{dateLabel}</Text>
-        <Text style={styles.meta}>{timeLabel}</Text>
+        <View style={styles.dateTimeRow}>
+          <View style={{ flexShrink: 1 }}>
+            <Text style={styles.meta}>{dateLabel}</Text>
+            <Text style={styles.meta}>{timeLabel}</Text>
+          </View>
+          {!!weather && (
+            <TouchableOpacity onPress={handleWeatherPress} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={styles.weatherText}>
+                {weather.icon} {weather.highF}°/{weather.lowF}°
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
         {!!event.location && <Text style={styles.meta}>{event.location}</Text>}
         {!!event.description && <Text style={styles.description}>{event.description}</Text>}
 
@@ -965,6 +997,8 @@ const styles = StyleSheet.create({
   image: { width: '100%', aspectRatio: EVENT_IMAGE_ASPECT_RATIO, borderRadius: 15 },
   title: { color: colors.textPrimary, fontSize: 26, fontWeight: '700', marginBottom: 8 },
   meta: { color: colors.textSecondary, fontSize: 15, marginBottom: 2 },
+  dateTimeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
+  weatherText: { color: colors.textSecondary, fontSize: 15, fontWeight: '600' },
   description: { color: colors.textPrimary, fontSize: 15, lineHeight: 21, marginTop: 10 },
   hostRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 },
   hostText: { color: colors.textSecondary, fontSize: 14 },

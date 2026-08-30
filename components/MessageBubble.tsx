@@ -132,10 +132,17 @@ const styles = StyleSheet.create({
   // justifyContent - the bubble and its reaction row both need to anchor
   // to the same edge independently of each other's width, not just be
   // pushed as a shrink-wrapped unit that could end up misaligned.
-  bubbleColumn: { alignItems: 'flex-start' },
-  bubbleColumnMine: { alignItems: 'flex-end' },
+  // maxWidth lives here, not on `bubble` three levels down - a percentage
+  // width resolved through several shrink-wrapped (no explicit width)
+  // ancestors is a real Flexbox trap: Yoga can't always resolve it
+  // unambiguously, and it showed up exactly as "fine for short text,
+  // overlapping/misaligned once a message got long enough to wrap." This
+  // node is a direct child of bubbleRow, which does have a definite width
+  // (100%), so the percentage here has something concrete to resolve
+  // against.
+  bubbleColumn: { alignItems: 'flex-start', maxWidth: '85%' },
+  bubbleColumnMine: { alignItems: 'flex-end', maxWidth: '85%' },
   bubble: {
-    maxWidth: '85%',
     // Without this, the bubble sizes itself to fit only its shortest line
     // (the message body, for something like "Yes") and then squeezes the
     // name/timestamp lines to fit that same narrow width instead of the

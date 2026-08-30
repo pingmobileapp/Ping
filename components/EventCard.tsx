@@ -83,28 +83,25 @@ export default function EventCard({ event, onPress, highlight, rsvpStatus, weath
         </Text>
 
         <View style={styles.statBar}>
-          <Text style={styles.statText}>
-            {!!event.recurrence_id && '↻ '}
-            {dateLabel} · {timeLabel}
-          </Text>
+          <View style={styles.statTopRow}>
+            <Text style={styles.statText} numberOfLines={1}>
+              {!!event.recurrence_id && '↻ '}
+              {dateLabel} · {timeLabel}
+            </Text>
+            {!!weather && (
+              <TouchableOpacity onPress={handleWeatherPress} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Text style={styles.weatherText}>
+                  {weather.icon} {weather.highF}°/{weather.lowF}°
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
           {!!event.location && (
             <Text style={styles.statText} numberOfLines={1}>
               {event.location}
             </Text>
           )}
         </View>
-
-        {!!weather && (
-          <TouchableOpacity
-            style={styles.weatherBadge}
-            onPress={handleWeatherPress}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Text style={styles.weatherText}>
-              {weather.icon} {weather.tempF}°
-            </Text>
-          </TouchableOpacity>
-        )}
       </View>
     </TouchableOpacity>
   );
@@ -151,7 +148,7 @@ const styles = StyleSheet.create({
   image: { width: '100%', aspectRatio: EVENT_IMAGE_ASPECT_RATIO, borderRadius: 12, marginBottom: 10 },
   title: { color: colors.textPrimary, fontSize: 18, fontWeight: '800', marginBottom: 6 },
   statBar: { borderTopWidth: 1, borderTopColor: colors.divider, paddingTop: 6, gap: 2 },
-  statText: { color: colors.textSecondary, fontSize: 13 },
-  weatherBadge: { position: 'absolute', bottom: 10, right: 12 },
+  statTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  statText: { color: colors.textSecondary, fontSize: 13, flexShrink: 1 },
   weatherText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
 });
