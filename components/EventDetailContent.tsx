@@ -33,6 +33,8 @@ import { DailyWeather, fetchWeatherForEvents } from '../lib/eventWeather';
 import { formatPrice } from '../lib/pricing';
 import { startEventCheckout } from '../lib/discoverCheckout';
 import { reportContent, blockUser } from '../lib/moderation';
+import { toListingActivity, activityKey, fetchInterestedKeys, toggleInterest } from '../lib/discoverActivities';
+import TicketModal from './TicketModal';
 
 type EventDetail = {
   id: string;
@@ -113,12 +115,26 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [photoViewerVisible, setPhotoViewerVisible] = useState(false);
   const [smsQueueVisible, setSmsQueueVisible] = useState(false);
+  // Only meaningful for a paid Discover Ping's "Interested" button, which
+  // is the Discover star (discover_interests) rather than an RSVP status -
+  // see the comment by isPaidDiscoverEvent below for why.
+  const [interestedStar, setInterestedStar] = useState(false);
+  const [ticketModalVisible, setTicketModalVisible] = useState(false);
 
   const myInvitee = invitees.find((inv) => inv.user_id === session?.user?.id) || null;
   const coHostIds = coHosts.map((c) => c.user_id);
   const isHost = event?.host_id === session?.user?.id || coHostIds.includes(session?.user?.id || '');
   const isAtCapacity =
     !!event && event.capacity != null && (event.accepted_count ?? 0) >= event.capacity;
+  // Accept/Decline as a plain RSVP choice doesn't make sense once money is
+  // involved - Decline is meaningless (nobody "declines" a ticket they'd
+  // have to buy to hold in the first place) and Accept has to mean "pay"
+  // rather than a free-form status flip. Interested becomes the Discover
+  // star instead of an RSVP status for the same reason (see
+  // handleToggleInterestStar) - it's scoped to discoverable+priced only,
+  // not every Discover Ping, since a free Discover Ping's RSVP row still
+  // works exactly like a normal invite.
+  const isPaidDiscoverEvent = !!event && event.discoverable && event.price_cents != null && event.price_cents > 0;
   // Every host - primary or co-host - for notifications that should reach
   // whoever's actually responsible for the event, not just event.host_id.
   const allHostIds = [event?.host_id, ...coHostIds].filter((id): id is string => !!id);
@@ -221,6 +237,16 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
       (result) => setWeather(result[event.id] ?? null)
     );
   }, [event?.id, event?.location, event?.event_date]);
+
+  // Checks this event's Discover star state - only used for a paid Discover
+  // Ping's "Interested" button (see isPaidDiscoverEvent below), which reuses
+  // Discover's own star mechanism instead of an RSVP status.
+  useEffect(() => {
+    if (!event) return;
+    fetchInterestedKeys().then((keys) =>
+      setInterestedStar(keys.has(activityKey({ title: event.title, startsAt: event.event_date })))
+    );
+  }, [event?.id, event?.title, event?.event_date]);
 
   // Without this, a host looking at the guest list has no way to see an
   // RSVP someone else just submitted short of closing and reopening the
@@ -380,6 +406,19 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
       },
       { text: 'Cancel', style: 'cancel' },
     ]);
+  };
+
+  // A paid Discover Ping's "Interested" doesn't create/clear an invitee row
+  // the way the free-event version does - a "maybe" on a ticketed event
+  // shouldn't factor into capacity or the host's headcount at all, so this
+  // is wired to the same discover_interests star Discover's own explore
+  // cards use instead. Optimistic, same as explore.tsx's handleToggleInterest.
+  const handleToggleInterestStar = async () => {
+    if (!event) return;
+    const wasInterested = interestedStar;
+    setInterestedStar(!wasInterested);
+    const ok = await toggleInterest(toListingActivity(event), !wasInterested);
+    if (!ok) setInterestedStar(wasInterested);
   };
 
   const handlePressRsvpOption = (status: 'accepted' | 'declined' | 'interested') => {
@@ -756,35 +795,80 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
           </View>
           {isHost || myInvitee || event.discoverable ? (
             <View style={styles.rsvpRow}>
-              {RSVP_OPTIONS.map((opt) => {
-                // False for every option until a real invitee row exists -
-                // a Discover viewer who hasn't tapped anything yet sees all
-                // three unchecked, never a default "accepted".
-                const selected = myInvitee?.rsvp_status === opt.value;
-                // Capacity only ever blocks a non-host trying to newly land
-                // on 'accepted' - already being accepted, picking a
-                // different status, or being the host is always allowed
-                // (matches the RLS check in discover_capacity.sql exactly).
-                const blockedByCapacity = !isHost && !selected && opt.value === 'accepted' && isAtCapacity;
-                return (
-                  <TouchableOpacity
-                    key={opt.value}
-                    style={[styles.rsvpButton, selected && styles.rsvpButtonSelected]}
-                    onPress={() => handlePressRsvpOption(opt.value)}
-                    disabled={updating || blockedByCapacity}
-                  >
-                    <Text
-                      style={[
-                        styles.rsvpButtonText,
-                        selected && styles.rsvpButtonTextSelected,
-                        blockedByCapacity && styles.rsvpButtonTextDisabled,
-                      ]}
+              {isPaidDiscoverEvent ? (
+                (() => {
+                  const acceptSelected = myInvitee?.rsvp_status === 'accepted';
+                  // A guest who already paid taps this again for one reason
+                  // only: to prove it. Routing that tap back through
+                  // handlePressRsvpOption would either re-open Stripe
+                  // Checkout for an already-paid ticket or, for a
+                  // self-joined Discover stranger, silently delete their
+                  // paid invitee row (handleDiscoverLeave's un-join, meant
+                  // for a free RSVP, has no refund step) - showing the
+                  // ticket instead is what this button should do once
+                  // there's actually a ticket to show.
+                  const alreadyPurchased = acceptSelected && !isHost;
+                  const blockedByCapacity = !isHost && !acceptSelected && isAtCapacity;
+                  return (
+                    <>
+                      <TouchableOpacity
+                        style={[styles.rsvpButton, acceptSelected && styles.rsvpButtonSelected]}
+                        onPress={() => (alreadyPurchased ? setTicketModalVisible(true) : handlePressRsvpOption('accepted'))}
+                        disabled={updating || blockedByCapacity}
+                      >
+                        <Text
+                          style={[
+                            styles.rsvpButtonText,
+                            acceptSelected && styles.rsvpButtonTextSelected,
+                            blockedByCapacity && styles.rsvpButtonTextDisabled,
+                          ]}
+                        >
+                          {blockedByCapacity ? 'Full' : alreadyPurchased ? 'View Ticket' : isHost ? 'Accept' : 'Buy'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.rsvpButton, interestedStar && styles.rsvpButtonSelected]}
+                        onPress={handleToggleInterestStar}
+                        disabled={updating}
+                      >
+                        <Text style={[styles.rsvpButtonText, interestedStar && styles.rsvpButtonTextSelected]}>
+                          Interested
+                        </Text>
+                      </TouchableOpacity>
+                    </>
+                  );
+                })()
+              ) : (
+                RSVP_OPTIONS.map((opt) => {
+                  // False for every option until a real invitee row exists -
+                  // a Discover viewer who hasn't tapped anything yet sees all
+                  // three unchecked, never a default "accepted".
+                  const selected = myInvitee?.rsvp_status === opt.value;
+                  // Capacity only ever blocks a non-host trying to newly land
+                  // on 'accepted' - already being accepted, picking a
+                  // different status, or being the host is always allowed
+                  // (matches the RLS check in discover_capacity.sql exactly).
+                  const blockedByCapacity = !isHost && !selected && opt.value === 'accepted' && isAtCapacity;
+                  return (
+                    <TouchableOpacity
+                      key={opt.value}
+                      style={[styles.rsvpButton, selected && styles.rsvpButtonSelected]}
+                      onPress={() => handlePressRsvpOption(opt.value)}
+                      disabled={updating || blockedByCapacity}
                     >
-                      {blockedByCapacity ? 'Full' : opt.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+                      <Text
+                        style={[
+                          styles.rsvpButtonText,
+                          selected && styles.rsvpButtonTextSelected,
+                          blockedByCapacity && styles.rsvpButtonTextDisabled,
+                        ]}
+                      >
+                        {blockedByCapacity ? 'Full' : opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })
+              )}
             </View>
           ) : (
             <Text style={styles.notInvitedText}>You haven't been invited to this event.</Text>
@@ -1101,6 +1185,17 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
         visible={photoViewerVisible}
         uri={event.image_url_full || event.image_url}
         onClose={() => setPhotoViewerVisible(false)}
+      />
+
+      <TicketModal
+        visible={ticketModalVisible}
+        onClose={() => setTicketModalVisible(false)}
+        title={event.title}
+        dateLabel={formatEventDate(event.event_date, event.end_date, 'long')}
+        timeLabel={formatEventTime(event.event_date, event.is_all_day, event.end_date)}
+        location={event.location}
+        priceLabel={event.price_cents != null ? formatPrice(event.price_cents) : null}
+        buyerName={myName()}
       />
     </>
   );

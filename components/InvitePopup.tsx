@@ -6,6 +6,9 @@ import { colors, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
 import { displayName } from '../lib/displayName';
 import { submitRsvp } from '../lib/rsvp';
 import { startEventCheckout } from '../lib/discoverCheckout';
+import { toListingActivity, activityKey, fetchInterestedKeys, toggleInterest } from '../lib/discoverActivities';
+import { formatPrice } from '../lib/pricing';
+import TicketModal from './TicketModal';
 import { formatEventDate, formatEventTime } from '../lib/eventDate';
 import {
   getCalendarPermissionStatus,
@@ -24,6 +27,11 @@ type PopupEvent = {
   host_id: string | null;
   image_url: string | null;
   price_cents: number | null;
+  discoverable: boolean;
+  description: string | null;
+  discover_category: string | null;
+  capacity: number | null;
+  accepted_count: number | null;
 };
 
 type RsvpChoice = 'accepted' | 'interested' | 'declined';
@@ -55,9 +63,15 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
   const [hostName, setHostName] = useState('Someone');
   const [coHostIds, setCoHostIds] = useState<string[]>([]);
   const [myInviteeId, setMyInviteeId] = useState<string | null>(null);
+  const [myRsvpStatus, setMyRsvpStatus] = useState<RsvpChoice | null>(null);
+  const [ticketModalVisible, setTicketModalVisible] = useState(false);
   const [selected, setSelected] = useState<RsvpChoice | null>(null);
   const [responding, setResponding] = useState(false);
   const [conflictState, setConflictState] = useState<ConflictState>({ kind: 'loading' });
+  // Only meaningful for a paid Discover Ping's "Interested" button - see
+  // isPaidDiscoverEvent and handleToggleInterestStar below, and
+  // EventDetailContent.tsx's identical pattern for why this exists.
+  const [interestedStar, setInterestedStar] = useState(false);
 
   const runConflictCheck = useCallback(async (eventDate: Date) => {
     const status = await getCalendarPermissionStatus();
@@ -86,7 +100,9 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
         await Promise.all([
           supabase
             .from('events')
-            .select('id, title, location, event_date, end_date, is_all_day, host_id, image_url, price_cents')
+            .select(
+              'id, title, location, event_date, end_date, is_all_day, host_id, image_url, price_cents, discoverable, description, discover_category, capacity, accepted_count'
+            )
             .eq('id', eventId)
             .single(),
           supabase
@@ -104,6 +120,7 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
 
       setEvent((eventData as PopupEvent) || null);
       setMyInviteeId(inviteeData?.id || null);
+      setMyRsvpStatus((inviteeData?.rsvp_status as RsvpChoice) || null);
       setCoHostIds((coHostData || []).map((r) => r.user_id));
 
       if (eventData?.host_id) {
@@ -126,6 +143,16 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
       cancelled = true;
     };
   }, [eventId, session?.user?.id, runConflictCheck]);
+
+  // Checks this event's Discover star state - only used for a paid Discover
+  // Ping's "Interested" button (see isPaidDiscoverEvent below), which reuses
+  // Discover's own star mechanism instead of an RSVP status.
+  useEffect(() => {
+    if (!event) return;
+    fetchInterestedKeys().then((keys) =>
+      setInterestedStar(keys.has(activityKey({ title: event.title, startsAt: event.event_date })))
+    );
+  }, [event?.id, event?.title, event?.event_date]);
 
   // A tappable version of what the Week view's calendar-item taps already
   // show (see handleWeekItemPress in app/(tabs)/index.tsx) - a quick
@@ -151,6 +178,18 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
       return;
     }
     if (event) runConflictCheck(new Date(event.event_date));
+  };
+
+  // A paid Discover Ping's "Interested" doesn't create/clear an invitee row
+  // the way the free-event version does - see EventDetailContent.tsx's
+  // identical handleToggleInterestStar for the full reasoning. Optimistic,
+  // reverting only if the write actually fails.
+  const handleToggleInterestStar = async () => {
+    if (!event) return;
+    const wasInterested = interestedStar;
+    setInterestedStar(!wasInterested);
+    const ok = await toggleInterest(toListingActivity(event), !wasInterested);
+    if (!ok) setInterestedStar(wasInterested);
   };
 
   const handleRespond = async (status: RsvpChoice) => {
@@ -188,10 +227,16 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
 
   if (!eventId) return null;
 
+  // Same rule as EventDetailContent.tsx's isPaidDiscoverEvent: Accept
+  // becomes "Buy" and there's no Decline once money's involved, and
+  // Interested becomes the Discover star instead of an RSVP status.
+  const isPaidDiscoverEvent = !!event && event.discoverable && event.price_cents != null && event.price_cents > 0;
+
   const dateLabel = event ? formatEventDate(event.event_date, event.end_date, 'long') : '';
   const timeLabel = event ? formatEventTime(event.event_date, event.is_all_day, event.end_date) : '';
 
   return (
+    <>
     <Modal visible={!!eventId} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
         <View style={styles.card}>
@@ -226,28 +271,72 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
               )}
 
               <View style={styles.rsvpRow}>
-                {RSVP_OPTIONS.map((opt) => (
-                  <TouchableOpacity
-                    key={opt.value}
-                    style={[
-                      styles.rsvpButton,
-                      { borderColor: opt.color },
-                      selected === opt.value && { backgroundColor: opt.color },
-                    ]}
-                    onPress={() => handleRespond(opt.value)}
-                    disabled={responding}
-                  >
-                    <Text
+                {isPaidDiscoverEvent ? (
+                  <>
+                    <TouchableOpacity
                       style={[
-                        styles.rsvpButtonText,
-                        { color: opt.color },
-                        selected === opt.value && styles.rsvpButtonTextSelected,
+                        styles.rsvpButton,
+                        { borderColor: colors.success },
+                        (selected === 'accepted' || myRsvpStatus === 'accepted') && { backgroundColor: colors.success },
                       ]}
+                      onPress={() =>
+                        myRsvpStatus === 'accepted' ? setTicketModalVisible(true) : handleRespond('accepted')
+                      }
+                      disabled={responding}
                     >
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+                      <Text
+                        style={[
+                          styles.rsvpButtonText,
+                          { color: colors.success },
+                          (selected === 'accepted' || myRsvpStatus === 'accepted') && styles.rsvpButtonTextSelected,
+                        ]}
+                      >
+                        {myRsvpStatus === 'accepted' ? 'View Ticket' : 'Buy'}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.rsvpButton,
+                        { borderColor: colors.warning },
+                        interestedStar && { backgroundColor: colors.warning },
+                      ]}
+                      onPress={handleToggleInterestStar}
+                    >
+                      <Text
+                        style={[
+                          styles.rsvpButtonText,
+                          { color: colors.warning },
+                          interestedStar && styles.rsvpButtonTextSelected,
+                        ]}
+                      >
+                        Interested
+                      </Text>
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  RSVP_OPTIONS.map((opt) => (
+                    <TouchableOpacity
+                      key={opt.value}
+                      style={[
+                        styles.rsvpButton,
+                        { borderColor: opt.color },
+                        selected === opt.value && { backgroundColor: opt.color },
+                      ]}
+                      onPress={() => handleRespond(opt.value)}
+                      disabled={responding}
+                    >
+                      <Text
+                        style={[
+                          styles.rsvpButtonText,
+                          { color: opt.color },
+                          selected === opt.value && styles.rsvpButtonTextSelected,
+                        ]}
+                      >
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))
+                )}
               </View>
 
               <TouchableOpacity onPress={() => onOpenFull(event.id)}>
@@ -258,6 +347,22 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
         </View>
       </View>
     </Modal>
+    {!!event && (
+      <TicketModal
+        visible={ticketModalVisible}
+        onClose={() => setTicketModalVisible(false)}
+        title={event.title}
+        dateLabel={dateLabel}
+        timeLabel={timeLabel}
+        location={event.location}
+        priceLabel={event.price_cents != null ? formatPrice(event.price_cents) : null}
+        buyerName={displayName({
+          full_name: session?.user?.user_metadata?.full_name,
+          email: session?.user?.email,
+        })}
+      />
+    )}
+    </>
   );
 }
 

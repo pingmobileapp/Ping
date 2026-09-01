@@ -4,18 +4,21 @@ import { useRouter, useFocusEffect, Stack } from 'expo-router';
 import { supabase } from '../supabase';
 import { colors } from '../lib/theme';
 import { displayName } from '../lib/displayName';
+import { useNotificationsContext } from '../lib/NotificationsContext';
 
 type Report = {
   id: string;
   content_type: 'event' | 'message' | 'group_message' | 'block';
   content_id: string | null;
   event_id: string | null;
+  group_id: string | null;
   reported_user_id: string | null;
   reason: string;
   source: 'user' | 'auto_filter' | 'block';
   created_at: string;
   reporter: { full_name: string | null; email: string | null } | null;
   reported: { full_name: string | null; email: string | null } | null;
+  group: { name: string | null } | null;
 };
 
 // Only reachable from Settings when the signed-in profile has is_admin
@@ -25,6 +28,7 @@ type Report = {
 // report that lands here already triggered a push via lib/moderation.ts.
 export default function AdminScreen() {
   const router = useRouter();
+  const { openEventModal, openGroupChat } = useNotificationsContext();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [reports, setReports] = useState<Report[]>([]);
@@ -33,7 +37,7 @@ export default function AdminScreen() {
     const { data, error } = await supabase
       .from('reports')
       .select(
-        'id, content_type, content_id, event_id, reported_user_id, reason, source, created_at, reporter:reporter_id(full_name, email), reported:reported_user_id(full_name, email)'
+        'id, content_type, content_id, event_id, group_id, reported_user_id, reason, source, created_at, reporter:reporter_id(full_name, email), reported:reported_user_id(full_name, email), group:group_id(name)'
       )
       .eq('status', 'open')
       .order('created_at', { ascending: false });
@@ -71,6 +75,29 @@ export default function AdminScreen() {
       return;
     }
     setReports((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  // "Golf ACC: inappropriate content" with no way to actually look at the
+  // event/message being reported left the admin unable to make an informed
+  // Dismiss/Remove/Ban call - this reuses the same in-app viewers the rest
+  // of the app already opens notifications into (EventDetailContent's
+  // flip-card modal, group chat) rather than building a second one.
+  const canView = (report: Report) =>
+    (report.content_type === 'event' || report.content_type === 'message') && !!report.event_id
+      ? true
+      : report.content_type === 'group_message' && !!report.group_id;
+
+  const handleViewContent = (report: Report) => {
+    if (report.content_type === 'event' && report.event_id) {
+      openEventModal(report.event_id);
+    } else if (report.content_type === 'message' && report.event_id) {
+      openEventModal(report.event_id, true);
+    } else if (report.content_type === 'group_message' && report.group_id) {
+      openGroupChat(report.group_id, report.group?.name ?? undefined);
+    } else {
+      return;
+    }
+    if (router.canDismiss()) router.dismissTo('/');
   };
 
   const handleDismiss = (report: Report) => resolve(report.id, 'dismissed');
@@ -143,16 +170,23 @@ export default function AdminScreen() {
         ) : (
           reports.map((report) => (
             <View key={report.id} style={styles.card}>
-              <Text style={styles.reason}>{report.reason}</Text>
-              <Text style={styles.meta}>
-                {report.source === 'auto_filter' ? 'Auto-flagged' : report.source === 'block' ? 'From a block' : 'User report'}
-                {' · '}
-                {report.content_type}
-                {' · '}
-                {new Date(report.created_at).toLocaleString()}
-              </Text>
-              {!!report.reporter && <Text style={styles.meta}>Reported by: {displayName(report.reporter)}</Text>}
-              {!!report.reported && <Text style={styles.meta}>About: {displayName(report.reported)}</Text>}
+              <TouchableOpacity
+                activeOpacity={canView(report) ? 0.6 : 1}
+                disabled={!canView(report)}
+                onPress={() => handleViewContent(report)}
+              >
+                <Text style={styles.reason}>{report.reason}</Text>
+                <Text style={styles.meta}>
+                  {report.source === 'auto_filter' ? 'Auto-flagged' : report.source === 'block' ? 'From a block' : 'User report'}
+                  {' · '}
+                  {report.content_type}
+                  {' · '}
+                  {new Date(report.created_at).toLocaleString()}
+                </Text>
+                {!!report.reporter && <Text style={styles.meta}>Reported by: {displayName(report.reporter)}</Text>}
+                {!!report.reported && <Text style={styles.meta}>About: {displayName(report.reported)}</Text>}
+                {canView(report) && <Text style={styles.viewLink}>View content ›</Text>}
+              </TouchableOpacity>
 
               <View style={styles.actionsRow}>
                 <TouchableOpacity style={styles.actionButton} onPress={() => handleDismiss(report)}>
@@ -190,6 +224,7 @@ const styles = StyleSheet.create({
   },
   reason: { color: colors.textPrimary, fontSize: 15, fontWeight: '600', marginBottom: 4 },
   meta: { color: colors.textMuted, fontSize: 12, marginTop: 2 },
+  viewLink: { color: colors.primary, fontSize: 13, fontWeight: '600', marginTop: 8 },
   actionsRow: { flexDirection: 'row', gap: 16, marginTop: 12 },
   actionButton: {},
   actionText: { color: colors.primary, fontSize: 13, fontWeight: '600' },

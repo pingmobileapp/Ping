@@ -12,8 +12,11 @@ import {
 import { openBrowserAsync } from 'expo-web-browser';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { colors } from '../../lib/theme';
+import { useAuth } from '../../lib/AuthContext';
+import { displayName } from '../../lib/displayName';
+import TicketModal from '../../components/TicketModal';
 import {
   Activity,
   ActivityCategory,
@@ -22,6 +25,7 @@ import {
   distanceFromCoords,
   fetchActivities,
   fetchInterestedKeys,
+  fetchMyPurchasedPingEventIds,
   isFreeActivity,
   toggleInterest,
 } from '../../lib/discoverActivities';
@@ -96,9 +100,16 @@ export default function DiscoverScreen() {
   // replacing it (e.g. "Free" + "Music" is a valid combination).
   const [freeOnly, setFreeOnly] = useState(false);
   const [showAllDay, setShowAllDay] = useState(false);
+  const { session } = useAuth();
   const [activities, setActivities] = useState<Activity[]>([]);
   const [weatherByPingId, setWeatherByPingId] = useState<Record<string, DailyWeather>>({});
   const [interestedKeys, setInterestedKeys] = useState<Set<string>>(new Set());
+  // Priced Ping listings the signed-in user has already bought a ticket to
+  // - see fetchMyPurchasedPingEventIds. Swaps a card's "Book" for "View
+  // Ticket" instead of letting a paid buyer tap what looks like a fresh
+  // booking flow again.
+  const [purchasedPingEventIds, setPurchasedPingEventIds] = useState<Set<string>>(new Set());
+  const [ticketActivity, setTicketActivity] = useState<Activity | null>(null);
   const [loading, setLoading] = useState(true);
   const [locationPermission, setLocationPermission] = useState<LocationPermissionStatus | null>(null);
   const [coords, setCoords] = useState<Coords | null>(null);
@@ -138,6 +149,19 @@ export default function DiscoverScreen() {
   useEffect(() => {
     fetchInterestedKeys().then(setInterestedKeys);
   }, [selectedDate]);
+
+  // Refetches on focus (not just when `activities` changes) so returning
+  // from a Stripe checkout - which happens on a screen pushed on top of
+  // this tab, not this screen itself - picks up a purchase that just
+  // completed the moment the user comes back.
+  useFocusEffect(
+    React.useCallback(() => {
+      const pingEventIds = activities
+        .filter((a) => a.source === 'ping' && a.pingEventId && a.priceCents)
+        .map((a) => a.pingEventId!);
+      fetchMyPurchasedPingEventIds(pingEventIds).then(setPurchasedPingEventIds);
+    }, [activities])
+  );
 
   // Optimistic - flips the star immediately rather than waiting on the
   // round trip, reverting only if the write actually failed.
@@ -300,6 +324,8 @@ export default function DiscoverScreen() {
     if (!activity.pingEventId) return;
     router.push({ pathname: '/event/[id]', params: { id: activity.pingEventId } });
   };
+
+  const handleViewTicket = (activity: Activity) => setTicketActivity(activity);
 
   const handleBook = (activity: Activity) => {
     if (!activity.url) return;
@@ -484,19 +510,33 @@ export default function DiscoverScreen() {
                   <View style={styles.cardActionsRow}>
                     {item.source === 'ping' ? (
                       item.priceCents ? (
-                        // A priced listing shouldn't read as a one-tap free
-                        // join the way "View & RSVP" does - both buttons open
-                        // the same detail screen for now (there's no
-                        // checkout yet), but "Book" is the one that becomes
-                        // the real payment entry point once that ships.
-                        <>
-                          <TouchableOpacity style={styles.bookButton} onPress={() => handleViewListing(item)}>
-                            <Text style={styles.bookButtonText}>Book</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity style={styles.calendarButton} onPress={() => handleViewListing(item)}>
-                            <Text style={styles.calendarButtonText}>View more details</Text>
-                          </TouchableOpacity>
-                        </>
+                        // "Book" opens the full event page, where "Buy"
+                        // actually starts Stripe Checkout - this card itself
+                        // never charges anyone directly. Once
+                        // fetchMyPurchasedPingEventIds confirms a paid
+                        // invitee row exists, tapping the same button
+                        // instead shows their ticket rather than sending a
+                        // buyer back through what looks like a fresh
+                        // booking flow.
+                        item.pingEventId && purchasedPingEventIds.has(item.pingEventId) ? (
+                          <>
+                            <TouchableOpacity style={styles.bookButton} onPress={() => handleViewTicket(item)}>
+                              <Text style={styles.bookButtonText}>View Ticket</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.calendarButton} onPress={() => handleViewListing(item)}>
+                              <Text style={styles.calendarButtonText}>View more details</Text>
+                            </TouchableOpacity>
+                          </>
+                        ) : (
+                          <>
+                            <TouchableOpacity style={styles.bookButton} onPress={() => handleViewListing(item)}>
+                              <Text style={styles.bookButtonText}>Book</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.calendarButton} onPress={() => handleViewListing(item)}>
+                              <Text style={styles.calendarButtonText}>View more details</Text>
+                            </TouchableOpacity>
+                          </>
+                        )
                       ) : (
                         <TouchableOpacity style={styles.bookButton} onPress={() => handleViewListing(item)}>
                           <Text style={styles.bookButtonText}>View & RSVP</Text>
@@ -528,6 +568,20 @@ export default function DiscoverScreen() {
           />
         </GestureDetector>
       )}
+
+      <TicketModal
+        visible={!!ticketActivity}
+        onClose={() => setTicketActivity(null)}
+        title={ticketActivity?.title ?? ''}
+        dateLabel={ticketActivity ? formatDateHeading(new Date(ticketActivity.startsAt)) : ''}
+        timeLabel={ticketActivity ? formatActivityTime(ticketActivity) : ''}
+        location={ticketActivity?.location ?? null}
+        priceLabel={ticketActivity?.priceLabel ?? null}
+        buyerName={displayName({
+          full_name: session?.user?.user_metadata?.full_name,
+          email: session?.user?.email,
+        })}
+      />
     </View>
   );
 }

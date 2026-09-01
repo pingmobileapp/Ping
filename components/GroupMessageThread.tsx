@@ -256,6 +256,7 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
         reportedUserId: session.user.id,
         contentType: 'group_message',
         contentId: inserted.id,
+        groupId,
         reason: 'Auto-flagged group message content',
         source: 'auto_filter',
       });
@@ -336,6 +337,7 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
             reportedUserId: message.sender_id,
             contentType: 'group_message',
             contentId: message.id,
+            groupId,
             reason: `Reported group message from ${name}`,
           }),
       },

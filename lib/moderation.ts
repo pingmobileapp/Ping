@@ -25,6 +25,7 @@ export async function reportContent(opts: {
   contentType: ContentType;
   contentId: string;
   eventId?: string | null;
+  groupId?: string | null;
   reason: string;
   source?: 'user' | 'auto_filter' | 'block';
 }): Promise<{ error: string | null }> {
@@ -34,6 +35,7 @@ export async function reportContent(opts: {
     content_type: opts.contentType,
     content_id: opts.contentId,
     event_id: opts.eventId ?? null,
+    group_id: opts.groupId ?? null,
     reason: opts.reason,
     source: opts.source ?? 'user',
   });

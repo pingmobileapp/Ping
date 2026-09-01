@@ -231,7 +231,7 @@ type EventListingRow = {
   price_cents: number | null;
 };
 
-const toListingActivity = (row: EventListingRow): Activity => ({
+export const toListingActivity = (row: EventListingRow): Activity => ({
   id: `ping-${row.id}`,
   source: 'ping',
   title: row.title,
@@ -407,4 +407,26 @@ export async function fetchInterestedActivities(rangeStart: Date, rangeEnd: Date
     startsAt: row.starts_at,
     endsAt: row.ends_at,
   }));
+}
+
+// Which of these priced Ping listings the signed-in user has already
+// bought a ticket to - Discover's card swaps "Book" for "View Ticket" once
+// an id shows up here (see explore.tsx), rather than letting a paid buyer
+// tap what looks like a fresh booking flow again.
+export async function fetchMyPurchasedPingEventIds(pingEventIds: string[]): Promise<Set<string>> {
+  if (pingEventIds.length === 0) return new Set();
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+  if (!userId) return new Set();
+  const { data, error } = await supabase
+    .from('invitees')
+    .select('event_id')
+    .eq('user_id', userId)
+    .eq('rsvp_status', 'accepted')
+    .in('event_id', pingEventIds);
+  if (error) {
+    console.error('Error fetching purchased Ping tickets:', error);
+    return new Set();
+  }
+  return new Set((data || []).map((r) => r.event_id));
 }
