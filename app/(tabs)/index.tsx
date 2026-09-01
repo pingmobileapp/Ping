@@ -1603,7 +1603,12 @@ export default function HomeScreen() {
               ) : item.kind === "interested" ? (
                 <InterestedActivityCard
                   activity={item.event}
-                  onPress={() => router.push({ pathname: "/explore", params: { date: toDateKey(item.date) } })}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/explore",
+                      params: { date: toDateKey(item.date), activityKey: item.event.activityKey },
+                    })
+                  }
                   onUnstar={handleUnstarInterested}
                 />
               ) : showHiddenOnly ? (

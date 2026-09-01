@@ -83,7 +83,7 @@ const formatActivityTime = (activity: Activity): string => {
 // nightly schedule (see supabase/activities_cron.sql) - this screen only
 // reads what's already in the activities table via fetchActivities.
 export default function DiscoverScreen() {
-  const params = useLocalSearchParams<{ date?: string; gapStart?: string; gapEnd?: string }>();
+  const params = useLocalSearchParams<{ date?: string; gapStart?: string; gapEnd?: string; activityKey?: string }>();
   const router = useRouter();
   // Always viewing exactly one day - defaults to today when opened
   // straight from the tab bar, or to the long-pressed day when arriving
@@ -103,6 +103,15 @@ export default function DiscoverScreen() {
   const [locationPermission, setLocationPermission] = useState<LocationPermissionStatus | null>(null);
   const [coords, setCoords] = useState<Coords | null>(null);
   const dateListRef = useRef<FlatList<string>>(null);
+  const resultsListRef = useRef<FlatList<Activity>>(null);
+  // Briefly glows the card a deep link (from Home's "interested" cards)
+  // landed on, so "take me to this listing" actually reads as landing
+  // somewhere specific rather than just dropping onto the day's full list.
+  const [highlightedKey, setHighlightedKey] = useState<string | null>(null);
+  // Guards against re-triggering the scroll/highlight/filter-reset on
+  // every activities refetch for the same navigation - only the first
+  // arrival of a given activityKey param should do it.
+  const handledActivityKeyRef = useRef<string | null>(null);
 
   // Only meaningful while still looking at the exact day/gap that was
   // long-pressed - swiping to a different day makes a stale time window
@@ -227,6 +236,35 @@ export default function DiscoverScreen() {
     if (freeOnly) list = list.filter(isFreeActivity);
     return list;
   }, [timeScoped, selectedCategory, freeOnly]);
+
+  // Deep-linked from Home's "interested" card (see index.tsx) - scrolls to
+  // and briefly highlights the specific listing rather than just landing
+  // on the day's general list. If the current category/Free filters would
+  // hide it, they're cleared first (re-running this effect once the list
+  // updates) rather than leaving "take me to this listing" silently fail.
+  useEffect(() => {
+    if (loading || !params.activityKey || !gapAppliesHere) return;
+    if (handledActivityKeyRef.current === params.activityKey) return;
+
+    const indexInVisible = visibleActivities.findIndex((a) => activityKey(a) === params.activityKey);
+    if (indexInVisible >= 0) {
+      handledActivityKeyRef.current = params.activityKey;
+      resultsListRef.current?.scrollToIndex({ index: indexInVisible, animated: true, viewPosition: 0.3 });
+      setHighlightedKey(params.activityKey);
+      setTimeout(() => setHighlightedKey(null), 1500);
+      return;
+    }
+
+    const existsUnfiltered = activities.some((a) => activityKey(a) === params.activityKey);
+    if (existsUnfiltered) {
+      setSelectedCategory(null);
+      setFreeOnly(false);
+    } else {
+      // Not found at all (already expired, or the crawler didn't re-find
+      // it overnight) - stop trying rather than loop forever.
+      handledActivityKeyRef.current = params.activityKey;
+    }
+  }, [loading, visibleActivities, activities, params.activityKey, gapAppliesHere]);
 
   const categories = Object.keys(CATEGORY_LABELS) as ActivityCategory[];
 
@@ -378,16 +416,24 @@ export default function DiscoverScreen() {
       ) : (
         <GestureDetector gesture={daySwipe}>
           <FlatList
+            ref={resultsListRef}
             style={{ flex: 1 }}
             data={visibleActivities}
             keyExtractor={(a) => a.id}
             contentContainerStyle={styles.listContent}
+            onScrollToIndexFailed={(info) => {
+              setTimeout(
+                () => resultsListRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.3 }),
+                50
+              );
+            }}
             renderItem={({ item }) => {
               const distance = distanceFromCoords(item, coords);
               const weather = item.pingEventId ? weatherByPingId[item.pingEventId] : null;
               const interested = interestedKeys.has(activityKey(item));
+              const isHighlighted = highlightedKey === activityKey(item);
               return (
-                <View style={styles.card}>
+                <View style={[styles.card, isHighlighted && styles.cardHighlighted]}>
                   {/* Not for a Ping you're hosting/joined - that already has its
                       own RSVP, starring it too would just be a confusing second
                       way to say the same thing. */}
@@ -419,6 +465,13 @@ export default function DiscoverScreen() {
                   </View>
                   {!!item.location && <Text style={styles.cardMeta}>{item.location}</Text>}
                   {!!item.description && <Text style={styles.cardDescription}>{item.description}</Text>}
+                  {item.source === 'ping' && item.capacity != null && (
+                    <Text style={[styles.cardMeta, (item.acceptedCount ?? 0) >= item.capacity && styles.cardFull]}>
+                      {(item.acceptedCount ?? 0) >= item.capacity
+                        ? 'Full'
+                        : `${item.acceptedCount ?? 0}/${item.capacity} going`}
+                    </Text>
+                  )}
                   <View style={styles.cardFooterRow}>
                     <Text style={styles.cardPrice}>{item.priceLabel || 'See listing'}</Text>
                     {item.source === 'ping' ? (
@@ -511,6 +564,15 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: 16,
   },
+  cardHighlighted: {
+    borderColor: colors.warning,
+    borderWidth: 2,
+    shadowColor: colors.warning,
+    shadowOpacity: 0.5,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 8,
+  },
   starButton: { position: 'absolute', top: 36, right: 14, zIndex: 2 },
   starIcon: { fontSize: 24, color: colors.warning },
   cardHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
@@ -521,6 +583,7 @@ const styles = StyleSheet.create({
   cardMetaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   cardWeatherText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 2 },
   cardDescription: { color: colors.textMuted, fontSize: 13, marginTop: 4, fontStyle: 'italic' },
+  cardFull: { color: colors.danger, fontWeight: '700' },
   cardFooterRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 },
   cardPrice: { color: colors.textPrimary, fontSize: 14, fontWeight: '700' },
   cardSource: { color: colors.textMuted, fontSize: 12 },

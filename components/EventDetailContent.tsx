@@ -42,6 +42,8 @@ type EventDetail = {
   is_public: boolean;
   discoverable: boolean;
   discover_category: string | null;
+  capacity: number | null;
+  accepted_count: number | null;
   image_url: string | null;
   image_url_full: string | null;
   status: 'sent' | 'draft';
@@ -111,6 +113,8 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
   const myInvitee = invitees.find((inv) => inv.user_id === session?.user?.id) || null;
   const coHostIds = coHosts.map((c) => c.user_id);
   const isHost = event?.host_id === session?.user?.id || coHostIds.includes(session?.user?.id || '');
+  const isAtCapacity =
+    !!event && event.capacity != null && (event.accepted_count ?? 0) >= event.capacity;
   // Every host - primary or co-host - for notifications that should reach
   // whoever's actually responsible for the event, not just event.host_id.
   const allHostIds = [event?.host_id, ...coHostIds].filter((id): id is string => !!id);
@@ -253,7 +257,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     // InvitePopup use - hand-rolling the insert here (as an earlier version
     // did) skipped its host-notification step entirely, so the host never
     // heard that anyone had joined.
-    await submitRsvp({
+    const { error } = await submitRsvp({
       eventId,
       hostIds: allHostIds,
       eventTitle: event.title,
@@ -266,6 +270,15 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
       // just clear a real invitee's response - see handlePressRsvpOption.
       invitedVia: 'discover',
     });
+    if (error) {
+      // The only way an insert here fails is the RLS capacity check
+      // (discover_capacity.sql) - someone else filled the last spot between
+      // this screen loading and this tap landing.
+      Alert.alert('Event full', 'This event just reached its limit on going. You can still mark yourself interested.');
+      await fetchData();
+      setUpdating(false);
+      return;
+    }
     await syncAcceptedEventToDeviceCalendar(event, status);
     await fetchData();
     setUpdating(false);
@@ -311,7 +324,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
 
     setUpdating(true);
 
-    await submitRsvp({
+    const { error } = await submitRsvp({
       eventId,
       hostIds: allHostIds,
       eventTitle: event.title,
@@ -320,6 +333,16 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
       responderName: myName(),
       status,
     });
+
+    if (error) {
+      // Only reachable for a self-update to 'accepted' on a capacity-limited
+      // event that filled up since this screen loaded - see
+      // invitees_update_self_or_host in discover_capacity.sql.
+      Alert.alert('Event full', 'This event just reached its limit on going. You can still mark yourself interested.');
+      await fetchData();
+      setUpdating(false);
+      return;
+    }
 
     // So an accepted Ping actually shows up somewhere you'll see it even
     // with the app closed - removes it again if you've switched away from
@@ -626,7 +649,14 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
         </View>
 
         <View style={styles.rsvpSection}>
-          <Text style={styles.sectionLabel}>Your response</Text>
+          <View style={styles.rsvpSectionHeaderRow}>
+            <Text style={styles.sectionLabel}>Your response</Text>
+            {event.capacity != null && (
+              <Text style={[styles.capacityText, isAtCapacity && styles.capacityTextFull]}>
+                {isAtCapacity ? 'Full' : `${event.accepted_count ?? 0}/${event.capacity} going`}
+              </Text>
+            )}
+          </View>
           {isHost || myInvitee || event.discoverable ? (
             <View style={styles.rsvpRow}>
               {RSVP_OPTIONS.map((opt) => {
@@ -634,15 +664,26 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
                 // a Discover viewer who hasn't tapped anything yet sees all
                 // three unchecked, never a default "accepted".
                 const selected = myInvitee?.rsvp_status === opt.value;
+                // Capacity only ever blocks a non-host trying to newly land
+                // on 'accepted' - already being accepted, picking a
+                // different status, or being the host is always allowed
+                // (matches the RLS check in discover_capacity.sql exactly).
+                const blockedByCapacity = !isHost && !selected && opt.value === 'accepted' && isAtCapacity;
                 return (
                   <TouchableOpacity
                     key={opt.value}
                     style={[styles.rsvpButton, selected && styles.rsvpButtonSelected]}
                     onPress={() => handlePressRsvpOption(opt.value)}
-                    disabled={updating}
+                    disabled={updating || blockedByCapacity}
                   >
-                    <Text style={[styles.rsvpButtonText, selected && styles.rsvpButtonTextSelected]}>
-                      {opt.label}
+                    <Text
+                      style={[
+                        styles.rsvpButtonText,
+                        selected && styles.rsvpButtonTextSelected,
+                        blockedByCapacity && styles.rsvpButtonTextDisabled,
+                      ]}
+                    >
+                      {blockedByCapacity ? 'Full' : opt.label}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -933,6 +974,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
             is_public: event.is_public,
             discoverable: event.discoverable,
             discover_category: event.discover_category,
+            capacity: event.capacity,
             status: event.status,
             description: event.description,
             recurrence_id: event.recurrence_id,
@@ -1009,7 +1051,10 @@ const styles = StyleSheet.create({
   visibilityBadgeText: { color: colors.textPrimary, fontSize: 12, fontWeight: '700' },
   inviteOthersText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
   rsvpSection: { marginTop: 28 },
+  rsvpSectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   sectionLabel: { color: colors.textSecondary, fontSize: 13, marginBottom: 10, textTransform: 'uppercase' },
+  capacityText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 10 },
+  capacityTextFull: { color: colors.danger },
   addNewLinkText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
   rsvpRow: { flexDirection: 'row', gap: 10 },
   rsvpButton: {
@@ -1023,6 +1068,7 @@ const styles = StyleSheet.create({
   },
   rsvpButtonSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
   rsvpButtonText: { color: colors.textSecondary, fontWeight: '600', fontSize: 14 },
+  rsvpButtonTextDisabled: { color: colors.textMuted },
   rsvpButtonTextSelected: { color: colors.textOnPrimary },
   notInvitedText: { color: colors.textMuted, fontSize: 14, fontStyle: 'italic' },
   summarySection: { marginTop: 28 },

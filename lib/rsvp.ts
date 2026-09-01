@@ -22,17 +22,23 @@ type SubmitRsvpOptions = {
 
 // Shared by EventDetailContent's RSVP row and InvitePopup so both surfaces
 // mutate `invitees` the same way and never drift out of sync.
-export async function submitRsvp(opts: SubmitRsvpOptions): Promise<string | null> {
+export type SubmitRsvpResult = { inviteeId: string | null; error: boolean };
+
+export async function submitRsvp(opts: SubmitRsvpOptions): Promise<SubmitRsvpResult> {
   const { eventId, hostIds, eventTitle, userId, myInviteeId, responderName, status, invitedVia = 'app' } = opts;
 
   let inviteeId = myInviteeId;
+  let hadError = false;
 
   if (myInviteeId) {
     const { error } = await supabase
       .from('invitees')
       .update({ rsvp_status: status, responded_at: new Date().toISOString() })
       .eq('id', myInviteeId);
-    if (error) console.error('Error updating RSVP:', error);
+    if (error) {
+      console.error('Error updating RSVP:', error);
+      hadError = true;
+    }
   } else {
     const { data, error } = await supabase
       .from('invitees')
@@ -47,9 +53,14 @@ export async function submitRsvp(opts: SubmitRsvpOptions): Promise<string | null
       ])
       .select()
       .single();
-    if (error) console.error('Error creating RSVP:', error);
+    if (error) {
+      console.error('Error creating RSVP:', error);
+      hadError = true;
+    }
     inviteeId = data?.id || null;
   }
+
+  if (hadError) return { inviteeId, error: true };
 
   if (status === 'declined' && inviteeId) {
     const { error: releaseError } = await supabase.from('item_claims').delete().eq('invitee_id', inviteeId);
@@ -65,5 +76,5 @@ export async function submitRsvp(opts: SubmitRsvpOptions): Promise<string | null
     });
   }
 
-  return inviteeId;
+  return { inviteeId, error: false };
 }

@@ -52,6 +52,11 @@ export type Activity = {
   // the real events.id to open via /event/[id] for the full RSVP/detail
   // experience, since these aren't ticketed listings with an external URL.
   pingEventId?: string;
+  // Host-set attendance cap, Ping listings only (see discover_capacity.sql)
+  // - null/undefined means no limit. acceptedCount is the trigger-maintained
+  // live count, always present alongside a non-null capacity.
+  capacity?: number | null;
+  acceptedCount?: number | null;
 };
 
 // The join key discover_interests actually keys on - see that table's own
@@ -216,6 +221,8 @@ type EventListingRow = {
   event_date: string;
   end_date: string | null;
   discover_category: string | null;
+  capacity: number | null;
+  accepted_count: number | null;
 };
 
 const toListingActivity = (row: EventListingRow): Activity => ({
@@ -236,6 +243,8 @@ const toListingActivity = (row: EventListingRow): Activity => ({
   url: null,
   confidence: 'high',
   pingEventId: row.id,
+  capacity: row.capacity,
+  acceptedCount: row.accepted_count,
 });
 
 // Pings a host has explicitly listed on Discover (see the "List on
@@ -245,7 +254,7 @@ const toListingActivity = (row: EventListingRow): Activity => ({
 async function fetchUserListings(rangeStart: Date, rangeEnd: Date): Promise<Activity[]> {
   const { data, error } = await supabase
     .from('events')
-    .select('id, title, description, location, event_date, end_date, discover_category')
+    .select('id, title, description, location, event_date, end_date, discover_category, capacity, accepted_count')
     .eq('discoverable', true)
     .eq('status', 'sent')
     .gte('event_date', rangeStart.toISOString())

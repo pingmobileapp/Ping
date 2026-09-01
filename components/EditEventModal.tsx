@@ -59,6 +59,7 @@ export type EditableEvent = {
   is_public: boolean;
   discoverable: boolean;
   discover_category: string | null;
+  capacity: number | null;
   status: 'sent' | 'draft';
   description: string | null;
   recurrence_id: string | null;
@@ -93,6 +94,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   const [isPublic, setIsPublic] = useState(false);
   const [discoverable, setDiscoverable] = useState(false);
   const [discoverCategory, setDiscoverCategory] = useState<ActivityCategory>('community');
+  const [capacity, setCapacity] = useState('');
   const [imageUri, setImageUri] = useState<string | null>(null);
   // The never-cropped pick, kept separate from imageUri (the cropped
   // result) so recropping always has full image data to work with - see
@@ -224,6 +226,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
           ? (event.discover_category as ActivityCategory)
           : 'community'
       );
+      setCapacity(event.capacity != null ? String(event.capacity) : '');
       setImageUri(null);
       setOriginalImageUri(null);
       setExistingImageUrl(event.image_url);
@@ -756,6 +759,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
             is_public: isPublic || discoverable,
             discoverable,
             discover_category: discoverable ? discoverCategory : null,
+            capacity: discoverable && capacity.trim() ? parseInt(capacity, 10) : null,
             image_url: finalImageUrl,
             image_url_full: finalImageUrlFull,
             recurrence_id: recurrenceId,
@@ -876,6 +880,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
         is_public: isPublic || discoverable,
         discoverable,
         discover_category: discoverable ? discoverCategory : null,
+        capacity: discoverable && capacity.trim() ? parseInt(capacity, 10) : null,
         image_url: imageUrl,
         image_url_full: imageUrlFull,
       };
@@ -897,6 +902,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
         is_public: isPublic || discoverable,
         discoverable,
         discover_category: discoverable ? discoverCategory : null,
+        capacity: discoverable && capacity.trim() ? parseInt(capacity, 10) : null,
         image_url: imageUrl,
         image_url_full: imageUrlFull,
       };
@@ -1395,6 +1401,16 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
                     </TouchableOpacity>
                   ))}
                 </View>
+
+                <Text style={styles.sublabel}>Limit how many can join (optional)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="No limit"
+                  placeholderTextColor={colors.textMuted}
+                  value={capacity}
+                  onChangeText={(text) => setCapacity(text.replace(/[^0-9]/g, ''))}
+                  keyboardType="number-pad"
+                />
               </>
             )}
 

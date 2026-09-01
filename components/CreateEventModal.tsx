@@ -81,6 +81,10 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
   // policy, so there's no separate RSVP machinery to build for this.
   const [discoverable, setDiscoverable] = useState(false);
   const [discoverCategory, setDiscoverCategory] = useState<ActivityCategory>('community');
+  // Text, not number, while editing (an empty field reads as "no limit" -
+  // 0 would incorrectly read as falsy/no-limit too if this were a number
+  // state instead).
+  const [capacity, setCapacity] = useState('');
   const [imageUri, setImageUri] = useState<string | null>(null);
   // The never-cropped pick, kept separate from imageUri (the cropped
   // result) so recropping always has full image data to work with - see
@@ -422,6 +426,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
     setIsPublic(false);
     setDiscoverable(false);
     setDiscoverCategory('community');
+    setCapacity('');
     setImageUri(null);
     setOriginalImageUri(null);
     setItems([]);
@@ -549,6 +554,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
           is_public: isPublic || discoverable,
           discoverable,
           discover_category: discoverable ? discoverCategory : null,
+          capacity: discoverable && capacity.trim() ? parseInt(capacity, 10) : null,
           image_url: imageUrl,
           image_url_full: imageUrlFull,
           recurrence_id: recurrenceId,
@@ -976,6 +982,16 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
                     </TouchableOpacity>
                   ))}
                 </View>
+
+                <Text style={styles.sublabel}>Limit how many can join (optional)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="No limit"
+                  placeholderTextColor={colors.textMuted}
+                  value={capacity}
+                  onChangeText={(text) => setCapacity(text.replace(/[^0-9]/g, ''))}
+                  keyboardType="number-pad"
+                />
               </>
             )}
 
