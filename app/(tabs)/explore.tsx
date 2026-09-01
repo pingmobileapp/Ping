@@ -488,9 +488,25 @@ export default function DiscoverScreen() {
                   )}
                   <View style={styles.cardActionsRow}>
                     {item.source === 'ping' ? (
-                      <TouchableOpacity style={styles.bookButton} onPress={() => handleViewListing(item)}>
-                        <Text style={styles.bookButtonText}>View & RSVP</Text>
-                      </TouchableOpacity>
+                      item.priceCents ? (
+                        // A priced listing shouldn't read as a one-tap free
+                        // join the way "View & RSVP" does - both buttons open
+                        // the same detail screen for now (there's no
+                        // checkout yet), but "Book" is the one that becomes
+                        // the real payment entry point once that ships.
+                        <>
+                          <TouchableOpacity style={styles.bookButton} onPress={() => handleViewListing(item)}>
+                            <Text style={styles.bookButtonText}>Book</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={styles.calendarButton} onPress={() => handleViewListing(item)}>
+                            <Text style={styles.calendarButtonText}>View more details</Text>
+                          </TouchableOpacity>
+                        </>
+                      ) : (
+                        <TouchableOpacity style={styles.bookButton} onPress={() => handleViewListing(item)}>
+                          <Text style={styles.bookButtonText}>View & RSVP</Text>
+                        </TouchableOpacity>
+                      )
                     ) : (
                       <>
                         <TouchableOpacity style={styles.bookButton} onPress={() => handleBook(item)} disabled={!item.url}>

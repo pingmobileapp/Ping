@@ -36,6 +36,15 @@ Notifications.setNotificationCategoryAsync('invite', [
   { identifier: 'decline', buttonTitle: 'Decline', options: { isDestructive: true, opensAppToForeground: true } },
 ]).catch((err) => console.error('Error registering invite notification category:', err));
 
+// A priced event's Accept has to open Stripe Checkout, which a
+// backgrounded quick-action tap can't do - no buttons at all here, so
+// tapping the notification just opens the app to InvitePopup (see
+// notify.ts/send-push's hasPrice handling) instead of wrongly accepting
+// for free.
+Notifications.setNotificationCategoryAsync('invite_priced', []).catch((err) =>
+  console.error('Error registering invite_priced notification category:', err)
+);
+
 export async function registerForPushNotifications(userId: string) {
   if (!Device.isDevice) {
     console.log('Push notifications require a physical device, not a simulator.');

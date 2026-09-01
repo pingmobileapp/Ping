@@ -52,9 +52,12 @@ serve(async (req) => {
       sound: 'default',
       badge: unreadCounts.get(p.id) || 0,
       // Lets invite pushes show Accept/Interested/Decline as native
-      // quick-actions - see the matching category registered in
-      // lib/pushNotifications.ts.
-      ...(data?.type === 'invite' ? { categoryId: 'invite' } : {}),
+      // quick-actions - see the matching categories registered in
+      // lib/pushNotifications.ts. A priced event uses the no-actions
+      // category instead - Accept can't be a quick-action for it, since
+      // that would need to open Stripe Checkout, which a backgrounded
+      // notification response can't do.
+      ...(data?.type === 'invite' ? { categoryId: data?.hasPrice ? 'invite_priced' : 'invite' } : {}),
     }));
 
     const pushResponse = await fetch('https://exp.host/--/api/v2/push/send', {

@@ -30,6 +30,8 @@ import { scheduleEventReminder, cancelEventReminder, REMINDER_OPTIONS } from '..
 import { displayName } from '../lib/displayName';
 import { formatEventDate, formatEventTime } from '../lib/eventDate';
 import { DailyWeather, fetchWeatherForEvents } from '../lib/eventWeather';
+import { formatPrice } from '../lib/pricing';
+import { startEventCheckout } from '../lib/discoverCheckout';
 
 type EventDetail = {
   id: string;
@@ -44,6 +46,7 @@ type EventDetail = {
   discover_category: string | null;
   capacity: number | null;
   accepted_count: number | null;
+  price_cents: number | null;
   image_url: string | null;
   image_url_full: string | null;
   status: 'sent' | 'draft';
@@ -244,6 +247,21 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
   const handleDiscoverJoin = async (status: 'accepted' | 'declined' | 'interested') => {
     if (!session?.user?.id || !event) return;
     setUpdating(true);
+
+    // A priced event routes through Stripe Checkout instead of a direct
+    // insert - discover-checkout does the actual capacity/host-readiness
+    // checks and creates the invitee row itself once stripe-webhook
+    // confirms payment, so there's nothing left to do here but open the
+    // browser and refresh once it closes.
+    if (status === 'accepted' && event.price_cents) {
+      const { opened, error } = await startEventCheckout(event.id);
+      if (!opened) Alert.alert('Could not start checkout', error || 'Something went wrong.');
+      await fetchData();
+      setTimeout(fetchData, 1500);
+      setUpdating(false);
+      return;
+    }
+
     // myName() looks up the caller's own row in `invitees`, which doesn't
     // exist yet for a first-time self-join - it'd fall back to "Someone" in
     // the host's notification. Fetching the profile directly gets the real
@@ -323,6 +341,19 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     }
 
     setUpdating(true);
+
+    // Same Checkout redirect as handleDiscoverJoin, for a guest the host
+    // directly invited rather than a Discover stranger - the host
+    // themselves is exempt, since charging them to attend their own event
+    // makes no sense.
+    if (status === 'accepted' && event.price_cents && !isHost) {
+      const { opened, error } = await startEventCheckout(event.id);
+      if (!opened) Alert.alert('Could not start checkout', error || 'Something went wrong.');
+      await fetchData();
+      setTimeout(fetchData, 1500);
+      setUpdating(false);
+      return;
+    }
 
     const { error } = await submitRsvp({
       eventId,
@@ -639,6 +670,11 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
           {event.discoverable && (
             <View style={[styles.visibilityBadge, styles.publicBadge]}>
               <Text style={styles.visibilityBadgeText}>On Discover</Text>
+            </View>
+          )}
+          {event.discoverable && event.price_cents != null && event.price_cents > 0 && (
+            <View style={[styles.visibilityBadge, styles.publicBadge]}>
+              <Text style={styles.visibilityBadgeText}>{formatPrice(event.price_cents)}</Text>
             </View>
           )}
           {event.is_public && (myInvitee || isHost) && (
@@ -975,6 +1011,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
             discoverable: event.discoverable,
             discover_category: event.discover_category,
             capacity: event.capacity,
+            price_cents: event.price_cents,
             status: event.status,
             description: event.description,
             recurrence_id: event.recurrence_id,

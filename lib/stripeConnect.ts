@@ -1,6 +1,7 @@
 import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import { supabase } from '../supabase';
+import { describeFunctionError } from './edgeFunctionError';
 
 export type ConnectStatus = 'not_started' | 'incomplete' | 'pending' | 'ready';
 
@@ -48,7 +49,7 @@ export async function startConnectOnboarding(): Promise<{ opened: boolean; error
   });
   if (error || !data?.url) {
     console.error('Error starting Stripe Connect onboarding:', error);
-    return { opened: false, error: error?.message || 'Could not start onboarding.' };
+    return { opened: false, error: await describeFunctionError(error, 'Could not start onboarding.') };
   }
 
   await WebBrowser.openAuthSessionAsync(data.url, returnUrl);

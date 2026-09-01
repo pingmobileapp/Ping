@@ -74,12 +74,30 @@ export async function notify(
 
   if (opts?.silent) return;
 
+  // A priced event's Accept can't be a one-tap quick-action from the
+  // notification tray - it needs to open Stripe Checkout, which a
+  // backgrounded notification response can't do. send-push picks a
+  // no-quick-actions category when this is true (see
+  // lib/pushNotifications.ts's 'invite_priced' category), so tapping the
+  // notification just opens the app to InvitePopup like a normal tap
+  // already does, instead of instantly (and wrongly) accepting for free.
+  let hasPrice = false;
+  if (opts?.type === 'invite' && opts.eventId) {
+    const { data: priceRow } = await supabase.from('events').select('price_cents').eq('id', opts.eventId).maybeSingle();
+    hasPrice = !!(priceRow?.price_cents && priceRow.price_cents > 0);
+  }
+
   // Awaited so the row above is committed before send-push queries each
   // recipient's unread count for the push's badge number - otherwise the
   // badge could undercount by whatever this call just wrote.
   await supabase.functions
     .invoke('send-push', {
-      body: { user_ids: ids, title, body, data: { eventId: opts?.eventId, groupId: opts?.groupId, type: opts?.type } },
+      body: {
+        user_ids: ids,
+        title,
+        body,
+        data: { eventId: opts?.eventId, groupId: opts?.groupId, type: opts?.type, hasPrice },
+      },
     })
     .catch((err) => console.error('Push notification failed:', err));
 }

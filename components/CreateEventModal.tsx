@@ -30,6 +30,8 @@ import { notify } from '../lib/notify';
 import { RecurrenceConfig, generateOccurrences } from '../lib/recurrence';
 import { suggestItems } from '../lib/itemSuggestions';
 import { ActivityCategory, CATEGORY_LABELS } from '../lib/discoverActivities';
+import { fetchConnectStatus, ConnectAccountState } from '../lib/stripeConnect';
+import { dollarsToCents } from '../lib/pricing';
 import ImportContactsModal from './ImportContactsModal';
 import ImageCropModal from './ImageCropModal';
 import NonAppInviteQueue, { QueueContact } from './NonAppInviteQueue';
@@ -85,6 +87,9 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
   // 0 would incorrectly read as falsy/no-limit too if this were a number
   // state instead).
   const [capacity, setCapacity] = useState('');
+  // Text (dollars), converted to whole cents on submit - see dollarsToCents.
+  const [price, setPrice] = useState('');
+  const [connectStatus, setConnectStatus] = useState<ConnectAccountState | null>(null);
   const [imageUri, setImageUri] = useState<string | null>(null);
   // The never-cropped pick, kept separate from imageUri (the cropped
   // result) so recropping always has full image data to work with - see
@@ -179,6 +184,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
   useEffect(() => {
     if (visible && session?.user?.id) {
       loadContactsAndGroups();
+      fetchConnectStatus().then(setConnectStatus);
     }
   }, [visible, session?.user?.id]);
 
@@ -427,6 +433,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
     setDiscoverable(false);
     setDiscoverCategory('community');
     setCapacity('');
+    setPrice('');
     setImageUri(null);
     setOriginalImageUri(null);
     setItems([]);
@@ -555,6 +562,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
           discoverable,
           discover_category: discoverable ? discoverCategory : null,
           capacity: discoverable && capacity.trim() ? parseInt(capacity, 10) : null,
+          price_cents: discoverable ? dollarsToCents(price) : null,
           image_url: imageUrl,
           image_url_full: imageUrlFull,
           recurrence_id: recurrenceId,
@@ -992,6 +1000,22 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
                   onChangeText={(text) => setCapacity(text.replace(/[^0-9]/g, ''))}
                   keyboardType="number-pad"
                 />
+
+                <Text style={styles.sublabel}>Price (optional)</Text>
+                {connectStatus?.status === 'ready' ? (
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Free"
+                    placeholderTextColor={colors.textMuted}
+                    value={price}
+                    onChangeText={(text) => setPrice(text.replace(/[^0-9.]/g, ''))}
+                    keyboardType="decimal-pad"
+                  />
+                ) : (
+                  <Text style={styles.publicRowSubtitle}>
+                    Connect a Stripe account in Settings → Payouts to charge for this event.
+                  </Text>
+                )}
               </>
             )}
 

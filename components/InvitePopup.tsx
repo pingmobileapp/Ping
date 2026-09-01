@@ -5,6 +5,7 @@ import { useAuth } from '../lib/AuthContext';
 import { colors, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
 import { displayName } from '../lib/displayName';
 import { submitRsvp } from '../lib/rsvp';
+import { startEventCheckout } from '../lib/discoverCheckout';
 import { formatEventDate, formatEventTime } from '../lib/eventDate';
 import {
   getCalendarPermissionStatus,
@@ -22,6 +23,7 @@ type PopupEvent = {
   is_all_day: boolean;
   host_id: string | null;
   image_url: string | null;
+  price_cents: number | null;
 };
 
 type RsvpChoice = 'accepted' | 'interested' | 'declined';
@@ -84,7 +86,7 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
         await Promise.all([
           supabase
             .from('events')
-            .select('id, title, location, event_date, end_date, is_all_day, host_id, image_url')
+            .select('id, title, location, event_date, end_date, is_all_day, host_id, image_url, price_cents')
             .eq('id', eventId)
             .single(),
           supabase
@@ -155,6 +157,20 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
     if (!session?.user?.id || !event || responding) return;
     setResponding(true);
     setSelected(status);
+
+    // A priced event routes through Stripe Checkout instead of a direct
+    // RSVP - discover-checkout creates the invitee row itself once
+    // stripe-webhook confirms payment (see EventDetailContent's
+    // handleRsvp/handleDiscoverJoin for the same branch). The popup can't
+    // usefully poll for that from here, so it just closes and lets
+    // whatever screen the buyer lands on next reflect the real state.
+    if (status === 'accepted' && event.price_cents) {
+      const { opened, error } = await startEventCheckout(event.id);
+      if (!opened) Alert.alert('Could not start checkout', error || 'Something went wrong.');
+      setResponding(false);
+      onClose();
+      return;
+    }
 
     await submitRsvp({
       eventId: event.id,

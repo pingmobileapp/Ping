@@ -47,7 +47,9 @@ serve(async (req) => {
 
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
-    const stripeRequest = async (path: string, body: Record<string, string>) => {
+    // v1 endpoints (account_links has no v2 equivalent yet) still take a v2
+    // account id directly - see https://docs.stripe.com/connect/accounts-v2.
+    const stripeRequestV1 = async (path: string, body: Record<string, string>) => {
       const res = await fetch(`https://api.stripe.com/v1/${path}`, {
         method: 'POST',
         headers: {
@@ -55,6 +57,24 @@ serve(async (req) => {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: new URLSearchParams(body),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error?.message || `Stripe ${path} failed`);
+      return json;
+    };
+
+    // Accounts v2 (Core) is JSON-bodied and requires a pinned Stripe-Version,
+    // unlike every other v1 call in this file. New Stripe accounts no longer
+    // support creating accounts via v1's POST /v1/accounts at all.
+    const stripeRequestV2 = async (path: string, body: Record<string, unknown>) => {
+      const res = await fetch(`https://api.stripe.com/v2/${path}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${stripeKey}`,
+          'Content-Type': 'application/json',
+          'Stripe-Version': '2026-08-26.preview',
+        },
+        body: JSON.stringify(body),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error?.message || `Stripe ${path} failed`);
@@ -71,11 +91,31 @@ serve(async (req) => {
     let accountId = existing?.stripe_account_id as string | undefined;
 
     if (!accountId) {
-      const account = await stripeRequest('accounts', {
-        type: 'express',
-        email: user.email || '',
-        'capabilities[card_payments][requested]': 'true',
-        'capabilities[transfers][requested]': 'true',
+      // merchant.card_payments + recipient.stripe_transfers is the v2
+      // equivalent of the v1 Express account's card_payments + transfers
+      // capabilities. dashboard: 'express' (the hosted dashboard a host
+      // gets, matching the old Express UX) requires the platform - not
+      // Stripe - to be the fees/losses collector; that's a Stripe-imposed
+      // rule for express dashboards in v2, not a choice made here.
+      const account = await stripeRequestV2('core/accounts', {
+        contact_email: user.email || '',
+        dashboard: 'express',
+        identity: { country: 'us' },
+        configuration: {
+          merchant: {
+            capabilities: {
+              card_payments: { requested: true },
+            },
+          },
+          recipient: {
+            capabilities: {
+              stripe_balance: { stripe_transfers: { requested: true } },
+            },
+          },
+        },
+        defaults: {
+          responsibilities: { fees_collector: 'application', losses_collector: 'application' },
+        },
       });
       accountId = account.id as string;
 
@@ -86,10 +126,15 @@ serve(async (req) => {
       if (insertError) throw new Error(`insert stripe_accounts: ${insertError.message}`);
     }
 
-    const accountLink = await stripeRequest('account_links', {
+    // account_links only accepts http(s) URLs, not the app's custom
+    // pingapp:// scheme - bounce through a same-project https page that
+    // hands off to the real returnUrl (see stripe-connect-return).
+    const bridgeUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/stripe-connect-return?to=${encodeURIComponent(returnUrl)}`;
+
+    const accountLink = await stripeRequestV1('account_links', {
       account: accountId,
-      refresh_url: returnUrl,
-      return_url: returnUrl,
+      refresh_url: bridgeUrl,
+      return_url: bridgeUrl,
       type: 'account_onboarding',
     });
 

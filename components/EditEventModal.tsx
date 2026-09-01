@@ -31,6 +31,8 @@ import { displayName } from '../lib/displayName';
 import { notify } from '../lib/notify';
 import { RecurrenceConfig, generateOccurrences } from '../lib/recurrence';
 import { ActivityCategory, CATEGORY_LABELS } from '../lib/discoverActivities';
+import { fetchConnectStatus, ConnectAccountState } from '../lib/stripeConnect';
+import { dollarsToCents, centsToDollarsInput } from '../lib/pricing';
 import RecurrencePicker from './RecurrencePicker';
 import ImportContactsModal from './ImportContactsModal';
 import ImageCropModal from './ImageCropModal';
@@ -60,6 +62,7 @@ export type EditableEvent = {
   discoverable: boolean;
   discover_category: string | null;
   capacity: number | null;
+  price_cents: number | null;
   status: 'sent' | 'draft';
   description: string | null;
   recurrence_id: string | null;
@@ -95,6 +98,8 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   const [discoverable, setDiscoverable] = useState(false);
   const [discoverCategory, setDiscoverCategory] = useState<ActivityCategory>('community');
   const [capacity, setCapacity] = useState('');
+  const [price, setPrice] = useState('');
+  const [connectStatus, setConnectStatus] = useState<ConnectAccountState | null>(null);
   const [imageUri, setImageUri] = useState<string | null>(null);
   // The never-cropped pick, kept separate from imageUri (the cropped
   // result) so recropping always has full image data to work with - see
@@ -227,6 +232,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
           : 'community'
       );
       setCapacity(event.capacity != null ? String(event.capacity) : '');
+      setPrice(centsToDollarsInput(event.price_cents));
       setImageUri(null);
       setOriginalImageUri(null);
       setExistingImageUrl(event.image_url);
@@ -243,6 +249,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
 
       if (session?.user?.id) {
         loadContactsAndGroups();
+        fetchConnectStatus().then(setConnectStatus);
       }
 
       // Group tagging only happens at creation (see CreateEventModal) -
@@ -760,6 +767,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
             discoverable,
             discover_category: discoverable ? discoverCategory : null,
             capacity: discoverable && capacity.trim() ? parseInt(capacity, 10) : null,
+            price_cents: discoverable ? dollarsToCents(price) : null,
             image_url: finalImageUrl,
             image_url_full: finalImageUrlFull,
             recurrence_id: recurrenceId,
@@ -881,6 +889,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
         discoverable,
         discover_category: discoverable ? discoverCategory : null,
         capacity: discoverable && capacity.trim() ? parseInt(capacity, 10) : null,
+        price_cents: discoverable ? dollarsToCents(price) : null,
         image_url: imageUrl,
         image_url_full: imageUrlFull,
       };
@@ -903,6 +912,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
         discoverable,
         discover_category: discoverable ? discoverCategory : null,
         capacity: discoverable && capacity.trim() ? parseInt(capacity, 10) : null,
+        price_cents: discoverable ? dollarsToCents(price) : null,
         image_url: imageUrl,
         image_url_full: imageUrlFull,
       };
@@ -1411,6 +1421,22 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
                   onChangeText={(text) => setCapacity(text.replace(/[^0-9]/g, ''))}
                   keyboardType="number-pad"
                 />
+
+                <Text style={styles.sublabel}>Price (optional)</Text>
+                {connectStatus?.status === 'ready' ? (
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Free"
+                    placeholderTextColor={colors.textMuted}
+                    value={price}
+                    onChangeText={(text) => setPrice(text.replace(/[^0-9.]/g, ''))}
+                    keyboardType="decimal-pad"
+                  />
+                ) : (
+                  <Text style={styles.publicRowSubtitle}>
+                    Connect a Stripe account in Settings → Payouts to charge for this event.
+                  </Text>
+                )}
               </>
             )}
 

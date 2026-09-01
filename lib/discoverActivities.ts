@@ -1,4 +1,5 @@
 import { supabase } from '../supabase';
+import { formatPrice } from './pricing';
 
 // Backs the Discover feature - real data now, written by the
 // refresh-activities edge function (Ticketmaster/SeatGeek + an
@@ -57,6 +58,10 @@ export type Activity = {
   // live count, always present alongside a non-null capacity.
   capacity?: number | null;
   acceptedCount?: number | null;
+  // Host-set price in whole cents, Ping listings only (see
+  // discover_pricing.sql) - null/undefined means free. Doesn't yet mean
+  // anything can actually be charged (phase 3); this is just what's shown.
+  priceCents?: number | null;
 };
 
 // The join key discover_interests actually keys on - see that table's own
@@ -223,6 +228,7 @@ type EventListingRow = {
   discover_category: string | null;
   capacity: number | null;
   accepted_count: number | null;
+  price_cents: number | null;
 };
 
 const toListingActivity = (row: EventListingRow): Activity => ({
@@ -237,14 +243,15 @@ const toListingActivity = (row: EventListingRow): Activity => ({
   distanceMiles: null,
   startsAt: row.event_date,
   endsAt: row.end_date,
-  // Ping listings have no ticketing/payment path yet (a future phase of
-  // Discover) - every one shown today is free to join.
-  priceLabel: 'Free',
+  // A host can set a price (phase 2), but "Accept" doesn't collect payment
+  // yet (phase 3) - this label is display only for now.
+  priceLabel: formatPrice(row.price_cents),
   url: null,
   confidence: 'high',
   pingEventId: row.id,
   capacity: row.capacity,
   acceptedCount: row.accepted_count,
+  priceCents: row.price_cents,
 });
 
 // Pings a host has explicitly listed on Discover (see the "List on
@@ -254,7 +261,7 @@ const toListingActivity = (row: EventListingRow): Activity => ({
 async function fetchUserListings(rangeStart: Date, rangeEnd: Date): Promise<Activity[]> {
   const { data, error } = await supabase
     .from('events')
-    .select('id, title, description, location, event_date, end_date, discover_category, capacity, accepted_count')
+    .select('id, title, description, location, event_date, end_date, discover_category, capacity, accepted_count, price_cents')
     .eq('discoverable', true)
     .eq('status', 'sent')
     .gte('event_date', rangeStart.toISOString())
