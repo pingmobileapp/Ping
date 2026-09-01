@@ -124,6 +124,8 @@ export default function HomeScreen() {
     startDate: Date;
     endDate: Date;
     isAllDay: boolean;
+    location?: string;
+    description?: string;
   } | null>(null);
   // The personal/synced calendar item being replaced by the Ping just
   // created from it - cleaned up in handleCreated once that succeeds, so
@@ -246,6 +248,7 @@ export default function HomeScreen() {
     refresh: refreshLatestGroupMessages,
   } = useLatestGroupMessages(session?.user?.id);
   const {
+    notifications,
     unreadCount,
     refresh: refreshNotifications,
     pendingEventModal,
@@ -253,6 +256,17 @@ export default function HomeScreen() {
     pendingGroupChat,
     clearGroupChat,
   } = useNotificationsContext();
+
+  // Which events have an unread chat notification right now - drives the
+  // red dot on EventCard's chat icon. MessageThread marks the underlying
+  // notification read as soon as its event's messages are actually viewed
+  // (by any path - this icon, a swipe, a push tap), and that update flows
+  // back into `notifications` via useNotifications' own realtime
+  // subscription, so this recomputes on its own with no extra wiring here.
+  const unreadMessageEventIds = useMemo(
+    () => new Set(notifications.filter((n) => n.type === 'message' && n.event_id && !n.read_at).map((n) => n.event_id!)),
+    [notifications]
+  );
 
   // visibleEvents' "is this event in the past" cutoff reads this instead of
   // calling Date.now() directly inside that useMemo - a plain Date.now()
@@ -539,6 +553,7 @@ export default function HomeScreen() {
       startDate: new Date(event.startDate),
       endDate: new Date(event.endDate),
       isAllDay: event.allDay,
+      description: event.details || undefined,
     });
     setConvertSource({ id: event.id, isPersonal: event.isPersonal });
     setModalVisible(true);
@@ -1599,6 +1614,8 @@ export default function HomeScreen() {
                   onPress={openEvent}
                   rsvpStatus={myRsvpByEvent[item.event.id] as any}
                   weather={weatherByEventId[item.event.id]}
+                  onPressChat={(e) => openEvent(e, { startOnMessages: true })}
+                  hasUnreadMessages={unreadMessageEventIds.has(item.event.id)}
                 />
               ) : item.kind === "interested" ? (
                 <InterestedActivityCard
@@ -1806,6 +1823,17 @@ export default function HomeScreen() {
           setScheduleReviewEvents(null);
           setCalendarPermission("granted");
           await fetchExternalEvents();
+        }}
+        onCreatePing={(prefill) => {
+          // Nothing was written to the personal calendar for this row -
+          // just close the review sheet and open the same Ping-creation
+          // flow AddPersonalItemModal's "Convert to Ping" uses, prefilled
+          // straight from the scanned row instead of an already-saved
+          // calendar event.
+          setScheduleReviewEvents(null);
+          setConvertPrefill(prefill);
+          setConvertSource(null);
+          setModalVisible(true);
         }}
       />
 

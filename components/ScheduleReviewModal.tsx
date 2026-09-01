@@ -18,11 +18,24 @@ import { colors, calendarTheme } from '../lib/theme';
 import { ExtractedEvent } from '../lib/scheduleImport';
 import { getCalendarPermissionStatus, requestCalendarAccess, createPersonalCalendarEvent } from '../lib/calendarConflicts';
 
+export type ScheduleRowPrefill = {
+  title: string;
+  startDate: Date;
+  endDate: Date;
+  isAllDay: boolean;
+  location?: string;
+  description?: string;
+};
+
 type Props = {
   visible: boolean;
   extractedEvents: ExtractedEvent[];
   onClose: () => void;
   onSaved: () => void;
+  // Routes a single scanned row straight into CreateEventModal instead of
+  // the personal calendar - closes this modal itself (see the "Create
+  // Ping" button below), the parent takes it from there.
+  onCreatePing: (prefill: ScheduleRowPrefill) => void;
 };
 
 type Row = {
@@ -60,6 +73,24 @@ const parseDateAndTime = (date: string, time: string | null): Date => {
   return result;
 };
 
+// Shared by handleConfirm (personal calendar) and handleCreatePing (a real
+// Ping) - both need the same start/end/all-day computation from a row's
+// raw date/startTime/endTime strings.
+const rowToDates = (row: Row): { start: Date; end: Date; allDay: boolean } => {
+  const allDay = !row.startTime;
+  let start: Date;
+  let end: Date;
+  if (allDay) {
+    start = parseDateAndTime(row.date!, null);
+    end = new Date(start.getTime() + 24 * 60 * 60000);
+  } else {
+    start = parseDateAndTime(row.date!, row.startTime);
+    end = row.endTime ? parseDateAndTime(row.date!, row.endTime) : new Date(start.getTime() + 60 * 60000);
+    if (end.getTime() <= start.getTime()) end = new Date(start.getTime() + 60 * 60000);
+  }
+  return { start, end, allDay };
+};
+
 const formatDateLabel = (date: string | null) =>
   date
     ? parseDateAndTime(date, null).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
@@ -77,7 +108,7 @@ const toTimeString = (d: Date) => `${String(d.getHours()).padStart(2, '0')}:${St
 // written to the calendar - deselect anything misread, edit anything
 // wrong, then confirm to create the rest via the same
 // createPersonalCalendarEvent path AddPersonalItemModal uses one at a time.
-export default function ScheduleReviewModal({ visible, extractedEvents, onClose, onSaved }: Props) {
+export default function ScheduleReviewModal({ visible, extractedEvents, onClose, onSaved, onCreatePing }: Props) {
   const [rows, setRows] = useState<Row[]>([]);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -192,7 +223,16 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
   const ensurePermission = async (): Promise<boolean> => {
     const status = await getCalendarPermissionStatus();
     if (status === 'granted') return true;
-    if (status === 'undetermined') return await requestCalendarAccess();
+    if (status === 'undetermined') {
+      // Denying the native OS prompt right here used to return false with
+      // no feedback at all - "Add" would just silently flip back to its
+      // normal label, with nothing added and nothing telling you why.
+      const granted = await requestCalendarAccess();
+      if (!granted) {
+        Alert.alert('Calendar access needed', 'Ping needs calendar access to add these events. Enable it in Settings.');
+      }
+      return granted;
+    }
     Alert.alert('Calendar access needed', 'Ping needs calendar access to add these events. Enable it in Settings.');
     return false;
   };
@@ -202,56 +242,74 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
   const handleConfirm = async () => {
     if (selectedRows.length === 0) return;
     setSubmitting(true);
-    const allowed = await ensurePermission();
-    if (!allowed) {
-      setSubmitting(false);
-      return;
-    }
+    // try/finally so an unexpected throw (e.g. from the permission check
+    // itself, which isn't caught by the per-row try/catch below) can't
+    // leave the button stuck on "Adding…" forever with no explanation -
+    // that combined with the permission-denial gap above is exactly how
+    // "tapped Add, nothing happened, nothing on the calendar" could
+    // reproduce silently on every retry.
+    try {
+      const allowed = await ensurePermission();
+      if (!allowed) return;
 
-    const failedKeys: string[] = [];
-    let lastError: unknown = null;
-    let addedCount = 0;
-    for (const row of selectedRows) {
-      try {
-        const allDay = !row.startTime;
-        let start: Date;
-        let end: Date;
-        if (allDay) {
-          start = parseDateAndTime(row.date!, null);
-          end = new Date(start.getTime() + 24 * 60 * 60000);
-        } else {
-          start = parseDateAndTime(row.date!, row.startTime);
-          end = row.endTime ? parseDateAndTime(row.date!, row.endTime) : new Date(start.getTime() + 60 * 60000);
-          if (end.getTime() <= start.getTime()) end = new Date(start.getTime() + 60 * 60000);
+      const failedKeys: string[] = [];
+      let lastError: unknown = null;
+      let addedCount = 0;
+      for (const row of selectedRows) {
+        try {
+          const { start, end, allDay } = rowToDates(row);
+          // null (not omitted) for reminderMinutesBefore - otherwise the
+          // OS/calendar account's own default alert can attach a generic
+          // "Calendar" notification to a bulk-imported item that never had a
+          // reminder requested for it at all.
+          await createPersonalCalendarEvent(row.title, start, end, allDay, row.details || undefined, undefined, null, row.location || undefined);
+          addedCount += 1;
+        } catch (err) {
+          console.error('Error creating event from schedule scan:', row.title, err);
+          lastError = err;
+          failedKeys.push(row.key);
         }
-        // null (not omitted) for reminderMinutesBefore - otherwise the
-        // OS/calendar account's own default alert can attach a generic
-        // "Calendar" notification to a bulk-imported item that never had a
-        // reminder requested for it at all.
-        await createPersonalCalendarEvent(row.title, start, end, allDay, row.details || undefined, undefined, null);
-        addedCount += 1;
-      } catch (err) {
-        console.error('Error creating event from schedule scan:', row.title, err);
-        lastError = err;
-        failedKeys.push(row.key);
       }
+
+      if (failedKeys.length > 0) {
+        const failedTitles = rows.filter((r) => failedKeys.includes(r.key)).map((r) => r.title);
+        const reason = lastError instanceof Error ? lastError.message : String(lastError);
+        Alert.alert(
+          'Some events could not be added',
+          `${addedCount} added. These failed (${reason}), so they're still here to try again: ${failedTitles.join(', ')}`
+        );
+        setRows((prev) => prev.filter((r) => failedKeys.includes(r.key)));
+        return;
+      }
+
+      Alert.alert('Added', `${selectedRows.length} event${selectedRows.length === 1 ? '' : 's'} added to your calendar.`);
+      onSaved();
+    } catch (err) {
+      console.error('Error confirming schedule review:', err);
+      Alert.alert('Error', 'Something went wrong adding these events. Please try again.');
+    } finally {
+      setSubmitting(false);
     }
+  };
 
-    setSubmitting(false);
-
-    if (failedKeys.length > 0) {
-      const failedTitles = rows.filter((r) => failedKeys.includes(r.key)).map((r) => r.title);
-      const reason = lastError instanceof Error ? lastError.message : String(lastError);
-      Alert.alert(
-        'Some events could not be added',
-        `${addedCount} added. These failed (${reason}), so they're still here to try again: ${failedTitles.join(', ')}`
-      );
-      setRows((prev) => prev.filter((r) => failedKeys.includes(r.key)));
-      return;
-    }
-
-    Alert.alert('Added', `${selectedRows.length} event${selectedRows.length === 1 ? '' : 's'} added to your calendar.`);
-    onSaved();
+  // Only meaningful for exactly one selected row - a Ping needs invites,
+  // a description, capacity, etc. decided one at a time in CreateEventModal,
+  // unlike the personal-calendar path above which can fire off several at
+  // once with no further input. Nothing is written to the personal
+  // calendar for this row at all; CreateEventModal owns creating the real
+  // event once the host reviews/sends it there.
+  const handleCreatePing = () => {
+    if (selectedRows.length !== 1) return;
+    const row = selectedRows[0];
+    const { start, end, allDay } = rowToDates(row);
+    onCreatePing({
+      title: row.title,
+      startDate: start,
+      endDate: end,
+      isAllDay: allDay,
+      location: row.location || undefined,
+      description: row.details || undefined,
+    });
   };
 
   return (
@@ -406,6 +464,18 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
                     {submitting ? 'Adding…' : `Add ${selectedRows.length} Event${selectedRows.length === 1 ? '' : 's'}`}
                   </Text>
                 </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.secondaryButton, selectedRows.length !== 1 && styles.secondaryButtonDisabled]}
+                  onPress={handleCreatePing}
+                  disabled={selectedRows.length !== 1 || submitting}
+                >
+                  <Text style={[styles.secondaryButtonText, selectedRows.length !== 1 && styles.secondaryButtonTextDisabled]}>
+                    Create Ping instead
+                  </Text>
+                </TouchableOpacity>
+                {selectedRows.length > 1 && (
+                  <Text style={styles.helperText}>Select exactly one event to turn it into a Ping.</Text>
+                )}
                 <TouchableOpacity style={styles.cancelButton} onPress={onClose} disabled={submitting}>
                   <Text style={styles.cancelText}>Cancel</Text>
                 </TouchableOpacity>
@@ -453,6 +523,18 @@ const styles = StyleSheet.create({
   primaryButton: { backgroundColor: colors.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 16 },
   primaryButtonDisabled: { backgroundColor: colors.border },
   primaryButtonText: { color: colors.textOnPrimary, fontSize: 16, fontWeight: '700' },
+  secondaryButton: {
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: colors.primary,
+    paddingVertical: 13,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  secondaryButtonDisabled: { borderColor: colors.border },
+  secondaryButtonText: { color: colors.primary, fontSize: 15, fontWeight: '700' },
+  secondaryButtonTextDisabled: { color: colors.textMuted },
+  helperText: { color: colors.textMuted, fontSize: 12, textAlign: 'center', marginTop: 6 },
   cancelButton: { paddingVertical: 10, alignItems: 'center' },
   cancelText: { color: colors.textSecondary, fontSize: 14, fontWeight: '600' },
   eventRow: { flexDirection: 'row', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.divider, alignItems: 'flex-start' },

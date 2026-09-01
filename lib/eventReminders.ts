@@ -102,6 +102,35 @@ export async function cancelEventReminder(userId: string, eventId: string) {
   if (error) console.error('Error clearing reminder notification:', error);
 }
 
+// Schedules a notification that fires every year on the given month/day/
+// time, rather than once - the DATE trigger scheduleLocalNotification uses
+// can't represent "forever, annually" at all. Cross-platform per
+// expo-notifications' own docs (achieves it via a native
+// UNCalendarNotificationTrigger on iOS internally).
+async function scheduleYearlyLocalNotification(identifier: string, title: string, body: string, fireDate: Date): Promise<boolean> {
+  if (!(await ensurePermission())) return false;
+
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('default', {
+      name: 'default',
+      importance: Notifications.AndroidImportance.DEFAULT,
+    });
+  }
+
+  await Notifications.scheduleNotificationAsync({
+    identifier,
+    content: { title, body },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.YEARLY,
+      day: fireDate.getDate(),
+      month: fireDate.getMonth(),
+      hour: fireDate.getHours(),
+      minute: fireDate.getMinutes(),
+    },
+  });
+  return true;
+}
+
 const personalItemIdentifierFor = (itemId: string) => `personal-item-reminder-${itemId}`;
 
 // Since a personal item's reminder is deliberately NOT stored as a native
@@ -137,6 +166,46 @@ export async function getPersonalItemReminderMinutes(itemId: string): Promise<nu
   return map[itemId] ?? null;
 }
 
+// Same reasoning as PERSONAL_REMINDER_STORAGE_KEY above - "important date"
+// isn't a calendar-native concept either, so it needs its own on-device
+// record to read back when the edit form reopens.
+const IMPORTANT_DATE_STORAGE_KEY = 'ping.personalItemImportantDates';
+
+async function getImportantDateSet(): Promise<Record<string, true>> {
+  try {
+    const raw = await AsyncStorage.getItem(IMPORTANT_DATE_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (err) {
+    console.error('Error reading important dates:', err);
+    return {};
+  }
+}
+
+async function saveImportantDateSet(set: Record<string, true>): Promise<void> {
+  try {
+    await AsyncStorage.setItem(IMPORTANT_DATE_STORAGE_KEY, JSON.stringify(set));
+  } catch (err) {
+    console.error('Error saving important dates:', err);
+  }
+}
+
+export async function isPersonalItemImportant(itemId: string): Promise<boolean> {
+  const set = await getImportantDateSet();
+  return !!set[itemId];
+}
+
+// Independent of whether a reminder is currently scheduled - the checkbox
+// should still read back correctly on re-edit even if the reminder was
+// separately turned Off, so this is its own call from AddPersonalItemModal
+// rather than something schedulePersonalItemReminder manages as a
+// side effect.
+export async function setPersonalItemImportant(itemId: string, important: boolean): Promise<void> {
+  const set = await getImportantDateSet();
+  if (important) set[itemId] = true;
+  else delete set[itemId];
+  await saveImportantDateSet(set);
+}
+
 // A personal item (AddPersonalItemModal) lives entirely in the phone's own
 // calendar - there's no Supabase `events` row for it at all (notifications
 // table rows require a real one via foreign key), so this only ever does
@@ -146,16 +215,29 @@ export async function getPersonalItemReminderMinutes(itemId: string): Promise<nu
 // param) - a native alarm shows as a generic "Calendar" notification with
 // no Ping branding, which undercuts exactly the reminders someone set
 // through Ping in the first place.
+//
+// `important` (an "Important date" like a birthday or anniversary, always
+// paired with yearly recurrence in AddPersonalItemModal) switches this to
+// a real annual notification instead of a one-time alarm - without this,
+// even a yearly-recurring item's reminder would only ever fire once, for
+// the very first occurrence, since a plain DATE trigger can't repeat.
 export async function schedulePersonalItemReminder(
   itemId: string,
   itemTitle: string,
   itemDate: Date,
-  minutesBefore: number
+  minutesBefore: number,
+  important = false
 ) {
   await cancelPersonalItemReminder(itemId);
   const fireDate = new Date(itemDate.getTime() - minutesBefore * 60000);
-  const body = `Starting in ${labelFor(minutesBefore)}`;
-  await scheduleLocalNotification(personalItemIdentifierFor(itemId), itemTitle, body, fireDate);
+
+  if (important) {
+    const body = minutesBefore > 0 ? `Coming up in ${labelFor(minutesBefore)}` : 'Today!';
+    await scheduleYearlyLocalNotification(personalItemIdentifierFor(itemId), `🎉 ${itemTitle}`, body, fireDate);
+  } else {
+    const body = `Starting in ${labelFor(minutesBefore)}`;
+    await scheduleLocalNotification(personalItemIdentifierFor(itemId), itemTitle, body, fireDate);
+  }
 
   const map = await getPersonalReminderMap();
   map[itemId] = minutesBefore;
@@ -170,4 +252,14 @@ export async function cancelPersonalItemReminder(itemId: string) {
     delete map[itemId];
     await savePersonalReminderMap(map);
   }
+}
+
+// Only call when the item itself is being deleted - forgets it was ever
+// marked important too, not just its reminder. A save that merely turns
+// the reminder Off while keeping "Important date" checked calls
+// cancelPersonalItemReminder above without this, then re-asserts the flag
+// via setPersonalItemImportant right after - see AddPersonalItemModal.
+export async function forgetPersonalItem(itemId: string) {
+  await cancelPersonalItemReminder(itemId);
+  await setPersonalItemImportant(itemId, false);
 }

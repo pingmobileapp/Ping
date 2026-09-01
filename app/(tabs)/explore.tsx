@@ -434,18 +434,13 @@ export default function DiscoverScreen() {
               const isHighlighted = highlightedKey === activityKey(item);
               return (
                 <View style={[styles.card, isHighlighted && styles.cardHighlighted]}>
-                  {/* Not for a Ping you're hosting/joined - that already has its
-                      own RSVP, starring it too would just be a confusing second
-                      way to say the same thing. */}
-                  {item.source !== 'ping' && (
-                    <TouchableOpacity
-                      style={styles.starButton}
-                      onPress={() => handleToggleInterest(item)}
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    >
-                      <Text style={styles.starIcon}>{interested ? '★' : '☆'}</Text>
-                    </TouchableOpacity>
-                  )}
+                  <TouchableOpacity
+                    style={styles.starButton}
+                    onPress={() => handleToggleInterest(item)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={styles.starIcon}>{interested ? '★' : '☆'}</Text>
+                  </TouchableOpacity>
                   <View style={styles.cardHeaderRow}>
                     <Text style={styles.cardCategory}>{CATEGORY_LABELS[item.category]}</Text>
                     {distance !== null && <Text style={styles.cardDistance}>{distance.toFixed(1)} mi</Text>}

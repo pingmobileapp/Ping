@@ -41,9 +41,21 @@ type Props = {
   // (forecast out of range, or no location to anchor it to at all),
   // undefined/omitted means not resolved yet.
   weather?: DailyWeather;
+  // Jumps straight to this event's message thread instead of opening on
+  // the normal detail face - see EventDetailModal's startOnMessages.
+  onPressChat?: (event: PingEvent) => void;
+  hasUnreadMessages?: boolean;
 };
 
-export default function EventCard({ event, onPress, highlight, rsvpStatus, weather }: Props) {
+export default function EventCard({
+  event,
+  onPress,
+  highlight,
+  rsvpStatus,
+  weather,
+  onPressChat,
+  hasUnreadMessages,
+}: Props) {
   const rsvpDotColor = rsvpStatus && rsvpStatus !== 'pending' ? RSVP_DOT_COLOR[rsvpStatus] : null;
   const dateLabel = formatEventDate(event.event_date, event.end_date, 'short');
   const timeLabel = formatEventTime(event.event_date, event.is_all_day, event.end_date);
@@ -88,13 +100,25 @@ export default function EventCard({ event, onPress, highlight, rsvpStatus, weath
               {!!event.recurrence_id && '↻ '}
               {dateLabel} · {timeLabel}
             </Text>
-            {!!weather && (
-              <TouchableOpacity onPress={handleWeatherPress} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Text style={styles.weatherText}>
-                  {weather.icon} {weather.highF}°/{weather.lowF}°
-                </Text>
-              </TouchableOpacity>
-            )}
+            <View style={styles.rightStats}>
+              {!!weather && (
+                <TouchableOpacity onPress={handleWeatherPress} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Text style={styles.weatherText}>
+                    {weather.icon} {weather.highF}°/{weather.lowF}°
+                  </Text>
+                </TouchableOpacity>
+              )}
+              {!!onPressChat && (
+                <TouchableOpacity
+                  onPress={() => onPressChat(event)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={styles.chatButton}
+                >
+                  <Text style={styles.chatIcon}>💬</Text>
+                  {!!hasUnreadMessages && <View style={styles.unreadDot} />}
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
           {!!event.location && (
             <Text style={styles.statText} numberOfLines={1}>
@@ -150,5 +174,19 @@ const styles = StyleSheet.create({
   statBar: { borderTopWidth: 1, borderTopColor: colors.divider, paddingTop: 6, gap: 2 },
   statTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   statText: { color: colors.textSecondary, fontSize: 13, flexShrink: 1 },
+  rightStats: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   weatherText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
+  chatButton: { position: 'relative' },
+  chatIcon: { fontSize: 15 },
+  unreadDot: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.danger,
+    borderWidth: 1,
+    borderColor: colors.surfaceLight,
+  },
 });

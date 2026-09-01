@@ -18,6 +18,9 @@ import {
   schedulePersonalItemReminder,
   cancelPersonalItemReminder,
   getPersonalItemReminderMinutes,
+  setPersonalItemImportant,
+  isPersonalItemImportant,
+  forgetPersonalItem,
 } from '../lib/eventReminders';
 
 type Props = {
@@ -65,6 +68,7 @@ export default function AddPersonalItemModal({ visible, initialDate, initialMinu
   const [details, setDetails] = useState('');
   const [recurrence, setRecurrence] = useState<RecurrenceConfig | null>(null);
   const [reminderMinutes, setReminderMinutes] = useState<number | null>(null);
+  const [isImportantDate, setIsImportantDate] = useState(false);
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState(new Date(Date.now() + 60 * 60000));
   const [isAllDay, setIsAllDay] = useState(false);
@@ -119,6 +123,7 @@ export default function AddPersonalItemModal({ visible, initialDate, initialMinu
       // event's own native alarm, which this deliberately never sets (see
       // schedulePersonalItemReminder). The real selection lives here instead.
       getPersonalItemReminderMinutes(editingEvent.id).then(setReminderMinutes);
+      isPersonalItemImportant(editingEvent.id).then(setIsImportantDate);
       setStartDate(new Date(editingEvent.startDate));
       setEndDate(new Date(editingEvent.endDate));
       setIsAllDay(editingEvent.allDay);
@@ -129,6 +134,7 @@ export default function AddPersonalItemModal({ visible, initialDate, initialMinu
     setDetails('');
     setRecurrence(null);
     setReminderMinutes(null);
+    setIsImportantDate(false);
     setIsAllDay(false);
     const start = initialDate ? (() => {
       const [y, m, d] = initialDate.split('-').map(Number);
@@ -188,6 +194,24 @@ export default function AddPersonalItemModal({ visible, initialDate, initialMinu
       setEndDate(next);
     }
     setShowPicker(false);
+  };
+
+  // Auto-configures the two things that make "important" actually mean
+  // something: recurs every year (a birthday marked important but firing
+  // once is pointless), and gets a real reminder if one wasn't already
+  // chosen (defaulting to Off would otherwise silently mean "never
+  // reminds you," defeating the whole point). Both stay editable
+  // afterward - unchecking doesn't undo them, matching how "All day"
+  // doesn't un-set times you'd already picked.
+  const handleToggleImportant = () => {
+    setIsImportantDate((prev) => {
+      const next = !prev;
+      if (next) {
+        setRecurrence({ frequency: 'yearly', interval: 1, end: { type: 'never' } });
+        setReminderMinutes((mins) => (mins === null ? 1440 : mins));
+      }
+      return next;
+    });
   };
 
   const ensurePermission = async (): Promise<boolean> => {
@@ -251,10 +275,11 @@ export default function AddPersonalItemModal({ visible, initialDate, initialMinu
       }
 
       if (reminderMinutes !== null) {
-        await schedulePersonalItemReminder(calendarEventId, title.trim(), start, reminderMinutes);
+        await schedulePersonalItemReminder(calendarEventId, title.trim(), start, reminderMinutes, isImportantDate);
       } else {
         await cancelPersonalItemReminder(calendarEventId);
       }
+      await setPersonalItemImportant(calendarEventId, isImportantDate);
 
       onSaved();
     } catch (err) {
@@ -288,7 +313,7 @@ export default function AddPersonalItemModal({ visible, initialDate, initialMinu
     setSubmitting(true);
     try {
       await deleteCalendarEvent(editingEvent.id, futureEvents, editingEvent.startDate);
-      await cancelPersonalItemReminder(editingEvent.id);
+      await forgetPersonalItem(editingEvent.id);
       onSaved();
     } catch (err) {
       console.error('Error deleting calendar item:', err);
@@ -443,6 +468,16 @@ export default function AddPersonalItemModal({ visible, initialDate, initialMinu
             <Text style={styles.allDayText}>All day</Text>
           </TouchableOpacity>
 
+          <TouchableOpacity style={styles.allDayRow} onPress={handleToggleImportant}>
+            <View style={[styles.checkbox, isImportantDate && styles.checkboxChecked]}>
+              {isImportantDate && <Text style={styles.checkmark}>✓</Text>}
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.allDayText}>⭐ Important date</Text>
+              <Text style={styles.importantSubtitle}>Repeats yearly and reminds you automatically</Text>
+            </View>
+          </TouchableOpacity>
+
           <Text style={styles.label}>Remind me before</Text>
           <View style={styles.row}>
             {REMINDER_OPTIONS.map((opt) => (
@@ -528,6 +563,7 @@ const styles = StyleSheet.create({
   checkboxChecked: { backgroundColor: colors.primary, borderColor: colors.primary },
   checkmark: { color: colors.textOnPrimary, fontSize: 13, fontWeight: '700' },
   allDayText: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
+  importantSubtitle: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
   calendarWrap: { borderWidth: 1, borderColor: colors.border, borderRadius: 12, overflow: 'hidden', marginTop: 16 },
   doneText: { color: colors.primary, textAlign: 'right', marginTop: 8, fontSize: 15, fontWeight: '600' },
   primaryButton: { backgroundColor: colors.primary, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 20 },

@@ -1395,9 +1395,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.publicRowTitle}>Make this event shareable</Text>
-                <Text style={styles.publicRowSubtitle}>
-                  {isPublic ? 'Only those you invite can invite others' : 'Only you can select who gets invited'}
-                </Text>
+                <Text style={styles.publicRowSubtitle}>Those you invite can invite others</Text>
               </View>
             </TouchableOpacity>
 

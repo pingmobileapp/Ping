@@ -60,8 +60,19 @@ type Props = {
   initialDate?: string | null;
   // Carries a personal/synced calendar item's title and time over when the
   // user converts it into a real Ping (see AddPersonalItemModal's "Convert
-  // to Ping" button) - takes priority over initialDate when both are set.
-  prefill?: { title: string; startDate: Date; endDate: Date; isAllDay: boolean } | null;
+  // to Ping" button, and ScheduleReviewModal's "Create Ping instead") -
+  // takes priority over initialDate when both are set. location/description
+  // are optional since AddPersonalItemModal's ExternalEvent type doesn't
+  // always have them populated (an external synced calendar event may have
+  // no details at all).
+  prefill?: {
+    title: string;
+    startDate: Date;
+    endDate: Date;
+    isAllDay: boolean;
+    location?: string;
+    description?: string;
+  } | null;
 };
 
 export default function CreateEventModal({ visible, onClose, onCreated, initialDate, prefill }: Props) {
@@ -409,15 +420,17 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
   };
 
   const resetForm = () => {
-    setDescription('');
-    setLocation('');
     if (prefill) {
       setTitle(prefill.title);
       setEventDate(prefill.startDate);
       setEndDate(prefill.endDate);
       setIsMultiDay(prefill.startDate.toDateString() !== prefill.endDate.toDateString());
       setIsAllDay(prefill.isAllDay);
+      setLocation(prefill.location || '');
+      setDescription(prefill.description || '');
     } else {
+      setDescription('');
+      setLocation('');
       setTitle('');
       const initial = buildInitialEventDate();
       setEventDate(initial);
@@ -975,9 +988,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.publicRowTitle}>Make this event shareable</Text>
-                <Text style={styles.publicRowSubtitle}>
-                  {isPublic ? 'Only those you invite can invite others' : 'Only you can select who gets invited'}
-                </Text>
+                <Text style={styles.publicRowSubtitle}>Those you invite can invite others</Text>
               </View>
             </TouchableOpacity>
 

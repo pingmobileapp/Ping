@@ -219,6 +219,28 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
     };
   }, [eventId, fetchLatest, session?.user?.id]);
 
+  // Clears the unread chat dot on Home's EventCard (see
+  // app/(tabs)/index.tsx) the moment this event's messages are actually
+  // viewed - via the new chat icon, a swipe, or a push tap, whichever got
+  // here. A direct targeted update rather than going through
+  // NotificationsContext's markRead(id) - this component doesn't know
+  // (or need to know) which notification row, if any, that consolidated
+  // down to. useNotifications' own realtime subscription picks up this
+  // write and updates the shared unread state on its own.
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    supabase
+      .from('notifications')
+      .update({ read_at: new Date().toISOString() })
+      .eq('recipient_id', session.user.id)
+      .eq('event_id', eventId)
+      .eq('type', 'message')
+      .is('read_at', null)
+      .then(({ error }) => {
+        if (error) console.error('Error marking message notification read:', error);
+      });
+  }, [eventId, session?.user?.id]);
+
   const handleSend = async () => {
     // Tapping Send while an autocorrect suggestion is still highlighted
     // doesn't "accept" it the way pressing space would - blurring forces
