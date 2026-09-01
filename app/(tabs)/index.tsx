@@ -40,6 +40,7 @@ import ExternalEventRow from "../../components/ExternalEventRow";
 import GroupChatModal from "../../components/GroupChatModal";
 import PingLogoMenu from "../../components/PingLogoMenu";
 import ProfileMenu from "../../components/ProfileMenu";
+import FilterMenu, { HomeFilter } from "../../components/FilterMenu";
 import ScheduleReviewModal from "../../components/ScheduleReviewModal";
 import WeekGrid, { WeekGridHandle } from "../../components/WeekGrid";
 import { useAuth } from "../../lib/AuthContext";
@@ -57,6 +58,7 @@ import {
   requestCalendarAccess,
 } from "../../lib/calendarConflicts";
 import { getHiddenEventIds, hideEvent, unhideEvent } from "../../lib/hiddenEvents";
+import { getAllImportantItemIds } from "../../lib/eventReminders";
 import { DailyWeather, fetchWeatherForEvents } from "../../lib/eventWeather";
 import InterestedActivityCard from "../../components/InterestedActivityCard";
 import {
@@ -201,11 +203,17 @@ export default function HomeScreen() {
     setWeekGridAnchor(anchorWeekStart);
     setViewMode("week");
   };
-  const [showDraftsOnly, setShowDraftsOnly] = useState(false);
-  const [showDeclinedOnly, setShowDeclinedOnly] = useState(false);
-  const [showHiddenOnly, setShowHiddenOnly] = useState(false);
-  const [showPingsOnly, setShowPingsOnly] = useState(false);
+  // Consolidates what used to be four independent (and only partially
+  // mutually-exclusive) booleans into one single-select filter - see
+  // components/FilterMenu.tsx for why that's the right model here.
+  const [activeFilter, setActiveFilter] = useState<HomeFilter>(null);
+  const showDraftsOnly = activeFilter === 'drafts';
+  const showDeclinedOnly = activeFilter === 'declined';
+  const showHiddenOnly = activeFilter === 'hidden';
+  const showPingsOnly = activeFilter === 'pingsOnly';
+  const showImportantOnly = activeFilter === 'important';
   const [hiddenEventIds, setHiddenEventIds] = useState<Set<string>>(new Set());
+  const [importantItemIds, setImportantItemIds] = useState<Set<string>>(new Set());
   const [myRsvpByEvent, setMyRsvpByEvent] = useState<Record<string, string>>({});
   const [externalEvents, setExternalEvents] = useState<ExternalEvent[]>([]);
   const [calendarPermission, setCalendarPermission] = useState<CalendarPermissionStatus | null>(null);
@@ -480,7 +488,12 @@ export default function HomeScreen() {
 
   useEffect(() => {
     getHiddenEventIds().then(setHiddenEventIds);
+    refreshImportantItemIds();
   }, []);
+
+  const refreshImportantItemIds = () => {
+    getAllImportantItemIds().then(setImportantItemIds);
+  };
 
   const handleHideEvent = async (eventId: string) => {
     setHiddenEventIds(await hideEvent(eventId));
@@ -491,7 +504,7 @@ export default function HomeScreen() {
     setHiddenEventIds(next);
     // Nothing left to review - drop back to the normal Upcoming view
     // instead of leaving the user stranded on an empty "Hidden" screen.
-    if (next.size === 0) setShowHiddenOnly(false);
+    if (next.size === 0) setActiveFilter((f) => (f === 'hidden' ? null : f));
   };
 
   // Groups I'm in = groups I own, union groups I'm a resolved member of.
@@ -877,6 +890,21 @@ export default function HomeScreen() {
         .sort((a, b) => a.date.getTime() - b.date.getTime());
     }
 
+    // Same standalone-view idea as Hidden - "important date" only ever
+    // applies to a personal/synced calendar item (see AddPersonalItemModal's
+    // checkbox), never a Ping, so there's nothing to mix in from pingItems.
+    if (showImportantOnly) {
+      return externalEvents
+        .filter((e) => importantItemIds.has(e.id))
+        .map((e) => ({
+          kind: "external" as const,
+          key: `ext-${e.id}`,
+          date: e.startDate,
+          event: e,
+        }))
+        .sort((a, b) => a.date.getTime() - b.date.getTime());
+    }
+
     const monthScoped =
       !selectedDate && !showDraftsOnly && !showDeclinedOnly && !showPingsOnly
         ? visibleEvents.filter((e) =>
@@ -936,6 +964,8 @@ export default function HomeScreen() {
     visibleEvents,
     showHiddenOnly,
     hiddenEventIds,
+    showImportantOnly,
+    importantItemIds,
     externalEvents,
     interestedActivities,
     selectedDate,
@@ -1347,9 +1377,11 @@ export default function HomeScreen() {
             ? "Drafts"
             : showDeclinedOnly
               ? "Declined"
-              : selectedDate
-                ? "On this day"
-                : defaultTitle}
+              : showImportantOnly
+                ? "Important Dates"
+                : selectedDate
+                  ? "On this day"
+                  : defaultTitle}
       </Text>
       <View style={styles.listHeaderActions}>
         {selectedDate && (
@@ -1357,38 +1389,18 @@ export default function HomeScreen() {
             <Text style={styles.clearFilterText}>Show all</Text>
           </TouchableOpacity>
         )}
-        <TouchableOpacity onPress={() => setShowPingsOnly((prev) => !prev)}>
-          <Text
-            style={[
-              styles.draftsText,
-              showPingsOnly && styles.draftsTextActive,
-            ]}
-          >
-            {showPingsOnly ? "Pings Only ✓" : "Pings Only"}
-          </Text>
-        </TouchableOpacity>
-        {hiddenEventIds.size > 0 && (
-          <TouchableOpacity
-            onPress={() =>
-              setShowHiddenOnly((prev) => {
-                if (!prev) {
-                  setShowDraftsOnly(false);
-                  setShowDeclinedOnly(false);
-                }
-                return !prev;
-              })
-            }
-          >
-            <Text
-              style={[
-                styles.draftsText,
-                showHiddenOnly && styles.draftsTextActive,
-              ]}
-            >
-              {showHiddenOnly ? "Hidden ✓" : "Hidden"}
-            </Text>
-          </TouchableOpacity>
-        )}
+        <FilterMenu
+          active={activeFilter}
+          onSelect={(filter) => {
+            setActiveFilter(filter);
+            // Matches what Drafts/Declined used to do from the avatar menu -
+            // any of these filters is about the calendar/Upcoming view, so
+            // picking one should back out of the Message Board first.
+            closeMessages();
+          }}
+          hasHidden={hiddenEventIds.size > 0}
+          hasImportant={importantItemIds.size > 0}
+        />
       </View>
     </View>
   );
@@ -1445,9 +1457,11 @@ export default function HomeScreen() {
       ? "No drafts right now."
       : showDeclinedOnly
         ? "No declined events."
-        : selectedDate
-          ? "No events on this day."
-          : "No events yet — tap + to create one.";
+        : showImportantOnly
+          ? "No important dates marked yet."
+          : selectedDate
+            ? "No events on this day."
+            : "No events yet — tap + to create one.";
 
   const groupsEmptyText = "No groups yet — create one from the Groups screen.";
 
@@ -1466,30 +1480,7 @@ export default function HomeScreen() {
           <TouchableOpacity onPress={() => router.push("/groups")}>
             <Text style={styles.groupsText}>Groups</Text>
           </TouchableOpacity>
-          <ProfileMenu
-            draftsActive={showDraftsOnly}
-            declinedActive={showDeclinedOnly}
-            onToggleDrafts={() => {
-              setShowDraftsOnly((prev) => {
-                if (!prev) {
-                  setShowDeclinedOnly(false);
-                  setShowHiddenOnly(false);
-                }
-                return !prev;
-              });
-              closeMessages();
-            }}
-            onToggleDeclined={() => {
-              setShowDeclinedOnly((prev) => {
-                if (!prev) {
-                  setShowDraftsOnly(false);
-                  setShowHiddenOnly(false);
-                }
-                return !prev;
-              });
-              closeMessages();
-            }}
-          />
+          <ProfileMenu />
         </View>
       </View>
 
@@ -1804,6 +1795,7 @@ export default function HomeScreen() {
           setCreatePrefillMinutes(null);
           setCalendarPermission("granted");
           await fetchExternalEvents();
+          refreshImportantItemIds();
         }}
         onConvertToPing={handleConvertToPing}
       />

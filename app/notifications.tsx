@@ -55,7 +55,13 @@ export default function NotificationsScreen() {
   // native view stack).
   const openNotification = (n: NotificationRowData) => {
     markRead(n.id);
-    if (n.group_id) {
+    if (n.type === 'report') {
+      // A report notification has neither event_id nor group_id (see
+      // lib/moderation.ts's notifyAdmin) - it's about a report row, not a
+      // specific event/group thread, so it goes straight to the admin
+      // screen instead of falling through to "do nothing" below.
+      router.push('/admin' as any);
+    } else if (n.group_id) {
       openGroupChat(n.group_id);
       if (router.canDismiss()) router.dismissTo('/');
     } else if (n.event_id) {

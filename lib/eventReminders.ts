@@ -194,6 +194,15 @@ export async function isPersonalItemImportant(itemId: string): Promise<boolean> 
   return !!set[itemId];
 }
 
+// For filtering a whole list at once (see Home's "Important Dates" filter)
+// - one AsyncStorage read for every visible item would mean redundant
+// reads of the same small blob, so this fetches the full set once instead,
+// same pattern as lib/hiddenEvents.ts's getHiddenEventIds().
+export async function getAllImportantItemIds(): Promise<Set<string>> {
+  const set = await getImportantDateSet();
+  return new Set(Object.keys(set));
+}
+
 // Independent of whether a reminder is currently scheduled - the checkbox
 // should still read back correctly on re-edit even if the reminder was
 // separately turned Off, so this is its own call from AddPersonalItemModal

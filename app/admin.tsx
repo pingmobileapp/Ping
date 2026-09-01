@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert } from 'react-native';
-import { useRouter, Stack } from 'expo-router';
+import React, { useCallback, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Alert, RefreshControl } from 'react-native';
+import { useRouter, useFocusEffect, Stack } from 'expo-router';
 import { supabase } from '../supabase';
 import { colors } from '../lib/theme';
 import { displayName } from '../lib/displayName';
@@ -26,6 +26,7 @@ type Report = {
 export default function AdminScreen() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [reports, setReports] = useState<Report[]>([]);
 
   const fetchReports = useCallback(async () => {
@@ -41,9 +42,23 @@ export default function AdminScreen() {
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    fetchReports();
-  }, [fetchReports]);
+  // A plain useEffect only ever fetched once, on this screen's very first
+  // mount - reopening Admin later (e.g. from a report notification, after
+  // the first visit happened to be before any reports existed) kept
+  // showing that same stale snapshot forever, since nothing told it to
+  // fetch again. useFocusEffect (same pattern as app/notifications.tsx)
+  // refetches every time the screen is actually navigated to.
+  useFocusEffect(
+    useCallback(() => {
+      fetchReports();
+    }, [fetchReports])
+  );
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await fetchReports();
+    setRefreshing(false);
+  };
 
   const resolve = async (id: string, status: 'dismissed' | 'removed' | 'user_banned') => {
     const { error } = await supabase
@@ -118,7 +133,11 @@ export default function AdminScreen() {
         <View style={{ width: 50 }} />
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: 40 }}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.primary} />}
+      >
         {reports.length === 0 ? (
           <Text style={styles.emptyText}>No open reports.</Text>
         ) : (

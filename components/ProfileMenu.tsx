@@ -8,14 +8,10 @@ import CatchMeUpModal from './CatchMeUpModal';
 
 const MENU_WIDTH = 200;
 
-type Props = {
-  draftsActive: boolean;
-  declinedActive: boolean;
-  onToggleDrafts: () => void;
-  onToggleDeclined: () => void;
-};
-
-export default function ProfileMenu({ draftsActive, declinedActive, onToggleDrafts, onToggleDeclined }: Props) {
+// Drafts/Declined moved to components/FilterMenu.tsx, consolidated there
+// with Pings Only/Hidden/Important Dates - this menu no longer needs to
+// know about any of that filter state.
+export default function ProfileMenu() {
   const router = useRouter();
   const { session, signOut } = useAuth();
   const [open, setOpen] = useState(false);
@@ -74,16 +70,6 @@ export default function ProfileMenu({ draftsActive, declinedActive, onToggleDraf
     setCatchMeUpVisible(true);
   };
 
-  const handleDrafts = () => {
-    setOpen(false);
-    onToggleDrafts();
-  };
-
-  const handleDeclined = () => {
-    setOpen(false);
-    onToggleDeclined();
-  };
-
   return (
     <>
       <TouchableOpacity
@@ -108,17 +94,6 @@ export default function ProfileMenu({ draftsActive, declinedActive, onToggleDraf
             <View style={styles.menuDivider} />
             <TouchableOpacity style={styles.menuItem} onPress={openSettings}>
               <Text style={styles.menuItemText}>Settings</Text>
-            </TouchableOpacity>
-            <View style={styles.menuDivider} />
-            <TouchableOpacity style={styles.menuItem} onPress={handleDrafts}>
-              <Text style={[styles.menuItemText, draftsActive && styles.menuItemTextActive]}>
-                {draftsActive ? 'Drafts ✓' : 'Drafts'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.menuItem} onPress={handleDeclined}>
-              <Text style={[styles.menuItemText, declinedActive && styles.menuItemTextActive]}>
-                {declinedActive ? 'Declined ✓' : 'Declined'}
-              </Text>
             </TouchableOpacity>
             <View style={styles.menuDivider} />
             <TouchableOpacity style={styles.menuItem} onPress={handleSignOut}>
