@@ -19,6 +19,14 @@ import { pickProfileImage } from '../lib/imagePicker';
 import { uploadAvatarImage } from '../lib/imageUpload';
 import { normalizePhone } from '../lib/phone';
 import { colors } from '../lib/theme';
+import { fetchConnectStatus, startConnectOnboarding, ConnectAccountState } from '../lib/stripeConnect';
+
+const CONNECT_STATUS_LABEL: Record<ConnectAccountState['status'], string> = {
+  not_started: 'Not set up',
+  incomplete: 'Setup incomplete',
+  pending: 'Verification pending',
+  ready: 'Ready to receive payments',
+};
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -31,6 +39,24 @@ export default function SettingsScreen() {
   const [email, setEmail] = useState(session?.user?.email || '');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [connectState, setConnectState] = useState<ConnectAccountState | null>(null);
+  const [connectLoading, setConnectLoading] = useState(false);
+
+  useEffect(() => {
+    fetchConnectStatus().then(setConnectState);
+  }, []);
+
+  const handleSetUpPayouts = async () => {
+    setConnectLoading(true);
+    const { opened, error } = await startConnectOnboarding();
+    if (!opened) {
+      setConnectLoading(false);
+      Alert.alert('Error', error || 'Could not start payout setup.');
+      return;
+    }
+    setConnectState(await fetchConnectStatus());
+    setConnectLoading(false);
+  };
 
   useEffect(() => {
     if (!session?.user?.id) return;
@@ -218,6 +244,30 @@ export default function SettingsScreen() {
             Changing your email requires confirming it from a link sent to your new address.
           </Text>
 
+          <View style={styles.payoutsSection}>
+            <Text style={styles.label}>Payouts</Text>
+            <View style={styles.payoutsRow}>
+              <Text style={styles.payoutsStatusText}>
+                {connectState ? CONNECT_STATUS_LABEL[connectState.status] : 'Loading…'}
+              </Text>
+              <TouchableOpacity onPress={handleSetUpPayouts} disabled={connectLoading}>
+                <Text style={styles.saveText}>
+                  {connectLoading
+                    ? 'Opening…'
+                    : connectState?.status === 'ready'
+                      ? 'Manage'
+                      : connectState?.status === 'not_started'
+                        ? 'Set up'
+                        : 'Continue'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.helperText}>
+              Connect a Stripe account to charge for events you host on Discover. Stripe handles your payout
+              details directly - Ping never sees your bank info.
+            </Text>
+          </View>
+
           <View style={styles.dangerZone}>
             <TouchableOpacity onPress={handleDeleteAccount} disabled={deleting}>
               <Text style={styles.deleteText}>{deleting ? 'Deleting Account…' : 'Delete Account'}</Text>
@@ -261,6 +311,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   helperText: { color: colors.textMuted, fontSize: 12, marginTop: 6, fontStyle: 'italic' },
-  dangerZone: { marginTop: 40, paddingTop: 20, borderTopWidth: 1, borderTopColor: colors.divider },
+  payoutsSection: { marginTop: 32, paddingTop: 20, borderTopWidth: 1, borderTopColor: colors.divider },
+  payoutsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 },
+  payoutsStatusText: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
+  dangerZone: { marginTop: 24, paddingTop: 20, borderTopWidth: 1, borderTopColor: colors.divider },
   deleteText: { color: colors.danger, fontSize: 16, fontWeight: '700' },
 });
