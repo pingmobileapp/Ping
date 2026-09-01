@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Keyboard,
   Platform,
+  Alert,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
@@ -18,6 +19,8 @@ import { colors } from '../lib/theme';
 import { notify } from '../lib/notify';
 import { displayName } from '../lib/displayName';
 import { useMessageReactions } from '../lib/useMessageReactions';
+import { reportContent, blockUser } from '../lib/moderation';
+import { containsObjectionableContent } from '../lib/contentFilter';
 import ReactionPicker from './ReactionPicker';
 import MessageBubble, { BubbleAnchor } from './MessageBubble';
 
@@ -232,9 +235,11 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
     setSending(true);
     updateDraft('');
 
-    const { error } = await supabase
+    const { data: inserted, error } = await supabase
       .from('group_messages')
-      .insert([{ group_id: groupId, sender_id: session.user.id, body }]);
+      .insert([{ group_id: groupId, sender_id: session.user.id, body }])
+      .select('id')
+      .single();
 
     setSending(false);
 
@@ -242,6 +247,18 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
       console.error('Error sending group message:', error);
       updateDraft(body);
       return;
+    }
+
+    // Doesn't block sending - see the matching note in MessageThread.tsx.
+    if (containsObjectionableContent(body) && inserted) {
+      reportContent({
+        reporterId: session.user.id,
+        reportedUserId: session.user.id,
+        contentType: 'group_message',
+        contentId: inserted.id,
+        reason: 'Auto-flagged group message content',
+        source: 'auto_filter',
+      });
     }
 
     await fetchLatest();
@@ -303,6 +320,46 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
     await notify(mutedRecipientIds, notifTitle, notifBody, { groupId, type: 'group_message', silent: true });
   };
 
+  // Same Report/Block action sheet as MessageThread.tsx, for someone
+  // else's message - see lib/moderation.ts.
+  const handleLongPressOther = (message: GroupMessage, anchor: BubbleAnchor) => {
+    if (!session?.user?.id) return;
+    const reporterId = session.user.id;
+    const name = displayName(message.profiles, 'Someone');
+    Alert.alert(name, undefined, [
+      { text: 'React', onPress: () => { setReactingToId(message.id); setPickerAnchor(anchor); } },
+      {
+        text: 'Report Message',
+        onPress: () =>
+          reportContent({
+            reporterId,
+            reportedUserId: message.sender_id,
+            contentType: 'group_message',
+            contentId: message.id,
+            reason: `Reported group message from ${name}`,
+          }),
+      },
+      {
+        text: `Block ${name}`,
+        style: 'destructive',
+        onPress: () => {
+          Alert.alert('Block this person?', `You won't see messages from ${name} anymore.`, [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Block',
+              style: 'destructive',
+              onPress: async () => {
+                await blockUser({ blockerId: reporterId, blockedId: message.sender_id, blockedName: name });
+                await fetchLatest();
+              },
+            },
+          ]);
+        },
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
   return (
     <GestureDetector gesture={swipeBackGesture}>
     <View style={{ flex: 1 }}>
@@ -357,8 +414,12 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
                 isActive={reactingToId === item.id}
                 onToggleReaction={(emoji) => toggleReaction(item.id, emoji)}
                 onLongPressBubble={(anchor) => {
-                  setReactingToId(item.id);
-                  setPickerAnchor(anchor);
+                  if (isMine) {
+                    setReactingToId(item.id);
+                    setPickerAnchor(anchor);
+                  } else {
+                    handleLongPressOther(item, anchor);
+                  }
                 }}
               />
             );

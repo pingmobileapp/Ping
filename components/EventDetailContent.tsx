@@ -32,6 +32,7 @@ import { formatEventDate, formatEventTime } from '../lib/eventDate';
 import { DailyWeather, fetchWeatherForEvents } from '../lib/eventWeather';
 import { formatPrice } from '../lib/pricing';
 import { startEventCheckout } from '../lib/discoverCheckout';
+import { reportContent, blockUser } from '../lib/moderation';
 
 type EventDetail = {
   id: string;
@@ -326,6 +327,61 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     setUpdating(false);
   };
 
+  // Apple's Guideline 1.2 review requires a way to flag/report content and
+  // to block an abusive user, with blocking also notifying the developer
+  // (see lib/moderation.ts) - this is the entry point for both, reachable
+  // by anyone viewing an event they don't host.
+  const handleReportEvent = () => {
+    if (!session?.user?.id || !event) return;
+    const reporterId = session.user.id;
+    const hostName = displayName(hostProfile);
+    Alert.alert('Report this event', 'Why are you reporting this?', [
+      {
+        text: 'Inappropriate content',
+        onPress: () =>
+          reportContent({
+            reporterId,
+            reportedUserId: event.host_id,
+            contentType: 'event',
+            contentId: event.id,
+            eventId: event.id,
+            reason: `Reported event "${event.title}": inappropriate content`,
+          }),
+      },
+      {
+        text: 'Spam',
+        onPress: () =>
+          reportContent({
+            reporterId,
+            reportedUserId: event.host_id,
+            contentType: 'event',
+            contentId: event.id,
+            eventId: event.id,
+            reason: `Reported event "${event.title}": spam`,
+          }),
+      },
+      {
+        text: `Block ${hostName}`,
+        style: 'destructive',
+        onPress: () => {
+          Alert.alert('Block this host?', `You won't see events or messages from ${hostName} anymore.`, [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Block',
+              style: 'destructive',
+              onPress: async () => {
+                if (!event.host_id) return;
+                await blockUser({ blockerId: reporterId, blockedId: event.host_id, blockedName: hostName });
+                await fetchData();
+              },
+            },
+          ]);
+        },
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
   const handlePressRsvpOption = (status: 'accepted' | 'declined' | 'interested') => {
     if (!isHost && !myInvitee) return handleDiscoverJoin(status);
     if (myInvitee?.invited_via === 'discover' && myInvitee.rsvp_status === status) return handleDiscoverLeave();
@@ -603,6 +659,11 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
           {isHost && (
             <TouchableOpacity onPress={() => setEditModalVisible(true)}>
               <Text style={styles.editText}>Edit</Text>
+            </TouchableOpacity>
+          )}
+          {!isHost && (
+            <TouchableOpacity onPress={handleReportEvent}>
+              <Text style={styles.editText}>Report</Text>
             </TouchableOpacity>
           )}
         </View>

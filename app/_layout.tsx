@@ -4,8 +4,10 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, useRouter } from 'expo-router';
 import { AuthProvider, useAuth } from '../lib/AuthContext';
 import { NotificationsProvider, useNotificationsContext } from '../lib/NotificationsContext';
+import { useAccountGate } from '../lib/useAccountGate';
 import LoginScreen from './(auth)/login';
 import InvitePopup from '../components/InvitePopup';
+import TermsGateScreen from '../components/TermsGateScreen';
 import { colors } from '../lib/theme';
 
 function InvitePopupHost() {
@@ -38,9 +40,10 @@ function InvitePopupHost() {
 }
 
 function RootNavigation() {
-  const { session, loading } = useAuth();
+  const { session, loading, signOut } = useAuth();
+  const { state: gateState, refresh: refreshGate } = useAccountGate(session?.user?.id);
 
-  if (loading) {
+  if (loading || (session && gateState === 'loading')) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' }}>
         <ActivityIndicator color={colors.primary} />
@@ -50,6 +53,14 @@ function RootNavigation() {
 
   if (!session) {
     return <LoginScreen />;
+  }
+
+  // Apple's Guideline 1.2 review requires accepting terms (with explicit
+  // zero-tolerance language) before using the app at all - unlike the
+  // deleted PhoneGateScreen, this one is meant to be a real, unskippable
+  // gate. banned_at reuses it to lock out a suspended account too.
+  if (gateState === 'needs_terms' || gateState === 'banned') {
+    return <TermsGateScreen userId={session.user.id} mode={gateState} onAccepted={refreshGate} onSignOut={signOut} />;
   }
 
   // Phone number and name are collected on-demand from a dismissible

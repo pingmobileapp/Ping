@@ -41,6 +41,7 @@ export default function SettingsScreen() {
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [connectState, setConnectState] = useState<ConnectAccountState | null>(null);
   const [connectLoading, setConnectLoading] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     fetchConnectStatus().then(setConnectState);
@@ -63,7 +64,7 @@ export default function SettingsScreen() {
     (async () => {
       const { data, error } = await supabase
         .from('profiles')
-        .select('full_name, phone, avatar_url')
+        .select('full_name, phone, avatar_url, is_admin')
         .eq('id', session.user.id)
         .maybeSingle();
 
@@ -71,6 +72,7 @@ export default function SettingsScreen() {
       setFullName(data?.full_name || '');
       setPhone(data?.phone || '');
       setAvatarUrl(data?.avatar_url || null);
+      setIsAdmin(!!data?.is_admin);
       setLoading(false);
     })();
   }, [session?.user?.id]);
@@ -267,6 +269,18 @@ export default function SettingsScreen() {
               details directly - Ping never sees your bank info.
             </Text>
           </View>
+
+          {isAdmin && (
+            <View style={styles.payoutsSection}>
+              {/* Expo Router's generated route types (.expo/types/router.d.ts)
+                  only pick up a new route file once a dev server/build
+                  regenerates them - harmless cast until that next happens. */}
+              <TouchableOpacity onPress={() => router.push('/admin' as any)}>
+                <Text style={styles.label}>Admin - Reports</Text>
+              </TouchableOpacity>
+              <Text style={styles.helperText}>Review and act on user reports.</Text>
+            </View>
+          )}
 
           <View style={styles.dangerZone}>
             <TouchableOpacity onPress={handleDeleteAccount} disabled={deleting}>

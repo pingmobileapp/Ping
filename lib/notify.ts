@@ -8,7 +8,8 @@ export type NotificationType =
   | 'group_message'
   | 'rsvp_update'
   | 'item_claimed'
-  | 'event_reminder';
+  | 'event_reminder'
+  | 'report';
 
 type NotifyOptions = {
   eventId?: string;

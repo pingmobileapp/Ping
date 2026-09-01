@@ -32,6 +32,8 @@ import { suggestItems } from '../lib/itemSuggestions';
 import { ActivityCategory, CATEGORY_LABELS } from '../lib/discoverActivities';
 import { fetchConnectStatus, ConnectAccountState } from '../lib/stripeConnect';
 import { dollarsToCents } from '../lib/pricing';
+import { containsObjectionableContent } from '../lib/contentFilter';
+import { reportContent } from '../lib/moderation';
 import ImportContactsModal from './ImportContactsModal';
 import ImageCropModal from './ImageCropModal';
 import NonAppInviteQueue, { QueueContact } from './NonAppInviteQueue';
@@ -578,6 +580,23 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
 
     if (error || !eventRow) {
       throw error || new Error('No event row returned');
+    }
+
+    // Only checked for a Discover listing - that's the surface a broad
+    // audience actually sees, matching this app's scoped response to
+    // Apple's Guideline 1.2 review. Doesn't block creation (see
+    // lib/contentFilter.ts), just raises the same admin report a user's
+    // own flag would.
+    if (discoverable && (containsObjectionableContent(title) || containsObjectionableContent(description))) {
+      reportContent({
+        reporterId: session!.user.id,
+        reportedUserId: session!.user.id,
+        contentType: 'event',
+        contentId: eventRow.id,
+        eventId: eventRow.id,
+        reason: 'Auto-flagged event content',
+        source: 'auto_filter',
+      });
     }
 
     // Host always gets their own accepted invitee row, regardless of

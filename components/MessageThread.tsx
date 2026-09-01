@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Keyboard,
   Platform,
+  Alert,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
@@ -18,6 +19,8 @@ import { colors } from '../lib/theme';
 import { notify } from '../lib/notify';
 import { displayName } from '../lib/displayName';
 import { useMessageReactions } from '../lib/useMessageReactions';
+import { reportContent, blockUser } from '../lib/moderation';
+import { containsObjectionableContent } from '../lib/contentFilter';
 import ReactionPicker from './ReactionPicker';
 import MessageBubble, { BubbleAnchor } from './MessageBubble';
 
@@ -233,9 +236,11 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
     setSending(true);
     updateDraft('');
 
-    const { error } = await supabase
+    const { data: inserted, error } = await supabase
       .from('messages')
-      .insert([{ event_id: eventId, sender_id: session.user.id, body }]);
+      .insert([{ event_id: eventId, sender_id: session.user.id, body }])
+      .select('id')
+      .single();
 
     setSending(false);
 
@@ -243,6 +248,21 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
       console.error('Error sending message:', error);
       updateDraft(body);
       return;
+    }
+
+    // Doesn't block sending (a naive keyword list has false positives) -
+    // just raises the same admin report a user's own flag would, see
+    // lib/contentFilter.ts.
+    if (containsObjectionableContent(body) && inserted) {
+      reportContent({
+        reporterId: session.user.id,
+        reportedUserId: session.user.id,
+        contentType: 'message',
+        contentId: inserted.id,
+        eventId,
+        reason: 'Auto-flagged message content',
+        source: 'auto_filter',
+      });
     }
 
     await fetchLatest();
@@ -264,6 +284,48 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
 
     await notify(recipientIds, notifTitle, notifBody, { eventId, type: 'message' });
     await notify(mutedRecipientIds, notifTitle, notifBody, { eventId, type: 'message', silent: true });
+  };
+
+  // Long-pressing someone else's message offers Report/Block alongside
+  // reacting, instead of jumping straight to the reaction picker the way
+  // it does for your own messages - see lib/moderation.ts.
+  const handleLongPressOther = (message: Message, anchor: BubbleAnchor) => {
+    if (!session?.user?.id) return;
+    const reporterId = session.user.id;
+    const senderName = displayName(message.profiles);
+    Alert.alert(senderName, undefined, [
+      { text: 'React', onPress: () => { setReactingToId(message.id); setPickerAnchor(anchor); } },
+      {
+        text: 'Report Message',
+        onPress: () =>
+          reportContent({
+            reporterId,
+            reportedUserId: message.sender_id,
+            contentType: 'message',
+            contentId: message.id,
+            eventId,
+            reason: `Reported message from ${senderName}`,
+          }),
+      },
+      {
+        text: `Block ${senderName}`,
+        style: 'destructive',
+        onPress: () => {
+          Alert.alert('Block this person?', `You won't see messages from ${senderName} anymore.`, [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Block',
+              style: 'destructive',
+              onPress: async () => {
+                await blockUser({ blockerId: reporterId, blockedId: message.sender_id, blockedName: senderName });
+                await fetchLatest();
+              },
+            },
+          ]);
+        },
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   };
 
   return (
@@ -333,8 +395,12 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
                 isActive={reactingToId === item.id}
                 onToggleReaction={(emoji) => toggleReaction(item.id, emoji)}
                 onLongPressBubble={(anchor) => {
-                  setReactingToId(item.id);
-                  setPickerAnchor(anchor);
+                  if (isMine) {
+                    setReactingToId(item.id);
+                    setPickerAnchor(anchor);
+                  } else {
+                    handleLongPressOther(item, anchor);
+                  }
                 }}
               />
             );

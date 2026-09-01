@@ -33,6 +33,8 @@ import { RecurrenceConfig, generateOccurrences } from '../lib/recurrence';
 import { ActivityCategory, CATEGORY_LABELS } from '../lib/discoverActivities';
 import { fetchConnectStatus, ConnectAccountState } from '../lib/stripeConnect';
 import { dollarsToCents, centsToDollarsInput } from '../lib/pricing';
+import { containsObjectionableContent } from '../lib/contentFilter';
+import { reportContent } from '../lib/moderation';
 import RecurrencePicker from './RecurrencePicker';
 import ImportContactsModal from './ImportContactsModal';
 import ImageCropModal from './ImageCropModal';
@@ -928,6 +930,22 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       console.error('Error updating event:', error);
       Alert.alert('Error', 'Something went wrong saving your changes.');
       return;
+    }
+
+    // Only checked for a single-event save to a Discover listing, same
+    // scope as CreateEventModal - see lib/contentFilter.ts. Skipped for a
+    // bulk "this and following" update since there's no single content_id
+    // to attach the report to.
+    if (!(applyToFuture && event.recurrence_id) && discoverable && (containsObjectionableContent(title) || containsObjectionableContent(description))) {
+      reportContent({
+        reporterId: session.user.id,
+        reportedUserId: session.user.id,
+        contentType: 'event',
+        contentId: event.id,
+        eventId: event.id,
+        reason: 'Auto-flagged event content',
+        source: 'auto_filter',
+      });
     }
 
     if (notifyExisting) {
