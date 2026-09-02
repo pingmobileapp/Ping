@@ -24,20 +24,18 @@ import Animated, {
   Extrapolation,
   interpolate,
   runOnJS,
-  useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
 } from "react-native-reanimated";
 import AddPersonalItemModal from "../../components/AddPersonalItemModal";
 import CalendarHeaderRow from "../../components/CalendarHeaderRow";
-import CompactEventRow from "../../components/CompactEventRow";
-import CompactGroupRow, { PingGroup } from "../../components/CompactGroupRow";
 import CreateEventModal from "../../components/CreateEventModal";
 import EventCard, { PingEvent } from "../../components/EventCard";
 import EventDetailModal from "../../components/EventDetailModal";
 import ExternalEventRow from "../../components/ExternalEventRow";
 import GroupChatModal from "../../components/GroupChatModal";
+import MonthDayCell from "../../components/MonthDayCell";
 import PingLogoMenu from "../../components/PingLogoMenu";
 import ProfileMenu from "../../components/ProfileMenu";
 import FilterMenu, { HomeFilter } from "../../components/FilterMenu";
@@ -46,8 +44,8 @@ import WeekGrid, { WeekGridHandle } from "../../components/WeekGrid";
 import { useAuth } from "../../lib/AuthContext";
 import { useNotificationsContext } from "../../lib/NotificationsContext";
 import { calendarTheme, colors } from "../../lib/theme";
-import { eachDayKeyInRange, formatWeekRangeLabel } from "../../lib/eventDate";
-import { buildDayColumns, buildAllDayColumns } from "../../lib/weekTimeline";
+import { formatWeekRangeLabel } from "../../lib/eventDate";
+import { buildDayColumns, buildAllDayColumns, buildMonthDayBars, MonthDayBar } from "../../lib/weekTimeline";
 import { externalItemDuplicatesPing } from "../../lib/eventDedup";
 import {
   CalendarPermissionStatus,
@@ -69,8 +67,6 @@ import {
 import { pickEventImage } from "../../lib/imagePicker";
 import { extractScheduleEvents, ExtractedEvent } from "../../lib/scheduleImport";
 import { dismissProfilePrompt, useProfilePhone } from "../../lib/useProfilePhone";
-import { useLatestGroupMessages } from "../../lib/useLatestGroupMessages";
-import { useLatestMessages } from "../../lib/useLatestMessages";
 import { supabase } from "../../supabase";
 
 const toDateKey = (date: Date) => {
@@ -89,10 +85,6 @@ const HANDLE_HEIGHT = 28;
 // lowest resting position.
 const FAB_CLEARANCE = 110;
 const SPRING_CONFIG = { damping: 22, stiffness: 210, mass: 0.4 };
-// Both content blocks are always mounted (never conditionally torn down
-// mid-drag — see note below); this is the width of the dragY band around 0
-// over which they crossfade.
-const CROSSFADE_BAND = 16;
 // Week mode never lets the downward drag go far enough to shrink Upcoming
 // (and push the handle) past this much height - unlike Month mode, Upcoming
 // never fades out in Week mode (see animatedCardsSheetStyle), so without
@@ -164,6 +156,12 @@ export default function HomeScreen() {
   const changeMonth = (delta: number) => {
     setVisibleMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + delta, 1));
     setCalendarSyncKey((k) => k + 1);
+    // A month with a different week-row count (4/5/6) genuinely renders at
+    // a different height - calMeasuredRef's one-shot guard (below) would
+    // otherwise keep calFullHeight pinned to whatever month happened to be
+    // open at first mount forever, silently mis-sizing every drag limit
+    // derived from it.
+    calMeasuredRef.current = false;
   };
 
   const [viewMode, setViewMode] = useState<"month" | "week">("month");
@@ -183,6 +181,16 @@ export default function HomeScreen() {
   const [weekGridAnchor, setWeekGridAnchor] = useState(() => startOfWeek(new Date()));
   const weekGridRef = useRef<WeekGridHandle>(null);
   const onSelectMonth = () => setViewMode("month");
+  // Shared by the header's Week toggle and tapping a day in Month view -
+  // switching viewMode remounts WeekGrid fresh (see the Month/Week ternary
+  // below), which is what makes this anchor actually take effect via
+  // WeekGrid's own mount-effect initial-scroll positioning.
+  const goToWeekFor = (anchor: Date) => {
+    const anchorWeekStart = startOfWeek(anchor);
+    setVisibleWeekStart(anchorWeekStart);
+    setWeekGridAnchor(anchorWeekStart);
+    setViewMode("week");
+  };
   // Strongest signal of "what the user's looking at" first: an explicitly
   // picked day, then today (if the month view is already showing the
   // current month), then just the visible month's start - avoids jumping
@@ -198,10 +206,7 @@ export default function HomeScreen() {
           visibleMonth.getMonth() === today.getMonth()
         ? today
         : visibleMonth;
-    const anchorWeekStart = startOfWeek(anchor);
-    setVisibleWeekStart(anchorWeekStart);
-    setWeekGridAnchor(anchorWeekStart);
-    setViewMode("week");
+    goToWeekFor(anchor);
   };
   // Consolidates what used to be four independent (and only partially
   // mutually-exclusive) booleans into one single-select filter - see
@@ -226,16 +231,12 @@ export default function HomeScreen() {
   // still unknown - see the gated effects below).
   const [calendarSyncEnabled, setCalendarSyncEnabled] = useState<boolean | null>(null);
 
-  const [boardView, setBoardView] = useState<"events" | "groups">("events");
-  const [groups, setGroups] = useState<PingGroup[]>([]);
-  const [loadingGroups, setLoadingGroups] = useState(true);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [selectedGroupName, setSelectedGroupName] = useState<string | null>(
     null,
   );
   const [groupChatVisible, setGroupChatVisible] = useState(false);
 
-  const [isCompactMode, setIsCompactMode] = useState(false);
   const [calFullHeight, setCalFullHeight] = useState<number | null>(null);
   const [totalHeight, setTotalHeight] = useState<number | null>(null);
   const calMeasuredRef = useRef(false);
@@ -243,18 +244,7 @@ export default function HomeScreen() {
 
   const dragY = useSharedValue(0);
   const dragStart = useSharedValue(0);
-  const isCompactModeShared = useSharedValue(false);
 
-  const {
-    latestByEvent,
-    fetchLatestFor,
-    refresh: refreshLatestMessages,
-  } = useLatestMessages(session?.user?.id);
-  const {
-    latestByGroup,
-    fetchLatestFor: fetchLatestGroupFor,
-    refresh: refreshLatestGroupMessages,
-  } = useLatestGroupMessages(session?.user?.id);
   const {
     notifications,
     unreadCount,
@@ -507,56 +497,9 @@ export default function HomeScreen() {
     if (next.size === 0) setActiveFilter((f) => (f === 'hidden' ? null : f));
   };
 
-  // Groups I'm in = groups I own, union groups I'm a resolved member of.
-  const fetchGroups = useCallback(async () => {
-    if (!session?.user?.id) return;
-    const uid = session.user.id;
-
-    const [
-      { data: owned, error: ownedError },
-      { data: memberOf, error: memberError },
-    ] = await Promise.all([
-      supabase.from("groups").select("id, name").eq("owner_id", uid),
-      supabase
-        .from("group_members")
-        .select("group_id, groups(id, name)")
-        .eq("user_id", uid),
-    ]);
-
-    if (ownedError) console.error("Error fetching owned groups:", ownedError);
-    if (memberError)
-      console.error("Error fetching member groups:", memberError);
-
-    const byId = new Map<string, PingGroup>();
-    (owned || []).forEach((g: any) =>
-      byId.set(g.id, { id: g.id, name: g.name }),
-    );
-    (memberOf || []).forEach((m: any) => {
-      if (m.groups)
-        byId.set(m.groups.id, { id: m.groups.id, name: m.groups.name });
-    });
-
-    setGroups(
-      Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name)),
-    );
-  }, [session?.user?.id]);
-
-  useEffect(() => {
-    fetchGroups().finally(() => setLoadingGroups(false));
-  }, [fetchGroups]);
-
-  const openGroup = (group: PingGroup) => {
-    setSelectedGroupId(group.id);
-    setSelectedGroupName(group.name);
-    setGroupChatVisible(true);
-  };
-
-  const handleGroupChatClose = useCallback(async () => {
+  const handleGroupChatClose = useCallback(() => {
     setGroupChatVisible(false);
-    if (selectedGroupId) {
-      await refreshLatestGroupMessages([selectedGroupId]);
-    }
-  }, [refreshLatestGroupMessages, selectedGroupId]);
+  }, []);
 
   const handleConvertToPing = (event: ExternalEvent) => {
     setPersonalItemModalVisible(false);
@@ -745,66 +688,32 @@ export default function HomeScreen() {
     year: "numeric",
   });
 
+  // Used to also mark which days had a Ping (a circle/bar) or an external
+  // item (a dot) - now that monthDayBars (below) renders every event as its
+  // own titled colored bar via MonthDayCell, those would just double up
+  // with the new bars, so this only carries the marks that are genuinely
+  // independent of "does this day have an event": the tapped-day circle,
+  // today's ring, and the "important" underline.
   const markedDates = useMemo(() => {
     const marks: Record<string, any> = {};
-    declinedFilteredEvents.forEach((e) => {
-      const startKey = toDateKey(new Date(e.event_date));
-      const endKey = e.end_date ? toDateKey(new Date(e.end_date)) : null;
-
-      if (endKey && endKey !== startKey) {
-        // Multi-day: shade every day of the span so it reads as one
-        // continuous bar instead of separate circles. The day cell is
-        // centered in a wider column by default, leaving gaps between
-        // days - stretching it to fill the column width and only
-        // rounding the outer corners of the first/last day is what
-        // makes adjacent days actually touch and read as a single bar.
-        const dayKeys = eachDayKeyInRange(startKey, endKey);
-        dayKeys.forEach((key, idx) => {
-          const isStart = idx === 0;
-          const isEnd = idx === dayKeys.length - 1;
-          marks[key] = {
-            ...(marks[key] || {}),
-            customStyles: {
-              container: {
-                ...(marks[key]?.customStyles?.container || {}),
-                backgroundColor: colors.primaryPale,
-                width: '100%',
-                alignSelf: 'stretch',
-                borderRadius: 0,
-                borderTopLeftRadius: isStart ? 16 : 0,
-                borderBottomLeftRadius: isStart ? 16 : 0,
-                borderTopRightRadius: isEnd ? 16 : 0,
-                borderBottomRightRadius: isEnd ? 16 : 0,
-              },
-              text: {
-                ...(marks[key]?.customStyles?.text || {}),
-                color: colors.textPrimary,
-              },
-            },
-          };
-        });
-      } else {
-        marks[startKey] = {
-          ...(marks[startKey] || {}),
-          selected: true,
-          selectedColor: colors.primaryPale,
-          selectedTextColor: colors.textPrimary,
-        };
-      }
-    });
-    // Phone-calendar and personal items get a small dot instead of the big
-    // circle above - only on days with no Ping event of their own, so it
-    // reads as "something smaller is here too" rather than competing with
-    // the circle for attention. `marked`/`dotColor` render via
-    // react-native-calendars' built-in dot regardless of markingType, so
-    // this coexists with the customStyles-driven circle/bar logic above
-    // without needing a custom day renderer.
+    // A personal item checked "Important" (AddPersonalItemModal) underlines
+    // its date on the month grid in green - additive on top of whatever
+    // that day already has (the selected-day circle, today's ring below),
+    // never replacing it.
     externalEvents.forEach((e) => {
-      if (hiddenEventIds.has(e.id)) return;
+      if (hiddenEventIds.has(e.id) || !importantItemIds.has(e.id)) return;
       const key = toDateKey(e.startDate);
-      if (!marks[key]) {
-        marks[key] = { marked: true, dotColor: colors.primary };
-      }
+      marks[key] = {
+        ...(marks[key] || {}),
+        customStyles: {
+          container: { ...(marks[key]?.customStyles?.container || {}) },
+          text: {
+            ...(marks[key]?.customStyles?.text || {}),
+            textDecorationLine: 'underline',
+            textDecorationColor: colors.success,
+          },
+        },
+      };
     });
     if (selectedDate) {
       marks[selectedDate] = {
@@ -827,7 +736,31 @@ export default function HomeScreen() {
       },
     };
     return marks;
-  }, [declinedFilteredEvents, externalEvents, selectedDate, hiddenEventIds]);
+  }, [externalEvents, selectedDate, hiddenEventIds, importantItemIds]);
+
+  // Per-day stacked event bars for Month view's cells (Apple-Calendar
+  // style) - same declinedFilteredEvents/visibleExternalEvents pair Week's
+  // own grid uses (see the comment above weekDayColumns), just scoped to
+  // the currently-visible month instead of WeekGrid's rolling 56-day
+  // window, since paging Month view can land far outside that window.
+  const monthRangeStart = useMemo(
+    () => new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1),
+    [visibleMonth]
+  );
+  const monthRangeEnd = useMemo(
+    () => new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1),
+    [visibleMonth]
+  );
+  const monthDayBars = useMemo(
+    () => buildMonthDayBars(monthRangeStart, monthRangeEnd, declinedFilteredEvents, visibleExternalEvents),
+    [monthRangeStart, monthRangeEnd, declinedFilteredEvents, visibleExternalEvents]
+  );
+  // dayComponent's identity changing when monthDayBars changes is fine -
+  // Calendar only has ~35-42 day cells, not a scale where this matters.
+  const monthDayComponent = useCallback(
+    (props: any) => <MonthDayCell {...props} eventsByDay={monthDayBars} />,
+    [monthDayBars]
+  );
 
   const visibleEvents = useMemo(() => {
     let result = declinedFilteredEvents;
@@ -1001,111 +934,35 @@ export default function HomeScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pingWeatherKey]);
 
-  // The Message Board (unlike the date-sorted Upcoming list above it) reads
-  // like a texting app's conversation list - most recently active thread
-  // first, not soonest-upcoming first. Events with no messages yet fall
-  // back to event date so they don't all clump at the bottom in an
-  // arbitrary order.
-  const messageBoardEvents = useMemo(() => {
-    return [...visibleEvents].sort((a, b) => {
-      const aTime = latestByEvent[a.id]?.createdAt;
-      const bTime = latestByEvent[b.id]?.createdAt;
-      if (aTime && bTime) return new Date(bTime).getTime() - new Date(aTime).getTime();
-      if (aTime) return -1;
-      if (bTime) return 1;
-      return new Date(a.event_date).getTime() - new Date(b.event_date).getTime();
-    });
-  }, [visibleEvents, latestByEvent]);
-
-  const messageBoardGroups = useMemo(() => {
-    return [...groups].sort((a, b) => {
-      const aTime = latestByGroup[a.id]?.createdAt;
-      const bTime = latestByGroup[b.id]?.createdAt;
-      if (aTime && bTime) return new Date(bTime).getTime() - new Date(aTime).getTime();
-      if (aTime) return -1;
-      if (bTime) return 1;
-      return 0;
-    });
-  }, [groups, latestByGroup]);
-
   const onDayPress = (day: { dateString: string }) => {
     setSelectedDate((prev) =>
       prev === day.dateString ? null : day.dateString,
     );
+    // A day is easiest to actually look at in Week view - Month is for
+    // orientation/picking a day, not reading it in detail.
+    const [y, m, d] = day.dateString.split("-").map(Number);
+    goToWeekFor(new Date(y, m - 1, d));
   };
 
-  // Fetch latest-message snippets lazily once compact mode is entered;
-  // useLatestMessages/useLatestGroupMessages cache by id, so repeat calls
-  // are cheap.
-  useEffect(() => {
-    if (isCompactMode && boardView === "events" && visibleEvents.length > 0) {
-      fetchLatestFor(visibleEvents.map((e) => e.id));
-    }
-  }, [isCompactMode, boardView, visibleEvents, fetchLatestFor]);
-
-  useEffect(() => {
-    if (isCompactMode && boardView === "groups" && groups.length > 0) {
-      fetchLatestGroupFor(groups.map((g) => g.id));
-    }
-  }, [isCompactMode, boardView, groups, fetchLatestGroupFor]);
-
   const handleRefresh = useCallback(async () => {
-    if (boardView === "groups") {
-      await fetchGroups();
-      if (isCompactMode) {
-        await refreshLatestGroupMessages(groups.map((g) => g.id));
-      }
-      return;
-    }
     await fetchEvents();
     if (calendarPermission === "granted" && calendarSyncEnabled) await fetchExternalEvents();
-    if (isCompactMode) {
-      await refreshLatestMessages(visibleEvents.map((e) => e.id));
-    }
-  }, [
-    boardView,
-    fetchGroups,
-    isCompactMode,
-    refreshLatestGroupMessages,
-    groups,
-    fetchEvents,
-    calendarPermission,
-    calendarSyncEnabled,
-    fetchExternalEvents,
-    refreshLatestMessages,
-    visibleEvents,
-  ]);
+  }, [fetchEvents, calendarPermission, calendarSyncEnabled, fetchExternalEvents]);
 
   const handleDetailClose = useCallback(async () => {
     setDetailVisible(false);
     await fetchEvents();
-    if (isCompactMode && boardView === "events" && selectedEventId) {
-      await refreshLatestMessages([selectedEventId]);
-    }
-  }, [
-    fetchEvents,
-    isCompactMode,
-    boardView,
-    refreshLatestMessages,
-    selectedEventId,
-  ]);
+  }, [fetchEvents]);
 
   const ready = calFullHeight !== null && totalHeight !== null;
   // Three real resting points for dragY: topLimit (handle near the month
   // title, cards extended), 0 (default, handle under the calendar),
-  // bottomLimit (handle parked near the + button, message rows extended).
+  // bottomLimit (handle parked near the + button). bottomLimit itself is
+  // just a generic "how far can this be dragged down before crowding the
+  // FAB" screen-space ceiling - weekBottomLimit and monthBottomLimit below
+  // each derive their own, smaller ceiling from it for what dragging down
+  // actually does in that mode.
   const topLimit = ready ? -(calFullHeight! - MIN_TOP_INSET) : 0;
-  // Room below the calendar before it needs to start covering anything. On
-  // a screen with plenty of natural room, this is already past the
-  // calendar's halfway point and nothing needs to cover anything — bottomLimit
-  // just equals originalRoom, identical to the original (already-proven)
-  // behavior. Only a cramped screen, where that natural room falls short of
-  // reaching halfway up the calendar, extends bottomLimit further and lets
-  // the rows block's top rise to cover the difference — and never past the
-  // calendar's own midpoint. (An earlier version of this let it cover the
-  // calendar all the way to the top on every screen size, which pushed the
-  // fully-open snap point so far down that dragging back to center became a
-  // fight — it always felt stuck pinned open.)
   const originalRoom = ready
     ? Math.max(0, totalHeight! - calFullHeight! - FAB_CLEARANCE)
     : 0;
@@ -1113,7 +970,18 @@ export default function HomeScreen() {
     ? Math.max(0, totalHeight! - calFullHeight! / 2 - FAB_CLEARANCE)
     : 0;
   const bottomLimit = ready ? Math.max(80, originalRoom, roomNeededForHalfway) : 0;
-  const extraCoverable = Math.max(0, bottomLimit - originalRoom);
+
+  // Month mode's downward drag: the calendar grid always renders in full
+  // (unclipped) - what actually changes is how much of it the Upcoming
+  // sheet covers. At rest (dragY=0) the sheet's top sits halfway down the
+  // grid, covering the bottom half; dragging down moves that same top edge
+  // toward the grid's true bottom, uncovering the rest of the already-
+  // rendered month underneath (see animatedCardsSheetStyle). Capped by
+  // bottomLimit so a very tall grid (a 6-week month with bars, on a short
+  // screen) never asks for more drag distance than the screen has room for.
+  const monthGridFullHeight = Math.max(0, (calFullHeight ?? 0) - MIN_TOP_INSET);
+  const monthCollapsedHeight = monthGridFullHeight / 2;
+  const monthBottomLimit = ready ? Math.min(bottomLimit, monthGridFullHeight - monthCollapsedHeight) : 0;
 
   // Week mode repurposes the same downward drag + bottomLimit budget that
   // Month mode grants to the Message Board (rows block) below - instead of
@@ -1154,7 +1022,7 @@ export default function HomeScreen() {
     })
     .onUpdate((e) => {
       const next = dragStart.value + e.translationY;
-      const maxY = viewMode === "week" ? weekBottomLimit : bottomLimit;
+      const maxY = viewMode === "week" ? weekBottomLimit : monthBottomLimit;
       dragY.value = Math.min(maxY, Math.max(topLimit, next));
     })
     .onEnd(() => {
@@ -1163,7 +1031,7 @@ export default function HomeScreen() {
       // overshooting straight past the intended target to whichever
       // endpoint matched the direction of motion, regardless of how close
       // the actual release position was to a nearer point.
-      const maxY = viewMode === "week" ? weekBottomLimit : bottomLimit;
+      const maxY = viewMode === "week" ? weekBottomLimit : monthBottomLimit;
       const points = [topLimit, 0, maxY];
       let target = points[0];
       let bestDist = Math.abs(points[0] - dragY.value);
@@ -1194,49 +1062,15 @@ export default function HomeScreen() {
       }
     });
 
-  // Lets the "Messages" menu link snap the handle straight to the bottom
-  // resting point, revealing the Message Board the same way a manual drag
-  // would — teaches people where the feature lives.
-  const openMessages = () => {
-    if (!ready) return;
-    // In Week mode the same downward drag/bottomLimit is repurposed to grow
-    // the hour grid instead of revealing the Message Board (see
-    // weekGridMaxHeight above) - switch back to Month first so this always
-    // actually lands on messages regardless of which view was showing.
-    if (viewMode === "week") setViewMode("month");
-    dragY.value = withSpring(bottomLimit, SPRING_CONFIG);
-  };
-
-  // A guaranteed, tap-based way back to the calendar/Upcoming view that
-  // doesn't depend on successfully grabbing and dragging the handle - the
-  // drag alone has been the single most fragile part of this screen, so
-  // this exists as a plain button that can't get stuck the way a gesture
-  // recognizer can.
-  const closeMessages = () => {
+  // A guaranteed, tap-based way to snap the drag sheet back to rest,
+  // collapsing Month view's calendar back down (or Week's hour grid back
+  // to its default height) - doesn't depend on successfully grabbing and
+  // dragging the handle, which has historically been the most fragile part
+  // of this screen.
+  const collapseCalendar = () => {
     if (!ready) return;
     dragY.value = withSpring(0, SPRING_CONFIG);
   };
-
-  // Content type is a pure function of which side of center the handle is
-  // on — no separate toggle/threshold bookkeeping needed.
-  useAnimatedReaction(
-    // Week mode never enters compact/Message-Board mode - its downward drag
-    // is repurposed to grow the hour grid instead (see weekGridMaxHeight).
-    () => dragY.value > 0 && viewMode !== "week",
-    (shouldBeCompact) => {
-      if (shouldBeCompact !== isCompactModeShared.value) {
-        isCompactModeShared.value = shouldBeCompact;
-        runOnJS(setIsCompactMode)(shouldBeCompact);
-      }
-    },
-  );
-
-  // Cards sheet and rows block are both *always* mounted — swapping one
-  // out via conditional rendering mid-drag (tearing down/mounting an
-  // Animated.View tree while dragY is being updated every frame) was
-  // destabilizing the gesture right at the crossing point, sending it flying
-  // to the far endpoint instead of settling near the middle. Crossfading
-  // opacity instead means nothing ever mounts/unmounts during a drag.
 
   // Cards sheet: top edge rises to cover the calendar, bottom edge always
   // pinned to the true screen bottom. Animating `top` (not a translateY
@@ -1246,98 +1080,62 @@ export default function HomeScreen() {
   // was actually on-screen and would scroll its last item into a clipped,
   // invisible strip past the true bottom edge.
   const animatedCardsSheetStyle = useAnimatedStyle(() => {
-    const base = calFullHeight ?? MIN_TOP_INSET;
-    const upTop = interpolate(
-      dragY.value,
-      [topLimit, 0],
-      [MIN_TOP_INSET, base],
-      Extrapolation.CLAMP,
-    );
+    const calBottom = calFullHeight ?? MIN_TOP_INSET;
     if (viewMode === "week") {
       // Week mode's downward drag grows the hour grid (see
-      // weekGridMaxHeight) instead of revealing the Message Board - Upcoming
-      // stays fully visible and just gets pushed down to stay flush against
-      // the growing calendar, rather than fading out. The rest position
-      // (dragY=0) is itself boosted by weekDefaultExpansion so Week view
-      // opens already showing more than a bare handful of hours, without
-      // giving up the topLimit/weekBottomLimit endpoints - only the 0→
-      // weekBottomLimit segment's slope compresses slightly to make room for
-      // that boosted starting point.
+      // weekGridMaxHeight) - Upcoming stays fully visible and just gets
+      // pushed down to stay flush against the growing calendar. The rest
+      // position (dragY=0) is itself boosted by weekDefaultExpansion so
+      // Week view opens already showing more than a bare handful of hours,
+      // without giving up the topLimit/weekBottomLimit endpoints - only the
+      // 0→weekBottomLimit segment's slope compresses slightly to make room
+      // for that boosted starting point.
       if (weekBottomLimit <= 0) {
-        return { opacity: 1, top: upTop };
+        return { opacity: 1, top: interpolate(dragY.value, [topLimit, 0], [MIN_TOP_INSET, calBottom], Extrapolation.CLAMP) };
       }
       return {
         opacity: 1,
         top: interpolate(
           dragY.value,
           [topLimit, 0, weekBottomLimit],
-          [MIN_TOP_INSET, base + weekDefaultExpansion, base + weekBottomLimit],
+          [MIN_TOP_INSET, calBottom + weekDefaultExpansion, calBottom + weekBottomLimit],
           Extrapolation.CLAMP,
         ),
       };
     }
-    return {
-      // Only fades out once you're pulling into rows territory (dragY > 0);
-      // fully opaque for the entire rest/up range, so the default view never
-      // sits mid-fade.
-      opacity: interpolate(
-        dragY.value,
-        [0, CROSSFADE_BAND],
-        [1, 0],
-        Extrapolation.CLAMP,
-      ),
-      top: upTop,
-    };
-  });
-
-  // Rows block: top edge stays flush against the calendar while there's
-  // still room below it (dragY <= originalRoom); only on a cramped screen
-  // does the drag go past that, at which point the top itself starts rising
-  // to cover the calendar too (never past its own midpoint — see
-  // roomNeededForHalfway above). Height always simply tracks dragY 1:1.
-  const animatedRowsBlockStyle = useAnimatedStyle(() => {
-    // Never shown in Week mode - that view's downward drag grows the hour
-    // grid's own ScrollView instead (see WeekGrid's animatedScrollAreaStyle).
-    if (viewMode === "week") {
-      return { opacity: 0, top: calFullHeight ?? 0, height: 0 };
+    // Month mode: the calendar grid always renders in full underneath this
+    // sheet (see monthBottomLimit above) - at rest (dragY=0) this sheet's
+    // top sits halfway down the grid, covering the bottom half; dragging
+    // down moves that same top edge toward the grid's true bottom,
+    // uncovering the rest. Always opaque - there's no Message Board to fade
+    // out for anymore.
+    const monthBase = MIN_TOP_INSET + monthCollapsedHeight;
+    const monthFull = MIN_TOP_INSET + monthGridFullHeight;
+    if (monthBottomLimit <= 0) {
+      return { opacity: 1, top: interpolate(dragY.value, [topLimit, 0], [MIN_TOP_INSET, monthBase], Extrapolation.CLAMP) };
     }
-    const calBottom = calFullHeight ?? 0;
-    const covered =
-      extraCoverable > 0
-        ? interpolate(dragY.value, [originalRoom, bottomLimit], [0, extraCoverable], Extrapolation.CLAMP)
-        : 0;
     return {
-      opacity: interpolate(
+      opacity: 1,
+      top: interpolate(
         dragY.value,
-        [0, CROSSFADE_BAND],
-        [0, 1],
-        Extrapolation.CLAMP,
-      ),
-      top: calBottom - covered,
-      height: interpolate(
-        dragY.value,
-        [0, bottomLimit],
-        [0, bottomLimit],
+        [topLimit, 0, monthBottomLimit],
+        [MIN_TOP_INSET, monthBase, monthFull],
         Extrapolation.CLAMP,
       ),
     };
   });
 
   // The handle itself: a single, always-mounted element so the active
-  // gesture never gets orphaned by a conditional remount mid-drag. It must
-  // track the actual drag distance 1:1 so it always moves with your finger
-  // — the cards sheet's top for dragY<=0 (which happens to also be a 1:1
-  // mapping), and calBottom + dragY for dragY>=0. (An earlier version tried
-  // tracking the rows block's top edge instead, which stays pinned in place
-  // for the whole normal-screen drag range — the handle would freeze right
-  // on top of the Events/Groups row instead of moving, blocking those
-  // buttons and making the drag feel broken.)
+  // gesture never gets orphaned by a conditional remount mid-drag. It
+  // tracks the exact same curve as animatedCardsSheetStyle's `top` in
+  // whichever mode is active, so it always sits flush with the sheet's
+  // actual top edge.
   const animatedHandleStyle = useAnimatedStyle(() => {
     const calBottom = calFullHeight ?? MIN_TOP_INSET;
-    // Week mode's cards sheet rests at a boosted top (see
-    // animatedCardsSheetStyle) - the handle has to track that same boosted
-    // curve or it visually drifts away from the sheet's actual top edge.
-    if (viewMode === "week" && weekBottomLimit > 0) {
+    if (viewMode === "week") {
+      if (weekBottomLimit <= 0) {
+        return { transform: [{ translateY: interpolate(dragY.value, [topLimit, 0], [MIN_TOP_INSET, calBottom], Extrapolation.CLAMP) }] };
+      }
       return {
         transform: [
           {
@@ -1351,21 +1149,23 @@ export default function HomeScreen() {
         ],
       };
     }
-    if (dragY.value <= 0) {
-      return {
-        transform: [
-          {
-            translateY: interpolate(
-              dragY.value,
-              [topLimit, 0],
-              [MIN_TOP_INSET, calBottom],
-              Extrapolation.CLAMP,
-            ),
-          },
-        ],
-      };
+    const monthBase = MIN_TOP_INSET + monthCollapsedHeight;
+    const monthFull = MIN_TOP_INSET + monthGridFullHeight;
+    if (monthBottomLimit <= 0) {
+      return { transform: [{ translateY: interpolate(dragY.value, [topLimit, 0], [MIN_TOP_INSET, monthBase], Extrapolation.CLAMP) }] };
     }
-    return { transform: [{ translateY: calBottom + dragY.value }] };
+    return {
+      transform: [
+        {
+          translateY: interpolate(
+            dragY.value,
+            [topLimit, 0, monthBottomLimit],
+            [MIN_TOP_INSET, monthBase, monthFull],
+            Extrapolation.CLAMP,
+          ),
+        },
+      ],
+    };
   });
 
   const renderListHeader = (defaultTitle: string) => (
@@ -1393,60 +1193,14 @@ export default function HomeScreen() {
           active={activeFilter}
           onSelect={(filter) => {
             setActiveFilter(filter);
-            // Matches what Drafts/Declined used to do from the avatar menu -
-            // any of these filters is about the calendar/Upcoming view, so
-            // picking one should back out of the Message Board first.
-            closeMessages();
+            // Any of these filters is about the Upcoming list - picking one
+            // backs the calendar out of its expanded state first, so the
+            // filtered list is actually visible.
+            collapseCalendar();
           }}
           hasHidden={hiddenEventIds.size > 0}
           hasImportant={importantItemIds.size > 0}
         />
-      </View>
-    </View>
-  );
-
-  // The compact rows block's header carries the Events/Groups toggle.
-  // Date-filter/"Show all" is events-only — groups aren't date-scoped.
-  const renderRowsHeader = () => (
-    <View style={[styles.listHeaderRow, styles.rowsHeaderRow]}>
-      <TouchableOpacity onPress={closeMessages} style={styles.backToCalendarButton}>
-        <Text style={styles.pageTitle} numberOfLines={1}>
-          ‹{" "}
-          {boardView === "groups"
-            ? "Groups"
-            : showDraftsOnly
-              ? "Drafts"
-              : selectedDate
-                ? "On this day"
-                : "Message Board"}
-        </Text>
-      </TouchableOpacity>
-      <View style={styles.listHeaderActions}>
-        {boardView === "events" && selectedDate && (
-          <TouchableOpacity onPress={() => setSelectedDate(null)}>
-            <Text style={styles.clearFilterText}>Show all</Text>
-          </TouchableOpacity>
-        )}
-        <TouchableOpacity onPress={() => setBoardView("events")}>
-          <Text
-            style={[
-              styles.draftsText,
-              boardView === "events" && styles.draftsTextActive,
-            ]}
-          >
-            Events
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => setBoardView("groups")}>
-          <Text
-            style={[
-              styles.draftsText,
-              boardView === "groups" && styles.draftsTextActive,
-            ]}
-          >
-            Groups
-          </Text>
-        </TouchableOpacity>
       </View>
     </View>
   );
@@ -1463,15 +1217,12 @@ export default function HomeScreen() {
             ? "No events on this day."
             : "No events yet — tap + to create one.";
 
-  const groupsEmptyText = "No groups yet — create one from the Groups screen.";
-
   return (
     <View style={styles.container}>
       <View style={styles.headerRow}>
         <PingLogoMenu
           hasNotifications={unreadCount > 0}
           onCreatePing={() => setModalVisible(true)}
-          onOpenMessages={openMessages}
         />
         <View style={styles.headerActions}>
           <TouchableOpacity onPress={() => setModalVisible(true)}>
@@ -1501,11 +1252,18 @@ export default function HomeScreen() {
               key={calendarSyncKey}
               current={toDateKey(visibleMonth)}
               onDayPress={onDayPress}
-              onMonthChange={(month) =>
-                setVisibleMonth(new Date(month.year, month.month - 1, 1))
-              }
+              onMonthChange={(month) => {
+                setVisibleMonth(new Date(month.year, month.month - 1, 1));
+                // Swiping the calendar's own grid doesn't remount it (see
+                // calendarSyncKey's comment above) - but a month with a
+                // different week-row count still genuinely relayouts to a
+                // different height, so this still needs to be allowed
+                // through to keep calFullHeight accurate.
+                calMeasuredRef.current = false;
+              }}
               markedDates={markedDates}
               markingType="custom"
+              dayComponent={monthDayComponent}
               theme={calendarTheme}
               style={styles.calendar}
               enableSwipeMonths
@@ -1533,10 +1291,7 @@ export default function HomeScreen() {
           )}
         </View>
 
-        <Animated.View
-          style={[styles.cardsSheet, ready && animatedCardsSheetStyle]}
-          pointerEvents={isCompactMode ? "none" : "auto"}
-        >
+        <Animated.View style={[styles.cardsSheet, ready && animatedCardsSheetStyle]}>
           <View style={styles.handleSpacer} />
           {renderListHeader("Upcoming")}
           {eventsLoadError && (
@@ -1640,70 +1395,6 @@ export default function HomeScreen() {
             contentContainerStyle={{ paddingVertical: 12, paddingBottom: 120 }}
           />
           </GestureDetector>
-        </Animated.View>
-
-        <Animated.View
-          style={[
-            styles.rowsBlock,
-            !ready && { top: calFullHeight ?? 0 },
-            ready && animatedRowsBlockStyle,
-          ]}
-          pointerEvents={isCompactMode ? "auto" : "none"}
-        >
-          {renderRowsHeader()}
-          {boardView === "events" ? (
-            <FlatList
-              style={{ flex: 1 }}
-              data={messageBoardEvents}
-              keyExtractor={(item) => item.id}
-              extraData={latestByEvent}
-              refreshControl={
-                <RefreshControl
-                  refreshing={loading}
-                  onRefresh={handleRefresh}
-                  tintColor={colors.primary}
-                />
-              }
-              renderItem={({ item }) => (
-                <CompactEventRow
-                  event={item}
-                  snippet={latestByEvent[item.id]}
-                  onPress={(e) => openEvent(e, { startOnMessages: true })}
-                />
-              )}
-              ListEmptyComponent={
-                !loading ? (
-                  <Text style={styles.emptyText}>{emptyText}</Text>
-                ) : null
-              }
-            />
-          ) : (
-            <FlatList
-              style={{ flex: 1 }}
-              data={messageBoardGroups}
-              keyExtractor={(item) => item.id}
-              extraData={latestByGroup}
-              refreshControl={
-                <RefreshControl
-                  refreshing={loadingGroups}
-                  onRefresh={handleRefresh}
-                  tintColor={colors.primary}
-                />
-              }
-              renderItem={({ item }) => (
-                <CompactGroupRow
-                  group={item}
-                  snippet={latestByGroup[item.id]}
-                  onPress={openGroup}
-                />
-              )}
-              ListEmptyComponent={
-                !loadingGroups ? (
-                  <Text style={styles.emptyText}>{groupsEmptyText}</Text>
-                ) : null
-              }
-            />
-          )}
         </Animated.View>
 
         <Animated.View
@@ -1857,8 +1548,6 @@ const styles = StyleSheet.create({
   },
   headerActions: { flexDirection: "row", gap: 16, alignItems: "center" },
   createText: { color: colors.primary, fontSize: 14, fontWeight: "700" },
-  draftsText: { color: colors.textSecondary, fontSize: 14, fontWeight: "600" },
-  draftsTextActive: { color: colors.primary },
   groupsText: { color: colors.primary, fontSize: 14, fontWeight: "600" },
   contentArea: { flex: 1, position: "relative", overflow: "hidden" },
   calendarWrapper: {},
@@ -1881,20 +1570,9 @@ const styles = StyleSheet.create({
     borderTopColor: colors.divider,
   },
   handleSpacer: { height: HANDLE_HEIGHT },
-  // Rows block: top fixed flush against the calendar, height grows downward
-  // as the handle is dragged toward the + button.
-  rowsBlock: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    backgroundColor: colors.background,
-    borderTopWidth: 1,
-    borderTopColor: colors.divider,
-    overflow: "hidden",
-  },
   // The floating handle: one persistent element positioned independently of
-  // both content blocks (both always mounted), so the gesture stays bound
-  // to the same view throughout the whole drag.
+  // the calendar/Upcoming sheet beneath it, so the gesture stays bound to
+  // the same view throughout the whole drag.
   handleWrap: { position: "absolute", left: 0, right: 0, top: 0 },
   dragHandleArea: {
     height: HANDLE_HEIGHT,
@@ -1914,19 +1592,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     marginTop: 4,
   },
-  // Message Board / Groups board sit right under the drag handle with no
-  // separate spacer above them (unlike the Upcoming list's handleSpacer),
-  // so this row needs its own extra breathing room instead of sharing
-  // listHeaderRow's tighter default.
-  rowsHeaderRow: {
-    marginTop: 16,
-    marginBottom: 12,
-  },
   listHeaderActions: { flexDirection: "row", gap: 16, alignItems: "center" },
-  // The title itself is the way back to the calendar now (tap it) - it used
-  // to share this row with a separate "▲ Calendar" button, which was too
-  // much for the Events/Groups toggle to fit alongside on a small screen.
-  backToCalendarButton: { flexShrink: 1, marginRight: 8 },
   pageTitle: { color: colors.textPrimary, fontSize: 22, fontWeight: "700" },
   clearFilterText: { color: colors.primary, fontSize: 14, fontWeight: "600" },
   calendarPromptRow: {

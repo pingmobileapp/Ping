@@ -149,6 +149,42 @@ const pushAllDayAcrossSpan = (
   }
 };
 
+// One stacked bar per event for Month view's day cells (Apple-Calendar
+// style) - id/title/color only, no minute positioning, since a Month cell
+// stacks bars in a plain list rather than laying them out on an hourly
+// axis the way WeekGrid's DayColumnEvent does.
+export type MonthDayBar = { id: string; title: string; color: string };
+
+// Merges buildAllDayColumns + buildDayColumns into one ordered per-day list
+// - all-day/multi-day items first, then timed events by start time,
+// matching Apple Calendar's own convention. Reuses the exact same
+// dedup/color rules Week's grid already applies (a Ping is colors.primary,
+// a phone-calendar/personal item is colors.textMuted, matched by the
+// `ping-`/`ext-` id prefix both builders already use), so Month and Week
+// always agree on what a given day contains.
+export function buildMonthDayBars(
+  rangeStart: Date,
+  rangeEnd: Date,
+  pings: PingEvent[],
+  external: ExternalEvent[]
+): Record<string, MonthDayBar[]> {
+  const allDay = buildAllDayColumns(rangeStart, rangeEnd, pings, external);
+  const timed = buildDayColumns(rangeStart, rangeEnd, pings, external);
+  const result: Record<string, MonthDayBar[]> = {};
+  for (const key of new Set([...Object.keys(allDay), ...Object.keys(timed)])) {
+    const allDayBars = (allDay[key] || []).map((item) => ({
+      id: item.id,
+      title: item.title,
+      color: item.id.startsWith('ping-') ? colors.primary : colors.textMuted,
+    }));
+    const timedBars = [...(timed[key] || [])]
+      .sort((a, b) => a.startMinutes - b.startMinutes)
+      .map((item) => ({ id: item.id, title: item.title, color: item.color || colors.primary }));
+    result[key] = [...allDayBars, ...timedBars];
+  }
+  return result;
+}
+
 export function buildAllDayColumns(
   rangeStart: Date,
   rangeEnd: Date,

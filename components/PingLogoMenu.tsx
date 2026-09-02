@@ -11,10 +11,9 @@ const logoRed = require('../assets/images/ping-logo-red.png');
 type Props = {
   hasNotifications?: boolean;
   onCreatePing: () => void;
-  onOpenMessages: () => void;
 };
 
-export default function PingLogoMenu({ hasNotifications = false, onCreatePing, onOpenMessages }: Props) {
+export default function PingLogoMenu({ hasNotifications = false, onCreatePing }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState({ top: 0, left: 0 });
@@ -32,9 +31,15 @@ export default function PingLogoMenu({ hasNotifications = false, onCreatePing, o
     onCreatePing();
   };
 
+  // The Message Board used to also be reachable by dragging Home's
+  // calendar sheet down - that drag range is now Month view's own
+  // pull-down-to-reveal-the-rest-of-the-month gesture instead, so this menu
+  // item (same as Notifications below) is the only way in now.
   const handleOpenMessages = () => {
     setOpen(false);
-    onOpenMessages();
+    // Cast needed until .expo/types/router.d.ts regenerates to include the
+    // new app/messages.tsx route - same as /admin elsewhere in this app.
+    router.push('/messages' as any);
   };
 
   const handleOpenNotifications = () => {
