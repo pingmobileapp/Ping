@@ -5,6 +5,9 @@ import { colors } from '../lib/theme';
 import { MonthDayBar } from '../lib/weekTimeline';
 
 const MAX_BARS = 3;
+// Fixed, not content-driven - see the comment on `cell` below for why every
+// cell (0 events or MAX_BARS) must render at exactly this height.
+const CELL_HEIGHT = 88;
 
 type Props = {
   date?: DateData;
@@ -73,7 +76,20 @@ export default function MonthDayCell({ date, marking, state, onPress, onLongPres
 }
 
 const styles = StyleSheet.create({
-  cell: { flex: 1, alignItems: 'stretch', paddingTop: 2, paddingHorizontal: 1, paddingBottom: 4 },
+  // `flex: 1` here was the actual bug behind the squished/overlapping rows
+  // seen on-device: this cell sits inside react-native-calendars' own
+  // dayContainer/week row, and that row's own height is itself derived from
+  // its children's content (no fixed height anywhere in the library's
+  // stylesheet) - `flex: 1` asked this cell to fill a height that hadn't
+  // been resolved yet, and RN doesn't clip a View's overflow by default, so
+  // the bars just painted straight past this cell's actual (tiny) box into
+  // the row below. A fixed height sidesteps the whole circular-sizing
+  // problem, keeps every cell uniform regardless of event count (0 events
+  // or MAX_BARS - Apple Calendar's own convention), and `overflow: 'hidden'`
+  // is the belt-and-suspenders backstop against any content that still
+  // somehow doesn't fit (a long single word numberOfLines can't quite
+  // truncate cleanly, an unusually tall locale's day-number glyph, etc).
+  cell: { height: CELL_HEIGHT, overflow: 'hidden', alignItems: 'stretch', paddingTop: 2, paddingHorizontal: 1, paddingBottom: 4 },
   numberContainer: {
     alignSelf: 'center',
     width: 24,
@@ -87,5 +103,5 @@ const styles = StyleSheet.create({
   bars: { marginTop: 2, gap: 1 },
   bar: { borderRadius: 3, paddingHorizontal: 3, paddingVertical: 1 },
   barText: { fontSize: 9, color: colors.white, fontWeight: '600' },
-  moreText: { fontSize: 9, color: colors.textMuted, textAlign: 'center' },
+  moreText: { fontSize: 9, color: colors.textMuted, textAlign: 'center', marginTop: 1 },
 });
