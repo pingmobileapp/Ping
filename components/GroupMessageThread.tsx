@@ -68,8 +68,8 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
 
   // Same rightward-swipe-to-go-back gesture as MessageThread.tsx - this
   // modal has no "front card" to flip to (see the note in GroupChatModal),
-  // so swiping just closes it back to whichever list (Groups tab or the
-  // group Message Board) was open underneath.
+  // so swiping just closes it back to whichever screen was open underneath
+  // (the group's own detail screen, or Home once dismissTo('/') has run).
   // See the matching note in MessageThread.tsx: PanResponder doesn't
   // reliably win against the FlatList's native scroll gesture on-device,
   // so this uses react-native-gesture-handler's Pan gesture instead.

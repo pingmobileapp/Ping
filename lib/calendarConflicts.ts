@@ -17,6 +17,13 @@ const CONFLICT_WINDOW_AFTER_MINUTES = 90;
 // calendar can hold hundreds of recurring entries indefinitely, so this
 // keeps the list from filling up with things a year out.
 const UPCOMING_WINDOW_DAYS = 60;
+// How far back this looks in addition to forward - without this, an event
+// on today's own calendar day silently disappeared from every screen the
+// moment its own end time passed (querying from the exact current instant
+// excludes anything that's already over, even minutes ago), and Week view's
+// own 21-day-back rolling window (see WEEK_GRID_LOOKBACK_DAYS in
+// app/(tabs)/index.tsx) had nothing to actually show for its past half.
+const LOOKBACK_WINDOW_DAYS = 30;
 // Ping's own dedicated calendar (see getOrCreatePingCalendarId) only ever
 // holds what the user explicitly added through Ping - personal items and
 // Scan a Schedule imports - so it can't balloon the way a synced calendar
@@ -137,9 +144,10 @@ export async function getUpcomingExternalEvents(): Promise<ExternalEvent[]> {
     calendars.filter((c) => c.allowsModifications).map((c) => c.id)
   );
 
-  const windowStart = new Date();
-  const windowEnd = new Date(windowStart.getTime() + UPCOMING_WINDOW_DAYS * 24 * 60 * 60000);
-  const pingWindowEnd = new Date(windowStart.getTime() + PING_CALENDAR_WINDOW_DAYS * 24 * 60 * 60000);
+  const now = new Date();
+  const windowStart = new Date(now.getTime() - LOOKBACK_WINDOW_DAYS * 24 * 60 * 60000);
+  const windowEnd = new Date(now.getTime() + UPCOMING_WINDOW_DAYS * 24 * 60 * 60000);
+  const pingWindowEnd = new Date(now.getTime() + PING_CALENDAR_WINDOW_DAYS * 24 * 60 * 60000);
 
   const [otherEvents, pingEvents] = await Promise.all([
     otherCalendarIdList.length ? Calendar.getEventsAsync(otherCalendarIdList, windowStart, windowEnd) : Promise.resolve([]),

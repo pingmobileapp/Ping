@@ -26,10 +26,10 @@ type Props = {
 // The dayComponent passed to <Calendar> in app/(tabs)/index.tsx - replaces
 // the library's stock BasicDay (a bare 32x32 circle, one dot/mark max) with
 // a taller cell showing up to MAX_BARS colored, titled event bars per day,
-// Apple-Calendar-style. `marking`'s selected/customStyles fields are exactly
-// what markedDates already produced for BasicDay - applied here the same
+// Apple-Calendar-style. `marking`'s selected/customStyles/important fields
+// are exactly what markedDates already produces - applied here the same
 // way, so the selected-day circle, today's ring, and the "important" date
-// underline all keep working unchanged.
+// marker all keep working unchanged.
 export default function MonthDayCell({ date, marking, state, onPress, onLongPress, eventsByDay }: Props) {
   const dayEvents = (date && eventsByDay[date.dateString]) || [];
   const visibleBars = dayEvents.slice(0, MAX_BARS);
@@ -61,6 +61,12 @@ export default function MonthDayCell({ date, marking, state, onPress, onLongPres
           {date?.day ?? ''}
         </Text>
       </View>
+      {/* A real drawn bar, not a CSS text-decoration underline on the day
+          number - that rendered too thin/close to the glyph to actually
+          notice. This sits in its own row below the number circle instead,
+          so it's clearly a separate "important" signal, not part of the
+          number itself. */}
+      {marking?.important && <View style={styles.importantBar} />}
       <View style={styles.bars}>
         {visibleBars.map((ev) => (
           <View key={ev.id} style={[styles.bar, { backgroundColor: ev.color }]}>
@@ -100,6 +106,14 @@ const styles = StyleSheet.create({
   },
   numberText: { fontSize: 13, color: colors.textPrimary, fontWeight: '600' },
   numberTextDisabled: { color: colors.textMuted, opacity: 0.4 },
+  importantBar: {
+    alignSelf: 'center',
+    width: 16,
+    height: 2.5,
+    borderRadius: 1.5,
+    backgroundColor: colors.success,
+    marginTop: 3,
+  },
   bars: { marginTop: 2, gap: 1 },
   bar: { borderRadius: 3, paddingHorizontal: 3, paddingVertical: 1 },
   barText: { fontSize: 9, color: colors.white, fontWeight: '600' },

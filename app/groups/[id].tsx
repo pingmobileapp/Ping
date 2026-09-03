@@ -16,7 +16,7 @@ import { useLocalSearchParams, useRouter, useFocusEffect, Stack } from 'expo-rou
 import { supabase } from '../../supabase';
 import { useAuth } from '../../lib/AuthContext';
 import { useNotificationsContext } from '../../lib/NotificationsContext';
-import { findOrCreateContact } from '../../lib/phone';
+import { findOrCreateContact, healContactLink } from '../../lib/phone';
 import { colors } from '../../lib/theme';
 import ImportContactsModal from '../../components/ImportContactsModal';
 import EventCard, { PingEvent } from '../../components/EventCard';
@@ -50,7 +50,7 @@ export default function GroupDetailScreen() {
 
     const { data: groupData, error: groupError } = await supabase
       .from('groups')
-      .select('id, name, owner_id, is_shared, group_members(contact_id, contacts(name))')
+      .select('id, name, owner_id, is_shared, group_members(contact_id, user_id, contacts(name))')
       .eq('id', id)
       .single();
     if (groupError) console.error('Error fetching group:', groupError);
@@ -74,6 +74,29 @@ export default function GroupDetailScreen() {
         .order('name');
       if (contactsError) console.error('Error fetching contacts:', contactsError);
       setAllContacts(contactsData || []);
+
+      // A member's real-account link (group_members.user_id, what actually
+      // lets a shared group show up on THEIR side - see lib/sharedGroups.ts)
+      // can go stale two ways: their contact was added before it had a
+      // matching Ping account, or healContactLink fixed the contact itself
+      // later (from an unrelated invite flow) but nothing ever went back to
+      // update this row - toggleMember only ever reads linked_user_id at
+      // the moment a member is first added. Re-checking here means simply
+      // opening this screen is what fixes it, the same "re-check right
+      // before it matters" idea healContactLink is already built on.
+      const byId = new Map((contactsData || []).map((c) => [c.id, c]));
+      for (const gm of (groupData?.group_members || []) as { contact_id: string; user_id: string | null }[]) {
+        const contact = byId.get(gm.contact_id);
+        if (!contact) continue;
+        const healed = await healContactLink(supabase, contact);
+        if (healed.linked_user_id && healed.linked_user_id !== gm.user_id) {
+          await supabase
+            .from('group_members')
+            .update({ user_id: healed.linked_user_id })
+            .eq('group_id', id)
+            .eq('contact_id', gm.contact_id);
+        }
+      }
     }
 
     // Pings tagged to this group (see CreateEventModal) - RLS still only
@@ -118,12 +141,22 @@ export default function GroupDetailScreen() {
       }
       setMemberIds((prev) => prev.filter((m) => m !== contact.id));
     } else {
+      // Heals the contact's account link right before it matters, same as
+      // the invite flows do - otherwise a contact added before its person
+      // had (or had entered) a matching Ping account stays un-linked
+      // forever, and that person's own account never sees this as a shared
+      // group even after they sign up (see fetchData's own healing pass
+      // above for members already added before this fix existed).
+      const healed = await healContactLink(supabase, contact);
       const { error } = await supabase
         .from('group_members')
-        .insert([{ group_id: id, contact_id: contact.id, user_id: contact.linked_user_id || null }]);
+        .insert([{ group_id: id, contact_id: contact.id, user_id: healed.linked_user_id || null }]);
       if (error) {
         console.error('Error adding member:', error);
         return;
+      }
+      if (healed.linked_user_id !== contact.linked_user_id) {
+        setAllContacts((prev) => prev.map((c) => (c.id === contact.id ? { ...c, linked_user_id: healed.linked_user_id } : c)));
       }
       setMemberIds((prev) => [...prev, contact.id]);
     }

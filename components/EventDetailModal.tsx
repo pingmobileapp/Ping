@@ -138,14 +138,22 @@ export default function EventDetailModal({ visible, eventId, onClose, startOnMes
               {eventId && (
                 <MessageThread
                   eventId={eventId}
-                  // Opened straight into messages from the Message Board -
-                  // there's no front-of-card details face this trip has
-                  // shown, so swiping/tapping back should leave the modal
-                  // entirely (back to the board) rather than reveal a card
-                  // face the user never asked for. Same reasoning as
-                  // hasShownDetails in app/event/[id].tsx.
+                  // Opened straight into messages - by a chat-icon tap, a
+                  // notification, or the Messages screen, all of which land
+                  // here the same way - there's no front-of-card details
+                  // face this trip has shown, so swiping/tapping back should
+                  // leave the modal entirely rather than reveal a card face
+                  // the user never asked for. Same reasoning as
+                  // hasShownDetails in app/event/[id].tsx. The label stays
+                  // generic ("Back") rather than naming a specific origin
+                  // screen - this modal doesn't know or care which of those
+                  // callers opened it, and it used to hardcode "Message
+                  // Board" back when that was the only one, which went stale
+                  // (and outright wrong - dismissTo('/') already closes back
+                  // to Home, not to whatever screen was tapped from) the
+                  // moment other entry points existed.
                   onFlipBack={startOnMessages ? handleClose : toggleFlip}
-                  backLabel={startOnMessages ? 'Message Board' : 'Event Details'}
+                  backLabel={startOnMessages ? 'Back' : 'Event Details'}
                 />
               )}
             </Animated.View>

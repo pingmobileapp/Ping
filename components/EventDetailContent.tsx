@@ -36,6 +36,28 @@ import { reportContent, blockUser } from '../lib/moderation';
 import { toListingActivity, activityKey, fetchInterestedKeys, toggleInterest } from '../lib/discoverActivities';
 import TicketModal from './TicketModal';
 
+// Matches a US phone number in free-form text, with or without a leading
+// +1/1, and with dashes/dots/spaces/parens or none at all - descriptions
+// are arbitrary host-typed text ("RSVP to Honey 208-570-3390"), not
+// structured data, so this is the only way to make a number mentioned
+// there actually tappable.
+const PHONE_REGEX = /(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g;
+
+// Splits a description into plain-string and phone-number chunks so the
+// JSX can render the phone parts as their own tappable inline <Text>.
+function splitTextWithPhones(text: string): Array<string | { phone: string }> {
+  const parts: Array<string | { phone: string }> = [];
+  let lastIndex = 0;
+  for (const match of text.matchAll(PHONE_REGEX)) {
+    const index = match.index ?? 0;
+    if (index > lastIndex) parts.push(text.slice(lastIndex, index));
+    parts.push({ phone: match[0] });
+    lastIndex = index + match[0].length;
+  }
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  return parts;
+}
+
 type EventDetail = {
   id: string;
   title: string;
@@ -528,6 +550,34 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     }
   };
 
+  // Only reachable for a non-app invitee (see hostCanSetRsvp) - someone
+  // with a real account leaves on their own via the normal RSVP row, but a
+  // contact-only invitee (added by name/number, possibly a typo'd number
+  // that was never actually sent) has no such path, and until now there
+  // was no way to remove them at all once added. Cleans up their item
+  // claims first, same as the self-leave flow in handleDiscoverLeave, since
+  // there's no ON DELETE CASCADE from either onto invitees.
+  const handleRemoveInvitee = (inv: InviteeRow) => {
+    Alert.alert(`Remove ${inviteeName(inv)}?`, 'This removes their invite from this event.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          await supabase.from('item_claims').delete().eq('invitee_id', inv.id);
+          await supabase.from('items').update({ assigned_to: null }).eq('assigned_to', inv.id);
+          const { error } = await supabase.from('invitees').delete().eq('id', inv.id);
+          if (error) {
+            console.error('Error removing invitee:', error);
+            Alert.alert('Error', 'Could not remove this person.');
+            return;
+          }
+          setInvitees((prev) => prev.filter((i) => i.id !== inv.id));
+        },
+      },
+    ]);
+  };
+
   const handleHostRsvpPress = (inv: InviteeRow) => {
     Alert.alert(
       inviteeName(inv),
@@ -539,6 +589,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
         ...(inv.rsvp_status !== 'pending'
           ? [{ text: 'Reset to Pending', onPress: () => setInviteeRsvp(inv.id, 'pending' as RsvpStatus) }]
           : []),
+        { text: 'Remove from event', style: 'destructive', onPress: () => handleRemoveInvitee(inv) },
         { text: 'Cancel', style: 'cancel' as const },
       ]
     );
@@ -670,6 +721,33 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     });
   };
 
+  // `maps://` is iOS-only and Apple Maps specifically; `geo:` is Android's
+  // generic "hand this query to whatever maps app is installed" scheme.
+  // Either can still fail (no maps app at all, an odd address string), so
+  // this falls back to Google's web maps URL, which always works in a
+  // plain browser.
+  const handleOpenLocation = () => {
+    if (!event.location) return;
+    const encoded = encodeURIComponent(event.location);
+    const url = Platform.OS === 'ios' ? `maps://?address=${encoded}` : `geo:0,0?q=${encoded}`;
+    Linking.openURL(url).catch(() => {
+      Linking.openURL(`https://maps.google.com/?q=${encoded}`).catch(() => {
+        Alert.alert('Could not open Maps', "Couldn't open a maps app for this address.");
+      });
+    });
+  };
+
+  // A description is free-form host-typed text ("RSVP to Honey
+  // 208-570-3390") - opening the Messages app pre-addressed to whatever
+  // number was tapped is the "send a text really quick" the phone number
+  // is there for in the first place.
+  const handleDescriptionPhonePress = (phone: string) => {
+    const digits = phone.replace(/\D/g, '');
+    Linking.openURL(`sms:${digits}`).catch(() => {
+      Alert.alert('Could not open Messages', "Your phone's Messages app couldn't be opened.");
+    });
+  };
+
   const counts = invitees.reduce(
     (acc, inv) => {
       acc[inv.rsvp_status] = (acc[inv.rsvp_status] || 0) + 1;
@@ -744,8 +822,24 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
             </TouchableOpacity>
           )}
         </View>
-        {!!event.location && <Text style={styles.meta}>{event.location}</Text>}
-        {!!event.description && <Text style={styles.description}>{event.description}</Text>}
+        {!!event.location && (
+          <TouchableOpacity onPress={handleOpenLocation} hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}>
+            <Text style={[styles.meta, styles.locationLink]}>{event.location}</Text>
+          </TouchableOpacity>
+        )}
+        {!!event.description && (
+          <Text style={styles.description}>
+            {splitTextWithPhones(event.description).map((part, i) =>
+              typeof part === 'string' ? (
+                part
+              ) : (
+                <Text key={i} style={styles.phoneLink} onPress={() => handleDescriptionPhonePress(part.phone)}>
+                  {part.phone}
+                </Text>
+              )
+            )}
+          </Text>
+        )}
 
         {!!hostProfile && (
           <View style={styles.hostRow}>
@@ -1232,9 +1326,11 @@ const styles = StyleSheet.create({
   image: { width: '100%', aspectRatio: EVENT_IMAGE_ASPECT_RATIO, borderRadius: 15 },
   title: { color: colors.textPrimary, fontSize: 26, fontWeight: '700', marginBottom: 8 },
   meta: { color: colors.textSecondary, fontSize: 15, marginBottom: 2 },
+  locationLink: { color: colors.primary, textDecorationLine: 'underline' },
   dateTimeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
   weatherText: { color: colors.textSecondary, fontSize: 15, fontWeight: '600' },
   description: { color: colors.textPrimary, fontSize: 15, lineHeight: 21, marginTop: 10 },
+  phoneLink: { color: colors.primary, fontWeight: '600', textDecorationLine: 'underline' },
   hostRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 },
   hostText: { color: colors.textSecondary, fontSize: 14 },
   visibilityRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 12 },

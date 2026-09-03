@@ -125,7 +125,15 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     ref,
   ) => {
     const columnWidth = Dimensions.get('window').width - TIMELINE_LEFT_INSET;
-    const dayColumnWidth = columnWidth / 7;
+    // Tapping a day's header widens just that one column - the others stay
+    // their normal size and simply don't all fit on screen together
+    // anymore (scroll to see them, same as always), rather than a "zoom"
+    // that resizes every column together. Only one day can be focused at a
+    // time; tapping the already-focused day un-focuses it, tapping a
+    // different one moves the focus there instead.
+    const NORMAL_DAY_WIDTH = columnWidth / 7;
+    const FOCUSED_DAY_WIDTH = columnWidth * 0.45;
+    const [focusedDayKey, setFocusedDayKey] = useState<string | null>(null);
 
     const [emptySlotPrompt, setEmptySlotPrompt] = useState<{ dayKey: string; top: number; minutes: number } | null>(
       null,
@@ -180,6 +188,39 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       [rangeStart, dayCount],
     );
 
+    // One day's width can now differ from the rest (see FOCUSED_DAY_WIDTH)
+    // - dayWidths/dayOffsets are what every width- and position-dependent
+    // calculation below reads instead of a single uniform column width.
+    // dayOffsets[i] is the running total of every width before day i - each
+    // day's actual left edge in the scroll content, used both to render at
+    // the right x position and to convert between a scroll offset and a day
+    // index (snapToOffsets, scrollByDays) now that "index * width" alone
+    // can't locate a day anymore.
+    const dayWidths = useMemo(
+      () => dayKeys.map((d) => (toDayKey(d) === focusedDayKey ? FOCUSED_DAY_WIDTH : NORMAL_DAY_WIDTH)),
+      [dayKeys, focusedDayKey, FOCUSED_DAY_WIDTH, NORMAL_DAY_WIDTH]
+    );
+    const dayOffsets = useMemo(() => {
+      const offsets: number[] = [];
+      let acc = 0;
+      for (const w of dayWidths) {
+        offsets.push(acc);
+        acc += w;
+      }
+      return offsets;
+    }, [dayWidths]);
+    // The day whose left edge is at or just before a given scroll offset -
+    // the inverse of dayOffsets, used to turn a scroll position back into a
+    // day index (scrollByDays).
+    const indexForOffset = (x: number) => {
+      let idx = 0;
+      for (let i = 0; i < dayOffsets.length; i++) {
+        if (dayOffsets[i] <= x + 1) idx = i;
+        else break;
+      }
+      return idx;
+    };
+
     const mainScrollRef = useAnimatedRef<Animated.ScrollView>();
     const dayHeaderRef = useAnimatedRef<Animated.ScrollView>();
     const allDayRef = useAnimatedRef<Animated.ScrollView>();
@@ -194,14 +235,30 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       },
     });
 
+    // The day-label row used to only ever be driven programmatically
+    // (scrollEnabled={false}, moved by the handler above) - dragging it
+    // directly did nothing. This mirrors the same sync the other direction,
+    // so swiping the dates themselves now scrolls the grid and all-day
+    // strip too. Calling scrollTo with a position a ScrollView is already
+    // at doesn't re-fire its own onScroll, so this doesn't ping-pong with
+    // the handler above.
+    const dayHeaderScrollHandler = useAnimatedScrollHandler({
+      onScroll: (event) => {
+        scrollX.value = event.contentOffset.x;
+        scrollTo(mainScrollRef, event.contentOffset.x, 0, false);
+        scrollTo(allDayRef, event.contentOffset.x, 0, false);
+      },
+    });
+
     // Without this the grid would always open at the very start of the
     // pre-rendered range (rangeStart), not the week the user actually
     // asked for - jumps once, on mount, no animation (a visible slide from
     // the range's edge to the right week on every open would be jarring).
     // Also scrolls vertically to roughly the current time, matching what
-    // Timeline's own scrollToNow did before this replaced it.
+    // Timeline's own scrollToNow did before this replaced it. No day is
+    // focused yet at mount, so every column is still NORMAL_DAY_WIDTH here.
     useEffect(() => {
-      const x = initialDayIndex * dayColumnWidth;
+      const x = initialDayIndex * NORMAL_DAY_WIDTH;
       scrollX.value = x;
       mainScrollRef.current?.scrollTo({ x, y: 0, animated: false });
       dayHeaderRef.current?.scrollTo({ x, y: 0, animated: false });
@@ -212,9 +269,34 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // Re-centers on the tapped day once dayOffsets has actually recomputed
+    // to reflect its new (focused/unfocused) width - doing this inside the
+    // tap handler itself would still be scrolling by the OLD offsets,
+    // landing just short of or past the day the instant its column resizes.
+    const pendingFocusIndexRef = useRef<number | null>(null);
+    useEffect(() => {
+      if (pendingFocusIndexRef.current === null) return;
+      const idx = pendingFocusIndexRef.current;
+      pendingFocusIndexRef.current = null;
+      const x = dayOffsets[idx] ?? 0;
+      scrollX.value = x;
+      mainScrollRef.current?.scrollTo({ x, y: 0, animated: true });
+      dayHeaderRef.current?.scrollTo({ x, y: 0, animated: true });
+      allDayRef.current?.scrollTo({ x, y: 0, animated: true });
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [focusedDayKey]);
+
+    const handleDayHeaderTap = (dayKey: string, dayIndex: number) => {
+      pendingFocusIndexRef.current = dayIndex;
+      setFocusedDayKey((prev) => (prev === dayKey ? null : dayKey));
+    };
+
     // Reports which week is leading the viewport back up to the header
     // title (app/(tabs)/index.tsx) - only when it actually changes, not on
-    // every pixel of scroll.
+    // every pixel of scroll. Uses NORMAL_DAY_WIDTH rather than the true
+    // (variable) dayOffsets - this only drives a text label, and being off
+    // by at most one day for the moment a focused column is scrolled near
+    // isn't worth threading the real offsets into a UI-thread reaction for.
     const lastReportedWeekKey = useRef<string | null>(null);
     const reportVisibleWeek = (dayIndex: number) => {
       const clamped = Math.max(0, Math.min(dayCount - 1, dayIndex));
@@ -228,7 +310,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       }
     };
     useAnimatedReaction(
-      () => Math.round(scrollX.value / dayColumnWidth),
+      () => Math.round(scrollX.value / NORMAL_DAY_WIDTH),
       (dayIndex) => {
         runOnJS(reportVisibleWeek)(dayIndex);
       },
@@ -242,7 +324,9 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       // app/(tabs)/index.tsx, on the JS thread, so it needs the version
       // that's actually callable from there.
       scrollByDays: (delta: number) => {
-        const target = Math.max(0, scrollX.value + delta * dayColumnWidth);
+        const currentIndex = indexForOffset(scrollX.value);
+        const targetIndex = Math.max(0, Math.min(dayCount - 1, currentIndex + delta));
+        const target = dayOffsets[targetIndex] ?? 0;
         mainScrollRef.current?.scrollTo({ x: target, y: 0, animated: true });
       },
     }));
@@ -258,16 +342,20 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
           <Animated.ScrollView
             ref={dayHeaderRef}
             horizontal
-            scrollEnabled={false}
+            onScroll={dayHeaderScrollHandler}
+            scrollEventThrottle={16}
+            snapToOffsets={dayOffsets}
+            decelerationRate="fast"
             showsHorizontalScrollIndicator={false}
           >
-            {dayKeys.map((d) => {
+            {dayKeys.map((d, i) => {
               const key = toDayKey(d);
               return (
                 <Pressable
                   key={key}
-                  style={[styles.dayLabelCell, { width: dayColumnWidth }]}
+                  style={[styles.dayLabelCell, { width: dayWidths[i] }]}
                   delayLongPress={450}
+                  onPress={() => handleDayHeaderTap(key, i)}
                   onLongPress={() => onDateHeaderLongPress(key)}
                 >
                   <Text style={styles.dayLabelDow}>{d.toLocaleDateString(undefined, { weekday: 'short' })}</Text>
@@ -281,12 +369,12 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
         <View style={styles.allDayRow}>
           <View style={{ width: TIMELINE_LEFT_INSET }} />
           <Animated.ScrollView ref={allDayRef} horizontal scrollEnabled={false} showsHorizontalScrollIndicator={false}>
-            {dayKeys.map((d) => {
+            {dayKeys.map((d, i) => {
               const key = toDayKey(d);
               const dayItems = allDayByDay[key] || [];
               const first = dayItems[0];
               return (
-                <View key={key} style={[styles.allDayCell, { width: dayColumnWidth }]}>
+                <View key={key} style={[styles.allDayCell, { width: dayWidths[i] }]}>
                   {first && (
                     <TouchableOpacity style={styles.allDayChip} onPress={() => onEventPress(first.id)}>
                       <Text style={styles.allDayChipText} numberOfLines={1}>
@@ -313,20 +401,20 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
             <Animated.ScrollView
               ref={mainScrollRef}
               horizontal
-              snapToInterval={dayColumnWidth}
+              snapToOffsets={dayOffsets}
               decelerationRate="fast"
               onScroll={horizontalScrollHandler}
               scrollEventThrottle={16}
               showsHorizontalScrollIndicator={false}
               style={{ height: GRID_HEIGHT }}
             >
-              {dayKeys.map((d) => {
+              {dayKeys.map((d, i) => {
                 const key = toDayKey(d);
                 const dayEvents = eventsByDay[key] || [];
                 return (
                   <Pressable
                     key={key}
-                    style={[styles.dayColumn, { width: dayColumnWidth }]}
+                    style={[styles.dayColumn, { width: dayWidths[i] }]}
                     delayLongPress={450}
                     onLongPress={(e) => handleColumnLongPress(key, dayEvents, e.nativeEvent.locationY)}
                   >
