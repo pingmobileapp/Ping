@@ -347,6 +347,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
             snapToOffsets={dayOffsets}
             decelerationRate="fast"
             showsHorizontalScrollIndicator={false}
+            removeClippedSubviews
           >
             {dayKeys.map((d, i) => {
               const key = toDayKey(d);
@@ -368,7 +369,13 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
 
         <View style={styles.allDayRow}>
           <View style={{ width: TIMELINE_LEFT_INSET }} />
-          <Animated.ScrollView ref={allDayRef} horizontal scrollEnabled={false} showsHorizontalScrollIndicator={false}>
+          <Animated.ScrollView
+            ref={allDayRef}
+            horizontal
+            scrollEnabled={false}
+            showsHorizontalScrollIndicator={false}
+            removeClippedSubviews
+          >
             {dayKeys.map((d, i) => {
               const key = toDayKey(d);
               const dayItems = allDayByDay[key] || [];
@@ -406,6 +413,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
               onScroll={horizontalScrollHandler}
               scrollEventThrottle={16}
               showsHorizontalScrollIndicator={false}
+              removeClippedSubviews
               style={{ height: GRID_HEIGHT }}
             >
               {dayKeys.map((d, i) => {

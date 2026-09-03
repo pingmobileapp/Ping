@@ -118,14 +118,25 @@ export default function MessagesScreen() {
     if (boardView === 'groups' && groups.length > 0) fetchLatestGroupFor(groups.map((g) => g.id));
   }, [boardView, groups, fetchLatestGroupFor]);
 
+  // Deliberately does NOT dismissTo('/') like Notifications' equivalent
+  // handler does - this screen should still be here, underneath the modal,
+  // when the user closes it, so "back" from the modal actually lands back
+  // on Messages instead of Home. That's safe specifically because nothing
+  // here navigates at all: Home is already mounted once, underneath this
+  // screen on the stack (this screen was pushed from there), and
+  // EventDetailModal/GroupChatModal are real native <Modal>s that present
+  // on top of whatever's currently on screen regardless of which mounted
+  // component tree owns them - no second Home instance ever gets created.
+  // (The crash dismissTo('/') exists elsewhere in the app to avoid was
+  // specifically push('/') creating a second Home instance while a modal
+  // opened on the first one at the same time - a different situation, not
+  // reachable from here since this never navigates.)
   const openEvent = (event: PingEvent) => {
     openEventModal(event.id, true);
-    if (router.canDismiss()) router.dismissTo('/');
   };
 
   const openGroup = (group: PingGroup) => {
     openGroupChat(group.id, group.name);
-    if (router.canDismiss()) router.dismissTo('/');
   };
 
   const handleRefresh = async () => {

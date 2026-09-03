@@ -18,7 +18,6 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { Calendar } from "react-native-calendars";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   Extrapolation,
@@ -34,7 +33,8 @@ import EventCard, { PingEvent } from "../../components/EventCard";
 import EventDetailModal from "../../components/EventDetailModal";
 import ExternalEventRow from "../../components/ExternalEventRow";
 import GroupChatModal from "../../components/GroupChatModal";
-import MonthDayCell from "../../components/MonthDayCell";
+import { CELL_HEIGHT } from "../../components/MonthDayCell";
+import MonthGrid, { MonthGridHandle, MONTH_LABEL_HEIGHT, WEEKDAY_HEADER_HEIGHT } from "../../components/MonthGrid";
 import PingLogoMenu from "../../components/PingLogoMenu";
 import ProfileMenu from "../../components/ProfileMenu";
 import FilterMenu, { HomeFilter } from "../../components/FilterMenu";
@@ -42,7 +42,7 @@ import ScheduleReviewModal from "../../components/ScheduleReviewModal";
 import WeekGrid, { WeekGridHandle } from "../../components/WeekGrid";
 import { useAuth } from "../../lib/AuthContext";
 import { useNotificationsContext } from "../../lib/NotificationsContext";
-import { calendarTheme, colors } from "../../lib/theme";
+import { colors } from "../../lib/theme";
 import { formatWeekRangeLabel } from "../../lib/eventDate";
 import { buildDayColumns, buildAllDayColumns, buildMonthDayBars, MonthDayBar } from "../../lib/weekTimeline";
 import { externalItemDuplicatesPing } from "../../lib/eventDedup";
@@ -75,22 +75,15 @@ const toDateKey = (date: Date) => {
   return `${y}-${m}-${d}`;
 };
 
-// Week mode only (Month is a plain scrolling page - see the JSX below): how
-// far Week's drag sheet may rise, covering the WeekGrid down to just this
-// many px from the top, leaving the week title + nav arrows peeking above
-// it.
+// How far the drag sheet may rise, in either mode: it can cover the whole
+// grid (MonthGrid or WeekGrid) down to just this many px from the top,
+// leaving the title + nav arrows peeking above it.
 const MIN_TOP_INSET = 52;
 const HANDLE_HEIGHT = 28;
 // How much room to leave above the FAB when the handle is parked at its
 // lowest resting position.
 const FAB_CLEARANCE = 110;
 const SPRING_CONFIG = { damping: 22, stiffness: 210, mass: 0.4 };
-// Week mode never lets the downward drag go far enough to shrink Upcoming
-// (and push the handle) past this much height, since Upcoming always stays
-// fully visible there (see animatedCardsSheetStyle) - without this reserve
-// the handle could ride down out of easy reach and the list could shrink
-// to nothing, with no way back but a lucky blind grab.
-const MIN_UPCOMING_VISIBLE = 160;
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -142,20 +135,13 @@ export default function HomeScreen() {
     d.setHours(0, 0, 0, 0);
     return d;
   });
-  // react-native-calendars' <Calendar> only reads its `current` prop once,
-  // at mount, to seed its own internal month state - it does not react to
-  // that prop changing later (confirmed in node_modules/react-native-
-  // calendars/src/calendar/index.js: currentMonth is a useState initializer,
-  // no effect watches `current`). Swiping the calendar itself still works
-  // because that updates its internal state directly, but changeMonth
-  // (triggered from the header's prev/next arrows) has no way to reach in
-  // and update it - remounting via `key` is the only
-  // way to force it to resync. Only bump this here, not in onMonthChange,
-  // so the calendar's own swipe/tap never remounts itself mid-gesture.
-  const [calendarSyncKey, setCalendarSyncKey] = useState(0);
+  // MonthGrid reports whichever month the user has actually scrolled to
+  // (see onVisibleMonthChange below) - visibleMonth just holds that latest
+  // report, it's not something changeMonth sets directly the way it used
+  // to when Month paged one at a time via a swipeable <Calendar>.
+  const monthGridRef = useRef<MonthGridHandle>(null);
   const changeMonth = (delta: number) => {
-    setVisibleMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + delta, 1));
-    setCalendarSyncKey((k) => k + 1);
+    monthGridRef.current?.scrollByMonths(delta);
   };
 
   const [viewMode, setViewMode] = useState<"month" | "week">("month");
@@ -655,12 +641,18 @@ export default function HomeScreen() {
   );
   // WeekGrid's pre-rendered day range: a fixed 8-week (56-day) window
   // rather than infinite-scroll pagination (real added complexity - list
-  // virtualization, re-centering to avoid unbounded growth - not worth it
-  // for a calendar people mostly look at a few weeks around "now").
-  // Scrolling past either edge just stops, an honest disclosed limit
-  // rather than a silent bug. Centered-ish on weekGridAnchor, biased
-  // slightly forward since people look ahead more than back.
-  const WEEK_GRID_DAY_COUNT = 56;
+  // virtualization, re-centering to avoid unbounded growth). Scrolling
+  // past either edge just stops, an honest disclosed limit rather than a
+  // silent bug. Centered-ish on weekGridAnchor, biased forward since
+  // people look ahead more than back - specifically needs to cover at
+  // least 6 months forward (a real user request: someone needed to plan
+  // further out than Week view let them see) - 189 days ≈ 6.2 months,
+  // with a bit of margin. removeClippedSubviews (below, on the actual
+  // ScrollViews) is what keeps rendering ~210 non-virtualized day columns
+  // from being a real performance concern - it lets the native side drop
+  // the ones currently scrolled far off-screen instead of keeping all of
+  // them fully mounted natively at once.
+  const WEEK_GRID_DAY_COUNT = 210;
   const WEEK_GRID_LOOKBACK_DAYS = 21;
   const weekGridRangeStart = useMemo(() => {
     const d = new Date(weekGridAnchor);
@@ -730,29 +722,35 @@ export default function HomeScreen() {
     return marks;
   }, [externalEvents, selectedDate, hiddenEventIds, importantItemIds]);
 
+  // MonthGrid's pre-rendered month range - same fixed-window idea as
+  // WeekGrid's own 56-day range (see that comment above), just months
+  // instead of days: real added complexity (virtualization, re-centering)
+  // not worth it for a calendar people mostly look at a handful of months
+  // around now. Fixed once at mount (not state) - unlike Week, nothing
+  // external ever needs to re-center this on a specific month.
+  const MONTH_GRID_MONTHS_BACK = 3;
+  const MONTH_GRID_MONTHS_FORWARD = 15;
+  const MONTH_GRID_MONTH_COUNT = MONTH_GRID_MONTHS_BACK + MONTH_GRID_MONTHS_FORWARD + 1;
+  const monthGridRangeStart = useMemo(() => {
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth() - MONTH_GRID_MONTHS_BACK, 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const monthGridRangeEnd = useMemo(
+    () => new Date(monthGridRangeStart.getFullYear(), monthGridRangeStart.getMonth() + MONTH_GRID_MONTH_COUNT, 1),
+    [monthGridRangeStart],
+  );
   // Per-day stacked event bars for Month view's cells (Apple-Calendar
   // style) - same declinedFilteredEvents/visibleExternalEvents pair Week's
-  // own grid uses (see the comment above weekDayColumns), just scoped to
-  // the currently-visible month instead of WeekGrid's rolling 56-day
-  // window, since paging Month view can land far outside that window.
-  const monthRangeStart = useMemo(
-    () => new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1),
-    [visibleMonth]
-  );
-  const monthRangeEnd = useMemo(
-    () => new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1),
-    [visibleMonth]
-  );
+  // own grid uses (see the comment above weekDayColumns), scoped to
+  // MonthGrid's whole pre-rendered window rather than just one visible
+  // month, since it's all real, simultaneously-mounted content now (no
+  // more page-one-month-at-a-time swiping to re-trigger this).
   const monthDayBars = useMemo(
-    () => buildMonthDayBars(monthRangeStart, monthRangeEnd, declinedFilteredEvents, visibleExternalEvents),
-    [monthRangeStart, monthRangeEnd, declinedFilteredEvents, visibleExternalEvents]
+    () => buildMonthDayBars(monthGridRangeStart, monthGridRangeEnd, declinedFilteredEvents, visibleExternalEvents),
+    [monthGridRangeStart, monthGridRangeEnd, declinedFilteredEvents, visibleExternalEvents],
   );
-  // dayComponent's identity changing when monthDayBars changes is fine -
-  // Calendar only has ~35-42 day cells, not a scale where this matters.
-  const monthDayComponent = useCallback(
-    (props: any) => <MonthDayCell {...props} eventsByDay={monthDayBars} />,
-    [monthDayBars]
-  );
+  const onVisibleMonthChange = (monthStart: Date) => setVisibleMonth(monthStart);
 
   const visibleEvents = useMemo(() => {
     let result = declinedFilteredEvents;
@@ -856,10 +854,21 @@ export default function HomeScreen() {
     // visibleEvents) since that's exactly the set of Pings actually being
     // shown alongside these external items.
     const pingEntriesForDedup = monthScoped.map((e) => ({ title: e.title, start: new Date(e.event_date) }));
+    // Same "hide it once it's over, but only in the default view" rule
+    // visibleEvents applies to Pings above - external items never had this
+    // check at all, which went unnoticed as long as the calendar-item fetch
+    // itself only ever looked forward from right now (see
+    // getUpcomingExternalEvents' old windowStart). Now that it also looks
+    // back (so a same-day item doesn't vanish from the calendar the moment
+    // its own time passes), a genuinely past item can appear in
+    // externalEvents, and without this it would leak into the default
+    // Upcoming view the same way.
     const dayFiltered = (
       selectedDate
         ? externalEvents.filter((e) => toDateKey(e.startDate) === selectedDate)
-        : externalEvents.filter((e) => inVisibleMonth(e.startDate, null))
+        : externalEvents
+            .filter((e) => inVisibleMonth(e.startDate, null))
+            .filter((e) => (e.endDate ?? e.startDate).getTime() >= now)
     )
       .filter((e) => !hiddenEventIds.has(e.id))
       .filter((e) => !externalItemDuplicatesPing(pingEntriesForDedup, { title: e.title, start: e.startDate }));
@@ -899,6 +908,7 @@ export default function HomeScreen() {
     showPingsOnly,
     monthStart,
     monthEnd,
+    now,
   ]);
 
   // Only Ping cards show weather (see EventCard) - external calendar rows
@@ -926,13 +936,11 @@ export default function HomeScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pingWeatherKey]);
 
-  const onDayPress = (day: { dateString: string }) => {
-    setSelectedDate((prev) =>
-      prev === day.dateString ? null : day.dateString,
-    );
+  const onDayPress = (dateKey: string) => {
+    setSelectedDate((prev) => (prev === dateKey ? null : dateKey));
     // A day is easiest to actually look at in Week view - Month is for
     // orientation/picking a day, not reading it in detail.
-    const [y, m, d] = day.dateString.split("-").map(Number);
+    const [y, m, d] = dateKey.split("-").map(Number);
     goToWeekFor(new Date(y, m - 1, d));
   };
 
@@ -947,26 +955,41 @@ export default function HomeScreen() {
   }, [fetchEvents]);
 
   const ready = totalHeight !== null;
-  // Week mode's own drag-to-expand-hours sizing - entirely independent of
-  // the Month calendar's own height (Month is a plain scrolling page now,
-  // see the viewMode==='month' JSX branch, so it has no comparable "sheet"
-  // concept at all). Based on totalHeight (this screen's whole content
-  // area) instead: a fixed default number of hours, then however much room
-  // is left over before crowding the FAB.
+  // Week and Month modes each have their own drag-to-expand sizing, fully
+  // independent of each other - they used to share one set of numbers
+  // derived from <Calendar>'s measured height, which broke once Month's
+  // calendar genuinely got taller (event bars) for reasons that have
+  // nothing to do with how many hours of a day, or how many weeks of a
+  // month, is a sane default to show. Both are based on totalHeight (this
+  // screen's whole content area) instead: a fixed default size, then
+  // however much room is left before crowding the FAB.
   const WEEK_DEFAULT_HOURS = 6;
   const weekGridBaseHeight = WEEK_DEFAULT_HOURS * 60;
-  const topLimit = ready ? -weekGridBaseHeight : 0;
-  // Leaves MIN_UPCOMING_VISIBLE of Upcoming (and the handle) always
-  // reachable, mirroring FAB_CLEARANCE's "don't crowd the + button" role.
   const weekBottomLimit = ready
-    ? Math.max(0, totalHeight! - MIN_TOP_INSET - weekGridBaseHeight - FAB_CLEARANCE - MIN_UPCOMING_VISIBLE)
+    ? Math.max(0, totalHeight! - MIN_TOP_INSET - weekGridBaseHeight - FAB_CLEARANCE)
     : 0;
   const weekGridMaxHeight = weekGridBaseHeight + weekBottomLimit;
-  // Week mode's resting (dragY=0) height is boosted by this much over the
-  // bare default - showing only WEEK_DEFAULT_HOURS with no boost was too
-  // little to be useful without dragging every time. Capped to
-  // weekBottomLimit so it never asks for more than that ceiling allows.
+  // Resting (dragY=0) height is boosted by this much over the bare
+  // default - showing only the default with no boost was too little to be
+  // useful without dragging every time. Capped to the mode's own
+  // bottomLimit so it never asks for more than that ceiling allows.
   const weekDefaultExpansion = Math.min(280, weekBottomLimit);
+
+  // Month's default (collapsed) height: the weekday-letter row + one
+  // month's own label row + MONTH_DEFAULT_ROWS of day cells - computed
+  // analytically (MonthGrid never needs to measure anything, see that
+  // component's own header comment), roughly half a typical month.
+  const MONTH_DEFAULT_ROWS = 3;
+  const monthGridBaseHeight = WEEKDAY_HEADER_HEIGHT + MONTH_LABEL_HEIGHT + MONTH_DEFAULT_ROWS * CELL_HEIGHT;
+  const monthBottomLimit = ready
+    ? Math.max(0, totalHeight! - MIN_TOP_INSET - monthGridBaseHeight - FAB_CLEARANCE)
+    : 0;
+  const monthGridMaxHeight = monthGridBaseHeight + monthBottomLimit;
+  const monthDefaultExpansion = Math.min(280, monthBottomLimit);
+
+  const gridBaseHeight = viewMode === "week" ? weekGridBaseHeight : monthGridBaseHeight;
+  const gridBottomLimit = viewMode === "week" ? weekBottomLimit : monthBottomLimit;
+  const topLimit = ready ? -gridBaseHeight : 0;
 
   const handleContentLayout = (e: LayoutChangeEvent) => {
     if (totalMeasuredRef.current) return;
@@ -981,7 +1004,7 @@ export default function HomeScreen() {
     })
     .onUpdate((e) => {
       const next = dragStart.value + e.translationY;
-      dragY.value = Math.min(weekBottomLimit, Math.max(topLimit, next));
+      dragY.value = Math.min(gridBottomLimit, Math.max(topLimit, next));
     })
     .onEnd(() => {
       // Snap purely by physical nearest-point — no velocity involved.
@@ -989,7 +1012,7 @@ export default function HomeScreen() {
       // overshooting straight past the intended target to whichever
       // endpoint matched the direction of motion, regardless of how close
       // the actual release position was to a nearer point.
-      const points = [topLimit, 0, weekBottomLimit];
+      const points = [topLimit, 0, gridBottomLimit];
       let target = points[0];
       let bestDist = Math.abs(points[0] - dragY.value);
       for (let i = 1; i < points.length; i++) {
@@ -1002,12 +1025,10 @@ export default function HomeScreen() {
       dragY.value = withSpring(target, SPRING_CONFIG);
     });
 
-  // A guaranteed, tap-based way to snap Week mode's drag sheet back to
-  // rest (its hour grid back to the default height) - doesn't depend on
-  // successfully grabbing and dragging the handle, which has historically
-  // been the most fragile part of this screen. Month view has no
-  // equivalent "collapsed" state to snap back to - it's a plain scrolling
-  // page now - so this is a no-op there.
+  // A guaranteed, tap-based way to snap the drag sheet back to rest (the
+  // grid back to its default height, in whichever mode is active) -
+  // doesn't depend on successfully grabbing and dragging the handle, which
+  // has historically been the most fragile part of this screen.
   const collapseCalendar = () => {
     if (!ready) return;
     dragY.value = withSpring(0, SPRING_CONFIG);
@@ -1019,29 +1040,30 @@ export default function HomeScreen() {
   // visible — a transform only repaints the box shifted, it doesn't
   // resize it, so the FlatList inside kept thinking it had more room than
   // was actually on-screen and would scroll its last item into a clipped,
-  // invisible strip past the true bottom edge.
-  // Week-only now - Month view has no sheet to cover/uncover anything
-  // anymore (it's a plain scrolling page, see the JSX below), so this style
-  // is simply never applied there.
+  // invisible strip past the true bottom edge. Same curve shape for both
+  // modes - only which grid's own base/bottomLimit/defaultExpansion feeds
+  // it differs.
   const animatedCardsSheetStyle = useAnimatedStyle(() => {
-    const calBottom = MIN_TOP_INSET + weekGridBaseHeight;
-    // Week mode's downward drag grows the hour grid (see weekGridMaxHeight)
-    // - Upcoming stays fully visible and just gets pushed down to stay
-    // flush against the growing calendar. The rest position (dragY=0) is
-    // itself boosted by weekDefaultExpansion so Week view opens already
-    // showing more than a bare handful of hours, without giving up the
-    // topLimit/weekBottomLimit endpoints - only the 0→weekBottomLimit
-    // segment's slope compresses slightly to make room for that boosted
-    // starting point.
-    if (weekBottomLimit <= 0) {
+    const calBottom = MIN_TOP_INSET + gridBaseHeight;
+    const bottomLimit = viewMode === "week" ? weekBottomLimit : monthBottomLimit;
+    const defaultExpansion = viewMode === "week" ? weekDefaultExpansion : monthDefaultExpansion;
+    // Downward drag grows the grid behind it (see weekGridMaxHeight /
+    // monthGridMaxHeight) - Upcoming stays fully visible and just gets
+    // pushed down to stay flush against the growing calendar. The rest
+    // position (dragY=0) is itself boosted by defaultExpansion so the
+    // default view opens already showing more than the bare minimum,
+    // without giving up the topLimit/bottomLimit endpoints - only the
+    // 0→bottomLimit segment's slope compresses slightly to make room for
+    // that boosted starting point.
+    if (bottomLimit <= 0) {
       return { opacity: 1, top: interpolate(dragY.value, [topLimit, 0], [MIN_TOP_INSET, calBottom], Extrapolation.CLAMP) };
     }
     return {
       opacity: 1,
       top: interpolate(
         dragY.value,
-        [topLimit, 0, weekBottomLimit],
-        [MIN_TOP_INSET, calBottom + weekDefaultExpansion, calBottom + weekBottomLimit],
+        [topLimit, 0, bottomLimit],
+        [MIN_TOP_INSET, calBottom + defaultExpansion, calBottom + bottomLimit],
         Extrapolation.CLAMP,
       ),
     };
@@ -1049,10 +1071,12 @@ export default function HomeScreen() {
 
   // The handle itself: tracks the exact same curve as
   // animatedCardsSheetStyle's `top`, so it always sits flush with the
-  // sheet's actual top edge. Week-only, same as that style.
+  // sheet's actual top edge.
   const animatedHandleStyle = useAnimatedStyle(() => {
-    const calBottom = MIN_TOP_INSET + weekGridBaseHeight;
-    if (weekBottomLimit <= 0) {
+    const calBottom = MIN_TOP_INSET + gridBaseHeight;
+    const bottomLimit = viewMode === "week" ? weekBottomLimit : monthBottomLimit;
+    const defaultExpansion = viewMode === "week" ? weekDefaultExpansion : monthDefaultExpansion;
+    if (bottomLimit <= 0) {
       return { transform: [{ translateY: interpolate(dragY.value, [topLimit, 0], [MIN_TOP_INSET, calBottom], Extrapolation.CLAMP) }] };
     }
     return {
@@ -1060,8 +1084,8 @@ export default function HomeScreen() {
         {
           translateY: interpolate(
             dragY.value,
-            [topLimit, 0, weekBottomLimit],
-            [MIN_TOP_INSET, calBottom + weekDefaultExpansion, calBottom + weekBottomLimit],
+            [topLimit, 0, bottomLimit],
+            [MIN_TOP_INSET, calBottom + defaultExpansion, calBottom + bottomLimit],
             Extrapolation.CLAMP,
           ),
         },
@@ -1202,109 +1226,77 @@ export default function HomeScreen() {
       </View>
 
       <View style={styles.contentArea} onLayout={handleContentLayout}>
-        {viewMode === "month" ? (
-          // Month is a plain scrolling page - the calendar (always fully
-          // rendered, however tall its bars make it) is just this list's
-          // header, so scrolling down naturally moves from "more of the
-          // month" into "the Upcoming list" with native momentum scroll,
-          // no custom gesture/height math needed at all.
+        <View style={styles.calendarWrapper}>
+          <View style={styles.calendarHeaderRow}>
+            <CalendarHeaderRow
+              title={viewMode === "month" ? monthLabel : formatWeekRangeLabel(visibleWeekStart)}
+              onPrev={() => (viewMode === "month" ? changeMonth(-1) : weekGridRef.current?.scrollByDays(-7))}
+              onNext={() => (viewMode === "month" ? changeMonth(1) : weekGridRef.current?.scrollByDays(7))}
+              viewMode={viewMode}
+              onSelectMonth={onSelectMonth}
+              onSelectWeek={onSelectWeek}
+            />
+          </View>
+          {viewMode === "month" ? (
+            <MonthGrid
+              ref={monthGridRef}
+              rangeStart={monthGridRangeStart}
+              monthCount={MONTH_GRID_MONTH_COUNT}
+              initialMonthIndex={MONTH_GRID_MONTHS_BACK}
+              markedDatesByDay={markedDates}
+              monthDayBars={monthDayBars}
+              onDayPress={onDayPress}
+              onVisibleMonthChange={onVisibleMonthChange}
+              height={monthGridMaxHeight}
+              dragY={dragY}
+              visibleHeight={monthGridBaseHeight}
+              maxExtraHeight={monthBottomLimit}
+              defaultExpansion={monthDefaultExpansion}
+            />
+          ) : (
+            <WeekGrid
+              ref={weekGridRef}
+              rangeStart={weekGridRangeStart}
+              dayCount={WEEK_GRID_DAY_COUNT}
+              initialDayIndex={WEEK_GRID_LOOKBACK_DAYS}
+              eventsByDay={weekDayColumns}
+              allDayByDay={weekAllDayColumns}
+              height={weekGridMaxHeight}
+              onEventPress={handleWeekItemPress}
+              onVisibleWeekChange={setVisibleWeekStart}
+              onEmptySlotLongPress={handleEmptySlotLongPress}
+              onDateHeaderLongPress={handleDateHeaderLongPress}
+              dragY={dragY}
+              visibleHeight={weekGridBaseHeight}
+              maxExtraHeight={weekBottomLimit}
+              defaultExpansion={weekDefaultExpansion}
+            />
+          )}
+        </View>
+
+        <Animated.View style={[styles.cardsSheet, ready && animatedCardsSheetStyle]}>
+          <View style={styles.handleSpacer} />
+          {renderListHeader("Upcoming")}
+          {upcomingBanners}
           <FlatList
             style={{ flex: 1 }}
             data={upcomingListItems}
             keyExtractor={(item) => item.key}
             extraData={myRsvpByEvent}
             refreshControl={<RefreshControl refreshing={loading} onRefresh={handleRefresh} tintColor={colors.primary} />}
-            ListHeaderComponent={
-              <>
-                <View style={styles.calendarHeaderRow}>
-                  <CalendarHeaderRow
-                    title={monthLabel}
-                    onPrev={() => changeMonth(-1)}
-                    onNext={() => changeMonth(1)}
-                    viewMode={viewMode}
-                    onSelectMonth={onSelectMonth}
-                    onSelectWeek={onSelectWeek}
-                  />
-                </View>
-                <Calendar
-                  key={calendarSyncKey}
-                  current={toDateKey(visibleMonth)}
-                  onDayPress={onDayPress}
-                  onMonthChange={(month) => setVisibleMonth(new Date(month.year, month.month - 1, 1))}
-                  markedDates={markedDates}
-                  markingType="custom"
-                  dayComponent={monthDayComponent}
-                  theme={calendarTheme}
-                  style={styles.calendar}
-                  enableSwipeMonths
-                  hideArrows
-                  customHeaderTitle={<View />}
-                />
-                {renderListHeader("Upcoming")}
-                {upcomingBanners}
-              </>
-            }
             renderItem={renderUpcomingItem}
             ListEmptyComponent={upcomingEmptyComponent}
-            contentContainerStyle={{ paddingBottom: 120 }}
+            contentContainerStyle={{ paddingVertical: 12, paddingBottom: 120 }}
           />
-        ) : (
-          <>
-            <View style={styles.calendarWrapper}>
-              <View style={styles.calendarHeaderRow}>
-                <CalendarHeaderRow
-                  title={formatWeekRangeLabel(visibleWeekStart)}
-                  onPrev={() => weekGridRef.current?.scrollByDays(-7)}
-                  onNext={() => weekGridRef.current?.scrollByDays(7)}
-                  viewMode={viewMode}
-                  onSelectMonth={onSelectMonth}
-                  onSelectWeek={onSelectWeek}
-                />
-              </View>
-              <WeekGrid
-                ref={weekGridRef}
-                rangeStart={weekGridRangeStart}
-                dayCount={WEEK_GRID_DAY_COUNT}
-                initialDayIndex={WEEK_GRID_LOOKBACK_DAYS}
-                eventsByDay={weekDayColumns}
-                allDayByDay={weekAllDayColumns}
-                height={weekGridMaxHeight}
-                onEventPress={handleWeekItemPress}
-                onVisibleWeekChange={setVisibleWeekStart}
-                onEmptySlotLongPress={handleEmptySlotLongPress}
-                onDateHeaderLongPress={handleDateHeaderLongPress}
-                dragY={dragY}
-                visibleHeight={weekGridBaseHeight}
-                maxExtraHeight={weekBottomLimit}
-                defaultExpansion={weekDefaultExpansion}
-              />
+        </Animated.View>
+
+        <Animated.View style={[styles.handleWrap, ready && animatedHandleStyle]}>
+          <GestureDetector gesture={pan}>
+            <View style={styles.dragHandleArea}>
+              <View style={styles.dragHandle} />
             </View>
-
-            <Animated.View style={[styles.cardsSheet, ready && animatedCardsSheetStyle]}>
-              <View style={styles.handleSpacer} />
-              {renderListHeader("Upcoming")}
-              {upcomingBanners}
-              <FlatList
-                style={{ flex: 1 }}
-                data={upcomingListItems}
-                keyExtractor={(item) => item.key}
-                extraData={myRsvpByEvent}
-                refreshControl={<RefreshControl refreshing={loading} onRefresh={handleRefresh} tintColor={colors.primary} />}
-                renderItem={renderUpcomingItem}
-                ListEmptyComponent={upcomingEmptyComponent}
-                contentContainerStyle={{ paddingVertical: 12, paddingBottom: 120 }}
-              />
-            </Animated.View>
-
-            <Animated.View style={[styles.handleWrap, ready && animatedHandleStyle]}>
-              <GestureDetector gesture={pan}>
-                <View style={styles.dragHandleArea}>
-                  <View style={styles.dragHandle} />
-                </View>
-              </GestureDetector>
-            </Animated.View>
-          </>
-        )}
+          </GestureDetector>
+        </Animated.View>
       </View>
 
       {fabMenuVisible && (
@@ -1450,16 +1442,13 @@ const styles = StyleSheet.create({
   groupsText: { color: colors.primary, fontSize: 14, fontWeight: "600" },
   contentArea: { flex: 1, position: "relative", overflow: "hidden" },
   calendarWrapper: {},
-  calendar: { borderBottomWidth: 1, borderBottomColor: colors.divider },
   // Fixed to MIN_TOP_INSET so it's exactly the height that stays visible
-  // when Week mode's Upcoming sheet is dragged all the way up - see the
-  // note on MIN_TOP_INSET above. Month mode reuses this same style purely
-  // for visual consistency (it's just a plain header row there, nothing
-  // drags over it).
+  // when the Upcoming sheet is dragged all the way up, in both modes - see
+  // the note on MIN_TOP_INSET above.
   calendarHeaderRow: { height: MIN_TOP_INSET },
-  // Week-mode only: cards sheet rises to cover the calendar as you drag up;
-  // pinned right under it at rest. Reserves handleSpacer at the top so its
-  // content doesn't render under the independently-floating handle.
+  // Cards sheet: rises to cover the calendar as you drag up; pinned right
+  // under it at rest. Reserves handleSpacer at the top so its content
+  // doesn't render under the independently-floating handle.
   cardsSheet: {
     position: "absolute",
     left: 0,
