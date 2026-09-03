@@ -17,7 +17,6 @@ type DayDate = { dateString: string; day: number };
 type Props = {
   date: DayDate;
   marking?: any;
-  disabled?: boolean;
   onPress?: (dateString: string) => void;
 };
 
@@ -28,7 +27,11 @@ type Props = {
 // already produces - the selected-day circle, today's ring, and the
 // "important" date marker all keep working unchanged from before this
 // component was called directly instead of through react-native-calendars.
-export default function MonthDayCell({ date, marking, disabled, onPress }: Props) {
+// Every cell belongs to the month it's rendered in - MonthGrid never pads a
+// month's grid with an adjacent month's real days (see getMonthGridWeeks),
+// so there's no "disabled" (dimmed, belongs-to-another-month) state to
+// render here anymore.
+export default function MonthDayCell({ date, marking, onPress }: Props) {
   const dayEvents: MonthDayBar[] = marking?.events || [];
   const visibleBars = dayEvents.slice(0, MAX_BARS);
   const moreCount = dayEvents.length - visibleBars.length;
@@ -45,7 +48,6 @@ export default function MonthDayCell({ date, marking, disabled, onPress }: Props
         <Text
           style={[
             styles.numberText,
-            disabled && styles.numberTextDisabled,
             marking?.selected && { color: marking.selectedTextColor || colors.textOnPrimary },
             marking?.customStyles?.text,
           ]}
@@ -82,7 +84,12 @@ const styles = StyleSheet.create({
   // react-native-calendars-based version of this feature hit twice on
   // real devices. `overflow: 'hidden'` is the belt-and-suspenders backstop
   // against any content that still somehow doesn't fit.
-  cell: { height: CELL_HEIGHT, overflow: 'hidden', alignItems: 'stretch', paddingTop: 2, paddingHorizontal: 1, paddingBottom: 4 },
+  // flex:1 (not a fixed/content-driven width) is what makes all 7 columns
+  // in a week row divide the row's width evenly - without it, a cell with
+  // no explicit width shrinks/grows to fit its own content (an event bar's
+  // text length), which is what made day columns visibly uneven width and
+  // let long titles push a row wider than the screen.
+  cell: { flex: 1, height: CELL_HEIGHT, overflow: 'hidden', alignItems: 'stretch', paddingTop: 2, paddingHorizontal: 1, paddingBottom: 4 },
   numberContainer: {
     alignSelf: 'center',
     width: 24,
@@ -92,7 +99,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   numberText: { fontSize: 13, color: colors.textPrimary, fontWeight: '600' },
-  numberTextDisabled: { color: colors.textMuted, opacity: 0.4 },
   importantBar: {
     alignSelf: 'center',
     width: 16,

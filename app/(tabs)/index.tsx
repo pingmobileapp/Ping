@@ -828,8 +828,17 @@ export default function HomeScreen() {
         .sort((a, b) => a.date.getTime() - b.date.getTime());
     }
 
+    // Capping the default view to just the visible month only makes sense
+    // in Month mode, where there's an actual "visible month" the calendar
+    // behind the list is showing. Week mode deliberately shows ~6 months
+    // forward now (see WEEK_GRID_DAY_COUNT) precisely so people can plan
+    // further out - visibleMonth also isn't even kept up to date while in
+    // Week mode (only MonthGrid's own scroll reports it), so applying this
+    // cap there could scope the list to a stale month and made the whole
+    // Upcoming list silently go empty, with no way to fix it short of
+    // switching back to Month view and scrolling it - a real reported bug.
     const monthScoped =
-      !selectedDate && !showDraftsOnly && !showDeclinedOnly && !showPingsOnly
+      viewMode === "month" && !selectedDate && !showDraftsOnly && !showDeclinedOnly && !showPingsOnly
         ? visibleEvents.filter((e) =>
             inVisibleMonth(
               new Date(e.event_date),
@@ -867,7 +876,7 @@ export default function HomeScreen() {
       selectedDate
         ? externalEvents.filter((e) => toDateKey(e.startDate) === selectedDate)
         : externalEvents
-            .filter((e) => inVisibleMonth(e.startDate, null))
+            .filter((e) => viewMode !== "month" || inVisibleMonth(e.startDate, null))
             .filter((e) => (e.endDate ?? e.startDate).getTime() >= now)
     )
       .filter((e) => !hiddenEventIds.has(e.id))
@@ -882,7 +891,7 @@ export default function HomeScreen() {
 
     const interestedFiltered = selectedDate
       ? interestedActivities.filter((a) => toDateKey(new Date(a.startsAt)) === selectedDate)
-      : interestedActivities.filter((a) => inVisibleMonth(new Date(a.startsAt), null));
+      : interestedActivities.filter((a) => viewMode !== "month" || inVisibleMonth(new Date(a.startsAt), null));
 
     const interestedItems: UpcomingListItem[] = interestedFiltered.map((a) => ({
       kind: "interested",
@@ -909,6 +918,7 @@ export default function HomeScreen() {
     monthStart,
     monthEnd,
     now,
+    viewMode,
   ]);
 
   // Only Ping cards show weather (see EventCard) - external calendar rows
@@ -969,11 +979,16 @@ export default function HomeScreen() {
     ? Math.max(0, totalHeight! - MIN_TOP_INSET - weekGridBaseHeight - FAB_CLEARANCE)
     : 0;
   const weekGridMaxHeight = weekGridBaseHeight + weekBottomLimit;
-  // Resting (dragY=0) height is boosted by this much over the bare
-  // default - showing only the default with no boost was too little to be
-  // useful without dragging every time. Capped to the mode's own
-  // bottomLimit so it never asks for more than that ceiling allows.
-  const weekDefaultExpansion = Math.min(280, weekBottomLimit);
+  // Resting (dragY=0) height sits halfway between the bare default and the
+  // fully-dragged-down max, so the sheet visibly has room to move in both
+  // directions from rest (up to fullscreen Upcoming, down to the fully
+  // revealed grid) instead of resting almost on top of one of those
+  // extremes. This used to be Math.min(280, weekBottomLimit) - fine when
+  // bottomLimit comfortably exceeded 280, but on a typical device
+  // bottomLimit itself lands well under 280, so that min() was a no-op and
+  // the "default" and "fully expanded" states collapsed into nearly the
+  // same position - a real reported bug (rest looked already-expanded).
+  const weekDefaultExpansion = weekBottomLimit / 2;
 
   // Month's default (collapsed) height: the weekday-letter row + one
   // month's own label row + MONTH_DEFAULT_ROWS of day cells - computed
@@ -985,7 +1000,8 @@ export default function HomeScreen() {
     ? Math.max(0, totalHeight! - MIN_TOP_INSET - monthGridBaseHeight - FAB_CLEARANCE)
     : 0;
   const monthGridMaxHeight = monthGridBaseHeight + monthBottomLimit;
-  const monthDefaultExpansion = Math.min(280, monthBottomLimit);
+  // Same centered-rest reasoning as weekDefaultExpansion above.
+  const monthDefaultExpansion = monthBottomLimit / 2;
 
   const gridBaseHeight = viewMode === "week" ? weekGridBaseHeight : monthGridBaseHeight;
   const gridBottomLimit = viewMode === "week" ? weekBottomLimit : monthBottomLimit;

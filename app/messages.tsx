@@ -3,12 +3,13 @@ import { View, Text, TouchableOpacity, StyleSheet, FlatList, ActivityIndicator, 
 import { Stack, useRouter, useFocusEffect } from 'expo-router';
 import { colors } from '../lib/theme';
 import { useAuth } from '../lib/AuthContext';
-import { useNotificationsContext } from '../lib/NotificationsContext';
 import { useLatestMessages } from '../lib/useLatestMessages';
 import { useLatestGroupMessages } from '../lib/useLatestGroupMessages';
 import CompactEventRow from '../components/CompactEventRow';
 import CompactGroupRow, { PingGroup } from '../components/CompactGroupRow';
 import { PingEvent } from '../components/EventCard';
+import EventDetailModal from '../components/EventDetailModal';
+import GroupChatModal from '../components/GroupChatModal';
 import { supabase } from '../supabase';
 
 // The Message Board used to live inline on Home, revealed by dragging the
@@ -22,7 +23,6 @@ import { supabase } from '../supabase';
 export default function MessagesScreen() {
   const router = useRouter();
   const { session } = useAuth();
-  const { openEventModal, openGroupChat } = useNotificationsContext();
   const { latestByEvent, fetchLatestFor, refresh: refreshLatestMessages } = useLatestMessages(session?.user?.id);
   const { latestByGroup, fetchLatestFor: fetchLatestGroupFor, refresh: refreshLatestGroupMessages } =
     useLatestGroupMessages(session?.user?.id);
@@ -32,6 +32,19 @@ export default function MessagesScreen() {
   const [groups, setGroups] = useState<PingGroup[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [loadingGroups, setLoadingGroups] = useState(true);
+  // Opened locally, the same way app/groups/[id].tsx already handles its
+  // own event cards, rather than through Home's pendingEventModal/
+  // pendingGroupChat mechanism - this screen deliberately stays on the nav
+  // stack underneath the modal (see openEvent/openGroup below) instead of
+  // dismissing to Home, and relying on a Tab screen that isn't currently
+  // focused to notice a context change and render its own <Modal> turned
+  // out not to be reliable (a real reported bug: tapping a conversation row
+  // did nothing). Owning the modal here directly sidesteps that entirely.
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [detailVisible, setDetailVisible] = useState(false);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [selectedGroupName, setSelectedGroupName] = useState<string | null>(null);
+  const [groupChatVisible, setGroupChatVisible] = useState(false);
 
   // Same visibility rule as Home's fetchEvents: you see an event only if
   // you have an invitee row for it (hosting auto-creates one), and a
@@ -118,25 +131,19 @@ export default function MessagesScreen() {
     if (boardView === 'groups' && groups.length > 0) fetchLatestGroupFor(groups.map((g) => g.id));
   }, [boardView, groups, fetchLatestGroupFor]);
 
-  // Deliberately does NOT dismissTo('/') like Notifications' equivalent
-  // handler does - this screen should still be here, underneath the modal,
-  // when the user closes it, so "back" from the modal actually lands back
-  // on Messages instead of Home. That's safe specifically because nothing
-  // here navigates at all: Home is already mounted once, underneath this
-  // screen on the stack (this screen was pushed from there), and
-  // EventDetailModal/GroupChatModal are real native <Modal>s that present
-  // on top of whatever's currently on screen regardless of which mounted
-  // component tree owns them - no second Home instance ever gets created.
-  // (The crash dismissTo('/') exists elsewhere in the app to avoid was
-  // specifically push('/') creating a second Home instance while a modal
-  // opened on the first one at the same time - a different situation, not
-  // reachable from here since this never navigates.)
+  // Opens straight onto the messages face - reading a conversation is the
+  // whole point of tapping a row here. Kept entirely local to this screen
+  // (not routed through Home) so "back" naturally lands on Messages: this
+  // screen never navigates away, so there's nothing to dismiss to.
   const openEvent = (event: PingEvent) => {
-    openEventModal(event.id, true);
+    setSelectedEventId(event.id);
+    setDetailVisible(true);
   };
 
   const openGroup = (group: PingGroup) => {
-    openGroupChat(group.id, group.name);
+    setSelectedGroupId(group.id);
+    setSelectedGroupName(group.name);
+    setGroupChatVisible(true);
   };
 
   const handleRefresh = async () => {
@@ -199,6 +206,20 @@ export default function MessagesScreen() {
           ListEmptyComponent={<Text style={styles.emptyText}>No groups yet — create one from the Groups screen.</Text>}
         />
       )}
+
+      <EventDetailModal
+        visible={detailVisible}
+        eventId={selectedEventId}
+        startOnMessages
+        onClose={() => setDetailVisible(false)}
+      />
+
+      <GroupChatModal
+        visible={groupChatVisible}
+        groupId={selectedGroupId}
+        groupName={selectedGroupName}
+        onClose={() => setGroupChatVisible(false)}
+      />
     </View>
   );
 }

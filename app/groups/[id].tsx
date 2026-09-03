@@ -326,25 +326,29 @@ export default function GroupDetailScreen() {
 
       {isOwner ? (
         <FlatList
-          data={allContacts}
+          // Only actual members here, not every contact in the owner's
+          // address book - this list used to show everyone (checked or
+          // not) as a combined "pick members" view, which read as "people
+          // who aren't in this group are somehow in this group." Adding
+          // someone (back) is still done via Import from Contacts or +
+          // New contact below - both already call toggleMember, so a
+          // contact reappears here the moment they're a member again.
+          data={allContacts.filter((c) => isMember(c.id))}
           keyExtractor={(c) => c.id}
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingVertical: 12 }}
           keyboardShouldPersistTaps="handled"
-          renderItem={({ item }) => {
-            const member = isMember(item.id);
-            return (
-              <TouchableOpacity style={styles.contactRow} onPress={() => toggleMember(item)}>
-                <Text style={styles.contactName}>{item.name}</Text>
-                <View style={[styles.checkbox, member && styles.checkboxChecked]}>
-                  {member && <Text style={styles.checkmark}>✓</Text>}
-                </View>
-              </TouchableOpacity>
-            );
-          }}
+          renderItem={({ item }) => (
+            <TouchableOpacity style={styles.contactRow} onPress={() => toggleMember(item)}>
+              <Text style={styles.contactName}>{item.name}</Text>
+              <View style={[styles.checkbox, styles.checkboxChecked]}>
+                <Text style={styles.checkmark}>✓</Text>
+              </View>
+            </TouchableOpacity>
+          )}
           ListEmptyComponent={
             !addingContact ? (
-              <Text style={styles.emptyText}>No contacts yet — add one below.</Text>
+              <Text style={styles.emptyText}>No one in this group yet — import or add someone below.</Text>
             ) : null
           }
           ListHeaderComponent={

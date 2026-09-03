@@ -23,22 +23,29 @@ const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const pad = (n: number) => String(n).padStart(2, '0');
 const toDateKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
-// Every day needed to render one month's full grid, padded to complete
-// weeks (matching react-native-calendars' own convention, which the
-// previous <Calendar>-based version of this used) - grouped into rows of 7.
-function getMonthGridWeeks(monthStart: Date): Date[][] {
+// Every day needed to render one month's full grid, grouped into rows of 7.
+// Unlike react-native-calendars' own convention (which the previous
+// <Calendar>-based version of this used), the leading/trailing gaps before
+// day 1 and after the last day are left as `null` (blank cells) rather than
+// filled with the adjacent month's real dates - since every month already
+// gets its own block with its own label in this continuous-scroll layout,
+// showing (say) Aug 30-31 a second time atop September's block just
+// duplicated what August's own block already showed right above it. `null`
+// keeps every week row a full 7 slots wide for layout purposes without
+// resurrecting that duplication.
+function getMonthGridWeeks(monthStart: Date): (Date | null)[][] {
   const year = monthStart.getFullYear();
   const month = monthStart.getMonth();
   const firstOfMonth = new Date(year, month, 1);
   const startOffset = firstOfMonth.getDay();
-  const lastOfMonth = new Date(year, month + 1, 0);
-  const endOffset = 6 - lastOfMonth.getDay();
-  const totalDays = startOffset + lastOfMonth.getDate() + endOffset;
-  const weeks: Date[][] = [];
-  for (let w = 0; w < totalDays / 7; w++) {
-    const week: Date[] = [];
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const weekCount = Math.ceil((startOffset + daysInMonth) / 7);
+  const weeks: (Date | null)[][] = [];
+  for (let w = 0; w < weekCount; w++) {
+    const week: (Date | null)[] = [];
     for (let i = 0; i < 7; i++) {
-      week.push(new Date(year, month, 1 - startOffset + w * 7 + i));
+      const dayNum = w * 7 + i - startOffset + 1;
+      week.push(dayNum >= 1 && dayNum <= daysInMonth ? new Date(year, month, dayNum) : null);
     }
     weeks.push(week);
   }
@@ -224,16 +231,15 @@ const MonthGrid = forwardRef<MonthGridHandle, Props>(
               </Text>
               {monthWeeks[mi].map((week, wi) => (
                 <View key={wi} style={styles.weekRow}>
-                  {week.map((d) => {
+                  {week.map((d, di) => {
+                    if (!d) return <View key={`blank-${di}`} style={styles.blankCell} />;
                     const dateString = toDateKey(d);
-                    const disabled = d.getMonth() !== monthStart.getMonth();
                     const marking = { ...(markedDatesByDay[dateString] || {}), events: monthDayBars[dateString] || [] };
                     return (
                       <MonthDayCell
                         key={dateString}
                         date={{ dateString, day: d.getDate() }}
                         marking={marking}
-                        disabled={disabled}
                         onPress={onDayPress}
                       />
                     );
@@ -264,4 +270,5 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   weekRow: { flexDirection: 'row' },
+  blankCell: { flex: 1, height: CELL_HEIGHT },
 });

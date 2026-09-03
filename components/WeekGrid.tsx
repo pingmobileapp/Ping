@@ -1,5 +1,5 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, Pressable, StyleSheet, Dimensions } from 'react-native';
+import { View, Text, TouchableOpacity, Pressable, StyleSheet, Dimensions, Modal } from 'react-native';
 import Animated, {
   Extrapolation,
   interpolate,
@@ -138,6 +138,11 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     const [emptySlotPrompt, setEmptySlotPrompt] = useState<{ dayKey: string; top: number; minutes: number } | null>(
       null,
     );
+
+    // Tapping the "+N" all-day chip when a day has more than one full-day
+    // item shows this chooser instead of jumping straight into whichever
+    // item happened to be first - see the allDayRow's chip onPress below.
+    const [dayPicker, setDayPicker] = useState<{ dayKey: string; items: AllDayItem[] } | null>(null);
 
     useEffect(() => {
       if (!emptySlotPrompt) return;
@@ -286,7 +291,12 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [focusedDayKey]);
 
-    const handleDayHeaderTap = (dayKey: string, dayIndex: number) => {
+    // Shared by the day-header label AND tapping anywhere on a collapsed
+    // day's own column (see the day column Pressable's onPress below) -
+    // either one focuses/unfocuses that day the same way. Tapping an event
+    // inside an already-focused day opens it instead of toggling focus (see
+    // that TouchableOpacity's onPress below).
+    const handleDayTap = (dayKey: string, dayIndex: number) => {
       pendingFocusIndexRef.current = dayIndex;
       setFocusedDayKey((prev) => (prev === dayKey ? null : dayKey));
     };
@@ -356,7 +366,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                   key={key}
                   style={[styles.dayLabelCell, { width: dayWidths[i] }]}
                   delayLongPress={450}
-                  onPress={() => handleDayHeaderTap(key, i)}
+                  onPress={() => handleDayTap(key, i)}
                   onLongPress={() => onDateHeaderLongPress(key)}
                 >
                   <Text style={styles.dayLabelDow}>{d.toLocaleDateString(undefined, { weekday: 'short' })}</Text>
@@ -383,7 +393,16 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
               return (
                 <View key={key} style={[styles.allDayCell, { width: dayWidths[i] }]}>
                   {first && (
-                    <TouchableOpacity style={styles.allDayChip} onPress={() => onEventPress(first.id)}>
+                    <TouchableOpacity
+                      style={styles.allDayChip}
+                      // More than one full-day item on this day - a tap
+                      // shouldn't silently jump into whichever one happened
+                      // to be first, so it opens a chooser listing all of
+                      // them instead.
+                      onPress={() =>
+                        dayItems.length > 1 ? setDayPicker({ dayKey: key, items: dayItems }) : onEventPress(first.id)
+                      }
+                    >
                       <Text style={styles.allDayChipText} numberOfLines={1}>
                         {first.title}
                         {dayItems.length > 1 ? ` +${dayItems.length - 1}` : ''}
@@ -416,25 +435,34 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
               removeClippedSubviews
               style={{ height: GRID_HEIGHT }}
             >
-              {dayKeys.map((d, i) => {
+              {dayKeys.map((d, dayIndex) => {
                 const key = toDayKey(d);
                 const dayEvents = eventsByDay[key] || [];
+                const isFocused = focusedDayKey === key;
                 return (
                   <Pressable
                     key={key}
-                    style={[styles.dayColumn, { width: dayWidths[i] }]}
+                    style={[styles.dayColumn, { width: dayWidths[dayIndex] }]}
                     delayLongPress={450}
+                    // A collapsed (unfocused) day is easiest to just widen
+                    // and read, not tap into something on it by accident -
+                    // any tap on the day, background or event alike, first
+                    // opens it wide. Once it's already focused, tapping the
+                    // (now-readable) background just toggles it back
+                    // closed - only an event tap inside a focused day opens
+                    // that event (see the event TouchableOpacity below).
+                    onPress={() => handleDayTap(key, dayIndex)}
                     onLongPress={(e) => handleColumnLongPress(key, dayEvents, e.nativeEvent.locationY)}
                   >
-                    {Array.from({ length: 23 }, (_, i) => (
-                      <View key={i} style={[styles.hourLine, { top: (i + 1) * HOUR_BLOCK_HEIGHT }]} />
+                    {Array.from({ length: 23 }, (_, hourIdx) => (
+                      <View key={hourIdx} style={[styles.hourLine, { top: (hourIdx + 1) * HOUR_BLOCK_HEIGHT }]} />
                     ))}
                     {key === today && (
                       <View style={[styles.nowLine, { top: nowTop }]}>
                         <View style={styles.nowDot} />
                       </View>
                     )}
-                    {dayEvents.map((ev, i) => {
+                    {dayEvents.map((ev, evIndex) => {
                       // Same-time events cascade as offset cards rather than
                       // fully overlapping - each later card in the stack is
                       // nudged right so the one(s) behind it still show
@@ -447,7 +475,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                       // into narrower side-by-side lanes.
                       return (
                         <TouchableOpacity
-                          key={`${ev.id}-${i}`}
+                          key={`${ev.id}-${evIndex}`}
                           style={[
                             styles.eventBlock,
                             {
@@ -459,7 +487,10 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                               zIndex: ev.stackIndex,
                             },
                           ]}
-                          onPress={() => onEventPress(ev.id)}
+                          // Same "open the day first" rule as the column
+                          // background - only opens the event card once
+                          // this day is already the focused, widened one.
+                          onPress={() => (isFocused ? onEventPress(ev.id) : handleDayTap(key, dayIndex))}
                         >
                           <Text style={styles.eventBlockText} numberOfLines={2}>
                             {ev.title}
@@ -484,6 +515,30 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
             </Animated.ScrollView>
           </View>
         </Animated.ScrollView>
+
+        <Modal visible={!!dayPicker} transparent animationType="fade" onRequestClose={() => setDayPicker(null)}>
+          <Pressable style={styles.dayPickerBackdrop} onPress={() => setDayPicker(null)}>
+            <View style={styles.dayPickerCard}>
+              <Text style={styles.dayPickerTitle}>
+                {dayPicker ? new Date(dayPicker.dayKey + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }) : ''}
+              </Text>
+              {dayPicker?.items.map((item) => (
+                <TouchableOpacity
+                  key={item.id}
+                  style={styles.dayPickerRow}
+                  onPress={() => {
+                    setDayPicker(null);
+                    onEventPress(item.id);
+                  }}
+                >
+                  <Text style={styles.dayPickerRowText} numberOfLines={2}>
+                    {item.title}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </Pressable>
+        </Modal>
       </View>
     );
   },
@@ -539,4 +594,30 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   emptySlotPillText: { color: colors.textOnPrimary, fontSize: 12, fontWeight: '700' },
+  dayPickerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(43,43,43,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+  },
+  dayPickerCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: colors.background,
+    borderRadius: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
+  dayPickerTitle: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 6,
+  },
+  dayPickerRow: { paddingHorizontal: 16, paddingVertical: 14, borderTopWidth: 1, borderTopColor: colors.divider },
+  dayPickerRowText: { color: colors.textPrimary, fontSize: 16, fontWeight: '600' },
 });

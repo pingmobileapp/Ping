@@ -138,22 +138,18 @@ export default function EventDetailModal({ visible, eventId, onClose, startOnMes
               {eventId && (
                 <MessageThread
                   eventId={eventId}
-                  // Opened straight into messages - by a chat-icon tap, a
-                  // notification, or the Messages screen, all of which land
-                  // here the same way - there's no front-of-card details
-                  // face this trip has shown, so swiping/tapping back should
-                  // leave the modal entirely rather than reveal a card face
-                  // the user never asked for. Same reasoning as
-                  // hasShownDetails in app/event/[id].tsx. The label stays
-                  // generic ("Back") rather than naming a specific origin
-                  // screen - this modal doesn't know or care which of those
-                  // callers opened it, and it used to hardcode "Message
-                  // Board" back when that was the only one, which went stale
-                  // (and outright wrong - dismissTo('/') already closes back
-                  // to Home, not to whatever screen was tapped from) the
-                  // moment other entry points existed.
-                  onFlipBack={startOnMessages ? handleClose : toggleFlip}
-                  backLabel={startOnMessages ? 'Back' : 'Event Details'}
+                  // Always flips back to the front (event details) face,
+                  // whichever way this card was opened - previously, a
+                  // trip that started straight on messages (a chat-icon
+                  // tap, a notification, the Messages screen) closed the
+                  // whole modal here instead, on the theory there was no
+                  // front face worth revealing. That's no longer the
+                  // behavior wanted: the card should flip back and forth
+                  // between its two faces freely regardless of which one
+                  // it opened on. Swiping the handle down (dismissGesture)
+                  // is still the way to close the modal entirely.
+                  onFlipBack={toggleFlip}
+                  backLabel="Event Details"
                 />
               )}
             </Animated.View>
