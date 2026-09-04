@@ -45,9 +45,19 @@ serve(async (req) => {
       );
     }
 
-    const stripeKey = Deno.env.get('STRIPE_SECRET_KEY');
+    // Same test/live routing as stripe-connect-onboarding - this account's
+    // stripe_accounts row was created under whichever mode was active for
+    // it at the time, so status checks need to match (see
+    // supabase/apple_reviewer_test_mode.sql).
+    const { data: callerProfile } = await admin
+      .from('profiles')
+      .select('use_stripe_test_mode')
+      .eq('id', user.id)
+      .maybeSingle();
+    const useTestMode = !!callerProfile?.use_stripe_test_mode;
+    const stripeKey = useTestMode ? Deno.env.get('STRIPE_TEST_SECRET_KEY') : Deno.env.get('STRIPE_SECRET_KEY');
     if (!stripeKey) {
-      console.error('STRIPE_SECRET_KEY is not set');
+      console.error(useTestMode ? 'STRIPE_TEST_SECRET_KEY is not set' : 'STRIPE_SECRET_KEY is not set');
       return new Response(JSON.stringify({ error: 'Payments are not configured yet' }), { status: 500 });
     }
 

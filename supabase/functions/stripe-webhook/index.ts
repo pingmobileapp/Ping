@@ -46,14 +46,33 @@ serve(async (req) => {
   try {
     const rawBody = await req.text();
     const sigHeader = req.headers.get('Stripe-Signature');
-    const webhookSecret = Deno.env.get('STRIPE_WEBHOOK_SECRET');
-    if (!webhookSecret) {
+    const webhookSecretLive = Deno.env.get('STRIPE_WEBHOOK_SECRET');
+    const webhookSecretTest = Deno.env.get('STRIPE_TEST_WEBHOOK_SECRET');
+    if (!webhookSecretLive && !webhookSecretTest) {
       console.error('STRIPE_WEBHOOK_SECRET is not set');
       return new Response('Webhook not configured', { status: 500 });
     }
-    if (!sigHeader || !(await verifyStripeSignature(rawBody, sigHeader, webhookSecret))) {
+    // A test-mode Checkout Session (see discover-checkout's use_stripe_
+    // test_mode routing, for App Review) fires this same endpoint, signed
+    // with a completely separate test-mode webhook secret - Stripe doesn't
+    // tag the payload itself with which mode it's from before the
+    // signature is checked, so the only way to tell is trying each secret
+    // in turn. Whichever one actually verifies is also what determines
+    // isTestMode below, which every Stripe API call after this point needs
+    // to match (a live-mode refund call against a test-mode payment_intent
+    // id, or vice versa, fails outright - test and live are separate
+    // object spaces).
+    let isTestMode = false;
+    const verified =
+      (!!sigHeader && !!webhookSecretLive && (await verifyStripeSignature(rawBody, sigHeader, webhookSecretLive))) ||
+      (!!sigHeader &&
+        !!webhookSecretTest &&
+        (await verifyStripeSignature(rawBody, sigHeader, webhookSecretTest)) &&
+        (isTestMode = true));
+    if (!verified) {
       return new Response('Invalid signature', { status: 400 });
     }
+    const stripeKey = isTestMode ? Deno.env.get('STRIPE_TEST_SECRET_KEY')! : Deno.env.get('STRIPE_SECRET_KEY')!;
 
     const stripeEvent = JSON.parse(rawBody);
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
@@ -99,7 +118,6 @@ serve(async (req) => {
     if (eventError) throw new Error(`look up event: ${eventError.message}`);
     if (!eventRow) throw new Error(`event ${payment.event_id} missing for payment ${payment.id}`);
 
-    const stripeKey = Deno.env.get('STRIPE_SECRET_KEY')!;
     const hasCapacity = eventRow.capacity == null || (eventRow.accepted_count ?? 0) < eventRow.capacity;
 
     if (!hasCapacity) {

@@ -39,13 +39,25 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401 });
     }
 
-    const stripeKey = Deno.env.get('STRIPE_SECRET_KEY');
+    const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+
+    // A flagged demo/reviewer account (see
+    // supabase/apple_reviewer_test_mode.sql) onboards against Stripe's TEST
+    // mode instead of live - lets App Review's demo host complete Connect
+    // onboarding with fake test data instead of a real bank account, and
+    // keeps that account's stripe_accounts row in the same object space as
+    // the test-mode checkout discover-checkout creates for a test buyer.
+    const { data: callerProfile } = await admin
+      .from('profiles')
+      .select('use_stripe_test_mode')
+      .eq('id', user.id)
+      .maybeSingle();
+    const useTestMode = !!callerProfile?.use_stripe_test_mode;
+    const stripeKey = useTestMode ? Deno.env.get('STRIPE_TEST_SECRET_KEY') : Deno.env.get('STRIPE_SECRET_KEY');
     if (!stripeKey) {
-      console.error('STRIPE_SECRET_KEY is not set');
+      console.error(useTestMode ? 'STRIPE_TEST_SECRET_KEY is not set' : 'STRIPE_SECRET_KEY is not set');
       return new Response(JSON.stringify({ error: 'Payments are not configured yet' }), { status: 500 });
     }
-
-    const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
     // v1 endpoints (account_links has no v2 equivalent yet) still take a v2
     // account id directly - see https://docs.stripe.com/connect/accounts-v2.

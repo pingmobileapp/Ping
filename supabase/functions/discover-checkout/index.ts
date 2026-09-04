@@ -41,13 +41,27 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401 });
     }
 
-    const stripeKey = Deno.env.get('STRIPE_SECRET_KEY');
+    const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+
+    // App Review needs to be able to complete an actual checkout (with a
+    // Stripe test card) to verify this feature, without spending real
+    // money - a flagged demo/reviewer account (see
+    // supabase/apple_reviewer_test_mode.sql) transacts against Stripe's
+    // TEST mode instead of live. Both the buyer AND the event's host need
+    // this flag set consistently - a test-mode buyer paying a live-mode
+    // host's Connect account (or vice versa) fails outright, since test
+    // and live are entirely separate object spaces in Stripe.
+    const { data: buyerProfile } = await admin
+      .from('profiles')
+      .select('use_stripe_test_mode')
+      .eq('id', user.id)
+      .maybeSingle();
+    const useTestMode = !!buyerProfile?.use_stripe_test_mode;
+    const stripeKey = useTestMode ? Deno.env.get('STRIPE_TEST_SECRET_KEY') : Deno.env.get('STRIPE_SECRET_KEY');
     if (!stripeKey) {
-      console.error('STRIPE_SECRET_KEY is not set');
+      console.error(useTestMode ? 'STRIPE_TEST_SECRET_KEY is not set' : 'STRIPE_SECRET_KEY is not set');
       return new Response(JSON.stringify({ error: 'Payments are not configured yet' }), { status: 500 });
     }
-
-    const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
     const stripeRequestV1 = async (
       method: 'GET' | 'POST',
