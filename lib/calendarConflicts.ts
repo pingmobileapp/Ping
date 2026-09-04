@@ -12,11 +12,19 @@ export type CalendarConflict = {
 
 const CONFLICT_WINDOW_BEFORE_MINUTES = 30;
 const CONFLICT_WINDOW_AFTER_MINUTES = 90;
-// Bounds how far ahead the Upcoming list pulls in phone-calendar events -
-// unlike Ping events (a handful of family plans), a synced external
-// calendar can hold hundreds of recurring entries indefinitely, so this
-// keeps the list from filling up with things a year out.
-const UPCOMING_WINDOW_DAYS = 60;
+// Bounds how far ahead synced phone-calendar events are fetched. Used to be
+// 60 days on the theory that a synced calendar's hundreds of recurring
+// entries would otherwise flood the Upcoming list - but Month view already
+// shows 15 months forward and Week view ~6 months (see MONTH_GRID_MONTHS_
+// FORWARD/WEEK_GRID_DAY_COUNT in app/(tabs)/index.tsx), so a 60-day fetch
+// window was silently truncating personal/imported events out of both
+// long before either view's own range ran out - a real reported bug (events
+// disappearing right around the 60-day mark). Matches
+// PING_CALENDAR_WINDOW_DAYS now - the Upcoming list's own per-month/per-day
+// scoping (see upcomingListItems in app/(tabs)/index.tsx) is what actually
+// keeps that specific list from showing a year of items at once; this only
+// bounds what's fetched at all, not what's displayed together.
+const UPCOMING_WINDOW_DAYS = 365;
 // How far back this looks in addition to forward - without this, an event
 // on today's own calendar day silently disappeared from every screen the
 // moment its own end time passed (querying from the exact current instant
@@ -27,8 +35,11 @@ const LOOKBACK_WINDOW_DAYS = 30;
 // Ping's own dedicated calendar (see getOrCreatePingCalendarId) only ever
 // holds what the user explicitly added through Ping - personal items and
 // Scan a Schedule imports - so it can't balloon the way a synced calendar
-// can, and a season-long schedule (sports, school) routinely runs past the
-// 60-day window above. Queried separately with this much longer window.
+// can. Kept as its own named constant (even though it's the same value as
+// UPCOMING_WINDOW_DAYS above now) since the two calendars have different
+// growth characteristics - if fetch volume from a synced calendar ever
+// becomes a real problem, this is the one that can come back down without
+// touching Ping's own.
 const PING_CALENDAR_WINDOW_DAYS = 365;
 
 export type ExternalEvent = {

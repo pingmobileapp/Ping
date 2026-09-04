@@ -125,7 +125,21 @@ export default function AddPersonalItemModal({ visible, initialDate, initialMinu
       getPersonalItemReminderMinutes(editingEvent.id).then(setReminderMinutes);
       isPersonalItemImportant(editingEvent.id).then(setIsImportantDate);
       setStartDate(new Date(editingEvent.startDate));
-      setEndDate(new Date(editingEvent.endDate));
+      // All-day events store an EXCLUSIVE end (the calendar API's own
+      // convention - "ends at midnight of the day after the last day"),
+      // but the end-date picker below is meant to show the LAST day the
+      // event actually happens, same as the start-date picker shows the
+      // first. Loading the raw exclusive value straight in (as this used
+      // to) made every all-day event's end date look one calendar day
+      // later than it really was - a single-day event displayed as if it
+      // spanned two days, with no way to actually get it back down to one
+      // (see the matching fix in performSave below for the other half of
+      // this).
+      setEndDate(
+        editingEvent.allDay
+          ? new Date(new Date(editingEvent.endDate).getTime() - 24 * 60 * 60000)
+          : new Date(editingEvent.endDate)
+      );
       setIsAllDay(editingEvent.allDay);
       return;
     }
@@ -234,8 +248,19 @@ export default function AddPersonalItemModal({ visible, initialDate, initialMinu
       const start = new Date(startDate);
       let end = new Date(endDate);
       if (isAllDay) {
+        // endDate here is the LAST day the event happens (inclusive) - see
+        // the matching load-side fix above. This used to discard whatever
+        // end date was actually picked and always force exactly one day
+        // from start, which silently collapsed any multi-day all-day event
+        // down to a single day the moment it was saved through this modal,
+        // and made it impossible to ever pick more than one day here at
+        // all. The conversion to the calendar API's exclusive-end
+        // convention belongs here, on the real picked end, not as a
+        // replacement for it.
         start.setHours(0, 0, 0, 0);
-        end = new Date(start.getTime() + 24 * 60 * 60000);
+        end.setHours(0, 0, 0, 0);
+        if (end.getTime() < start.getTime()) end = new Date(start);
+        end = new Date(end.getTime() + 24 * 60 * 60000);
       } else if (end.getTime() <= start.getTime()) {
         end = new Date(start.getTime() + 60 * 60000);
       }
