@@ -33,7 +33,7 @@ serve(async (req) => {
 
     const { data: invitee, error } = await supabase
       .from('invitees')
-      .select('rsvp_status, events(title, location, event_date, host_id)')
+      .select('rsvp_status, events(title, location, event_date, host_id, image_url)')
       .eq('id', inviteeId)
       .maybeSingle();
 
@@ -62,6 +62,7 @@ serve(async (req) => {
         eventDate: event.event_date,
         hostName,
         rsvpStatus: invitee.rsvp_status,
+        imageUrl: event.image_url || null,
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

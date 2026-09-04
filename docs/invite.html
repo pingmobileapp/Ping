@@ -36,6 +36,14 @@
     padding: 24px;
     text-align: left;
     margin-bottom: 28px;
+    overflow: hidden;
+  }
+  .card-image {
+    display: block;
+    width: calc(100% + 48px);
+    margin: -24px -24px 16px;
+    max-height: 240px;
+    object-fit: cover;
   }
   .row { margin-bottom: 8px; font-size: 15px; }
   .row strong { color: #2B2B2B; }
@@ -97,6 +105,7 @@
           content.innerHTML = `
             <h1>${escapeHtml(info.hostName)} invited you</h1>
             <div class="card">
+              ${info.imageUrl ? `<img class="card-image" src="${escapeHtml(info.imageUrl)}" alt="" />` : ''}
               <div class="row"><strong>${escapeHtml(info.eventTitle)}</strong></div>
               <div class="row">${escapeHtml(dateLabel)} · ${escapeHtml(timeLabel)}</div>
               ${info.location ? `<div class="row">${escapeHtml(info.location)}</div>` : ''}
