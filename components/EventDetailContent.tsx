@@ -449,6 +449,24 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     return handleRsvp(status);
   };
 
+  // Deliberately calls handleRsvp directly, not handlePressRsvpOption - a
+  // Discover self-join tapping the same option twice normally triggers
+  // handleDiscoverLeave (a hard delete of the invitee row, see above),
+  // which would erase the record that this person paid. handleRsvp('declined')
+  // is the plain status-update path (same one a real host invite's Decline
+  // uses) - it never touches Stripe or discover_payments, only rsvp_status,
+  // which is exactly "cancel my spot, no refund."
+  const handleCantAttendPress = () => {
+    Alert.alert(
+      "Can't make it?",
+      "This cancels your RSVP so the host knows your spot is open, but your payment is final and won't be refunded.",
+      [
+        { text: 'Keep my ticket', style: 'cancel' },
+        { text: 'Cancel RSVP', style: 'destructive', onPress: () => handleRsvp('declined') },
+      ]
+    );
+  };
+
   const handleRsvp = async (status: 'accepted' | 'declined' | 'interested') => {
     if (!session?.user?.id || !event) return;
 
@@ -967,6 +985,19 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
           ) : (
             <Text style={styles.notInvitedText}>You haven't been invited to this event.</Text>
           )}
+          {/* A paid ticket has no Decline button at all (see the
+              isPaidDiscoverEvent branch above) - "View Ticket" is the only
+              action once accepted, with no way to tell the host a spot has
+              opened back up. This is a real, separate action from that:
+              cancels the RSVP (frees the capacity slot, notifies the host
+              via the same submitRsvp path a free decline uses) without
+              ever touching the payment - sales are final, this only
+              updates attendance status. */}
+          {isPaidDiscoverEvent && !isHost && myInvitee?.rsvp_status === 'accepted' && (
+            <TouchableOpacity onPress={handleCantAttendPress} disabled={updating}>
+              <Text style={styles.cantAttendText}>Can't make it? Cancel your RSVP (no refund)</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {myInvitee?.rsvp_status === 'accepted' && (
@@ -1360,6 +1391,7 @@ const styles = StyleSheet.create({
   rsvpButtonTextDisabled: { color: colors.textMuted },
   rsvpButtonTextSelected: { color: colors.textOnPrimary },
   notInvitedText: { color: colors.textMuted, fontSize: 14, fontStyle: 'italic' },
+  cantAttendText: { color: colors.danger, fontSize: 13, fontWeight: '600', marginTop: 10, textAlign: 'center' },
   summarySection: { marginTop: 28 },
   actionBanner: {
     marginTop: 12,

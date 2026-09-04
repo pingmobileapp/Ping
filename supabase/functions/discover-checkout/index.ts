@@ -193,6 +193,13 @@ serve(async (req) => {
       'payment_intent_data[transfer_data][destination]': hostAccount.stripe_account_id,
       'metadata[event_id]': eventId,
       'metadata[user_id]': user.id,
+      // Shown directly under Stripe's own Pay button - the buyer sees this
+      // right at the moment they're about to pay, matching the "no
+      // refunds" policy already in docs/terms.html's Payments section (see
+      // Terms of Use §5) and EventDetailContent's "Can't make it?" action,
+      // which cancels the RSVP without ever touching the payment.
+      'custom_text[submit][message]':
+        'All ticket sales are final. This purchase is non-refundable, except where required by law.',
       success_url: bridgeUrl,
       cancel_url: bridgeUrl,
     });
