@@ -357,9 +357,21 @@ export default function HomeScreen() {
     setEventsLoadError(false);
   }, [session?.user?.id]);
 
-  useEffect(() => {
-    fetchEvents().finally(() => setLoading(false));
-  }, [fetchEvents]);
+  // useFocusEffect (not a plain mount-only useEffect) so returning to Home
+  // after anything that can change the signed-in user's own events -
+  // completing a Discover purchase, responding to an invite from a
+  // notification, accepting/declining elsewhere - actually shows up here
+  // without needing a full remount (previously only a logout/login or app
+  // restart would pick it up, since nothing else refetches this). Matches
+  // the focus-refresh pattern every other per-visit fetch on this screen
+  // already uses (notifications, profile phone, external calendar).
+  // setLoading(false) on every focus is harmless once it's already false -
+  // no spinner flash, just a silent background refresh after the first.
+  useFocusEffect(
+    useCallback(() => {
+      fetchEvents().finally(() => setLoading(false));
+    }, [fetchEvents]),
+  );
 
   // Wide enough to cover anything the Upcoming list's own month/day
   // scoping might show - the memo below does the actual narrowing, same
