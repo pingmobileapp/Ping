@@ -12,7 +12,7 @@ import Animated, {
   useSharedValue,
 } from 'react-native-reanimated';
 import { colors } from '../lib/theme';
-import MonthDayCell, { CELL_HEIGHT } from './MonthDayCell';
+import MonthDayCell, { CELL_HEIGHT, MAX_BARS } from './MonthDayCell';
 import { MonthDayBar } from '../lib/weekTimeline';
 
 export const WEEKDAY_HEADER_HEIGHT = 24;
@@ -229,23 +229,47 @@ const MonthGrid = forwardRef<MonthGridHandle, Props>(
               <Text style={styles.monthLabel}>
                 {monthStart.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
               </Text>
-              {monthWeeks[mi].map((week, wi) => (
-                <View key={wi} style={styles.weekRow}>
-                  {week.map((d, di) => {
-                    if (!d) return <View key={`blank-${di}`} style={styles.blankCell} />;
-                    const dateString = toDateKey(d);
-                    const marking = { ...(markedDatesByDay[dateString] || {}), events: monthDayBars[dateString] || [] };
-                    return (
-                      <MonthDayCell
-                        key={dateString}
-                        date={{ dateString, day: d.getDate() }}
-                        marking={marking}
-                        onPress={onDayPress}
-                      />
-                    );
-                  })}
-                </View>
-              ))}
+              {monthWeeks[mi].map((week, wi) => {
+                // Bars that share an id across two side-by-side days in this
+                // same row are one multi-day span (see buildAllDayColumns'
+                // pushAllDayAcrossSpan, which pushes the same id onto every
+                // day it covers) - capped to MAX_BARS the same way
+                // MonthDayCell itself caps what it renders, so "same index"
+                // below lines up with what's actually visible, not the full
+                // (possibly longer) list. Comparing by list position rather
+                // than a real interval/lane layout is a real simplification -
+                // it connects the common case (one ongoing span sharing the
+                // week with few or no other same-day events) cleanly, but a
+                // busy week can shift indices day to day and simply won't
+                // connect. That's an acceptable gap, not a visible bug: an
+                // unconnected span still renders exactly as it always has.
+                const rowCappedBars = week.map((d) => (d ? (monthDayBars[toDateKey(d)] || []).slice(0, MAX_BARS) : []));
+                return (
+                  <View key={wi} style={styles.weekRow}>
+                    {week.map((d, di) => {
+                      if (!d) return <View key={`blank-${di}`} style={styles.blankCell} />;
+                      const dateString = toDateKey(d);
+                      const barConnections = rowCappedBars[di].map((bar, bi) => ({
+                        connectsLeft: di > 0 && rowCappedBars[di - 1][bi]?.id === bar.id,
+                        connectsRight: di < 6 && rowCappedBars[di + 1][bi]?.id === bar.id,
+                      }));
+                      const marking = {
+                        ...(markedDatesByDay[dateString] || {}),
+                        events: monthDayBars[dateString] || [],
+                        barConnections,
+                      };
+                      return (
+                        <MonthDayCell
+                          key={dateString}
+                          date={{ dateString, day: d.getDate() }}
+                          marking={marking}
+                          onPress={onDayPress}
+                        />
+                      );
+                    })}
+                  </View>
+                );
+              })}
             </View>
           ))}
         </Animated.ScrollView>

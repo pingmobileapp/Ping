@@ -62,13 +62,33 @@ export default function MonthDayCell({ date, marking, onPress }: Props) {
           number itself. */}
       {marking?.important && <View style={styles.importantBar} />}
       <View style={styles.bars}>
-        {visibleBars.map((ev) => (
-          <View key={ev.id} style={[styles.bar, { backgroundColor: ev.color }]}>
-            <Text style={styles.barText} numberOfLines={1}>
-              {ev.title}
-            </Text>
-          </View>
-        ))}
+        {visibleBars.map((ev, i) => {
+          // Set by MonthGrid when this bar and its same-row neighbor share
+          // an id at the same stack position - see that component's own
+          // comment for what "connect" means here and its limits.
+          const conn = marking?.barConnections?.[i];
+          return (
+            <View
+              key={ev.id}
+              style={[
+                styles.bar,
+                { backgroundColor: ev.color },
+                conn?.connectsLeft && styles.barConnectLeft,
+                conn?.connectsRight && styles.barConnectRight,
+              ]}
+            >
+              {/* The title only shows where the bar actually starts (or on
+                  an isolated single-day bar) - repeating it on every
+                  connected segment would read as separate same-named
+                  events instead of one continuous span. */}
+              {!conn?.connectsLeft && (
+                <Text style={styles.barText} numberOfLines={1}>
+                  {ev.title}
+                </Text>
+              )}
+            </View>
+          );
+        })}
         {moreCount > 0 && <Text style={styles.moreText}>+{moreCount} more</Text>}
       </View>
     </TouchableOpacity>
@@ -109,6 +129,12 @@ const styles = StyleSheet.create({
   },
   bars: { marginTop: 2, gap: 1 },
   bar: { borderRadius: 3, paddingHorizontal: 3, paddingVertical: 1 },
+  // Cancels the cell's own paddingHorizontal:1 on the connecting side and
+  // squares off that corner, so this bar butts flush against the matching
+  // bar in the neighboring cell instead of showing a gap and rounded caps
+  // in the middle of what's really one continuous span.
+  barConnectLeft: { borderTopLeftRadius: 0, borderBottomLeftRadius: 0, marginLeft: -1 },
+  barConnectRight: { borderTopRightRadius: 0, borderBottomRightRadius: 0, marginRight: -1 },
   barText: { fontSize: 9, color: colors.white, fontWeight: '600' },
   moreText: { fontSize: 9, color: colors.textMuted, textAlign: 'center', marginTop: 1 },
 });

@@ -1134,10 +1134,15 @@ export default function HomeScreen() {
           active={activeFilter}
           onSelect={(filter) => {
             setActiveFilter(filter);
-            // Any of these filters is about the Upcoming list - picking one
-            // backs the calendar out of its expanded state first, so the
-            // filtered list is actually visible.
-            collapseCalendar();
+            // Only back out of an EXPANDED calendar (dragY > 0), so the
+            // filtered list becomes visible instead of staying hidden
+            // behind it. Previously this collapsed unconditionally,
+            // including when the Upcoming list was already pulled all the
+            // way up (dragY <= 0, list already fully visible) - a real
+            // reported bug: picking a filter while the list was already at
+            // the top bounced it back down to the default rest position for
+            // no reason, undoing a drag the user had just done.
+            if (dragY.value > 0) collapseCalendar();
           }}
           hasHidden={hiddenEventIds.size > 0}
           hasImportant={importantItemIds.size > 0}
@@ -1308,7 +1313,13 @@ export default function HomeScreen() {
 
         <Animated.View style={[styles.handleWrap, ready && animatedHandleStyle]}>
           <GestureDetector gesture={pan}>
-            <View style={styles.dragHandleArea}>
+            {/* Without hitSlop, a touch that starts a few px off this
+                28px-tall band misses the gesture entirely and can instead
+                land on the grid behind it - reported as "pulling down
+                works, but starting a fresh drag upward often doesn't."
+                EventDetailModal's own drag handle already needed the same
+                fix (see its hitSlop). */}
+            <View style={styles.dragHandleArea} hitSlop={{ top: 16, bottom: 16, left: 40, right: 40 }}>
               <View style={styles.dragHandle} />
             </View>
           </GestureDetector>

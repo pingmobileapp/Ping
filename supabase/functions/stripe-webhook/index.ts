@@ -93,7 +93,7 @@ serve(async (req) => {
 
     const { data: eventRow, error: eventError } = await admin
       .from('events')
-      .select('capacity, accepted_count')
+      .select('title, host_id, capacity, accepted_count')
       .eq('id', payment.event_id)
       .maybeSingle();
     if (eventError) throw new Error(`look up event: ${eventError.message}`);
@@ -178,6 +178,77 @@ serve(async (req) => {
       .update({ status: 'paid', stripe_payment_intent_id: paymentIntentId, updated_at: new Date().toISOString() })
       .eq('id', payment.id);
     if (markPaidError) throw new Error(`update discover_payments: ${markPaidError.message}`);
+
+    // Tell the host someone booked - a normal free RSVP goes through
+    // submitRsvp (lib/rsvp.ts), which already notifies every host via
+    // notify(). A paid booking never touches that code path at all (this
+    // webhook is the only thing that ever marks a discover_payments row
+    // 'paid' - see the comment at the top of this file), so without this
+    // the host had no way to find out a paid booking happened. Mirrors
+    // notify()'s own 'rsvp_update' shape (same notif_group/thread_key
+    // convention, so a paid booking consolidates into the same one row a
+    // free RSVP would) since that shared lib can't be imported into a Deno
+    // edge function.
+    try {
+      const { data: coHosts } = await admin.from('event_hosts').select('user_id').eq('event_id', payment.event_id);
+      const recipientIds = Array.from(
+        new Set(
+          [eventRow.host_id, ...(coHosts || []).map((h: { user_id: string }) => h.user_id)].filter(
+            (id): id is string => !!id && id !== payment.user_id
+          )
+        )
+      );
+
+      if (recipientIds.length > 0) {
+        const { data: buyerProfile } = await admin
+          .from('profiles')
+          .select('full_name, email')
+          .eq('id', payment.user_id)
+          .maybeSingle();
+        const buyerName =
+          buyerProfile?.full_name ||
+          (buyerProfile?.email ? buyerProfile.email.split('@')[0] : null) ||
+          'Someone';
+        const title = 'RSVP update';
+        const body = `${buyerName} accepted ${eventRow.title}`;
+
+        const { error: notifyError } = await admin.from('notifications').upsert(
+          recipientIds.map((recipientId) => ({
+            recipient_id: recipientId,
+            notif_group: 'event_activity',
+            type: 'rsvp_update',
+            event_id: payment.event_id,
+            group_id: null,
+            thread_key: payment.event_id,
+            title,
+            body,
+            created_at: new Date().toISOString(),
+            read_at: null,
+          })),
+          { onConflict: 'recipient_id,notif_group,thread_key' }
+        );
+        if (notifyError) console.error('Error saving booking notification:', notifyError);
+
+        await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/send-push`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+            apikey: Deno.env.get('SUPABASE_ANON_KEY')!,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            user_ids: recipientIds,
+            title,
+            body,
+            data: { eventId: payment.event_id, type: 'rsvp_update' },
+          }),
+        }).catch((pushErr) => console.error('Failed to send booking-notification push:', pushErr));
+      }
+    } catch (notifyErr) {
+      // Never fail the webhook over a notification hiccup - the booking
+      // itself already succeeded above.
+      console.error('Error notifying host of paid booking:', notifyErr);
+    }
 
     return new Response(JSON.stringify({ received: true }), { status: 200 });
   } catch (err) {

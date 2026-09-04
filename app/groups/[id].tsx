@@ -3,6 +3,7 @@ import {
   View,
   Text,
   FlatList,
+  ScrollView,
   StyleSheet,
   TouchableOpacity,
   TextInput,
@@ -287,7 +288,13 @@ export default function GroupDetailScreen() {
       <View style={styles.eventsSection}>
         <Text style={[styles.sectionLabel, styles.eventsSectionLabel]}>Upcoming</Text>
         {groupEvents.length > 0 ? (
-          groupEvents.map((event) => <EventCard key={event.id} event={event} onPress={openEvent} />)
+          // Bounded height, not the section's natural (unbounded) content
+          // height - up to 10 events tagged to a group could otherwise run
+          // taller than the screen with no way to reach the rest, or push
+          // the member list below entirely off-screen.
+          <ScrollView style={styles.eventsScroll} showsVerticalScrollIndicator={false} nestedScrollEnabled>
+            {groupEvents.map((event) => <EventCard key={event.id} event={event} onPress={openEvent} />)}
+          </ScrollView>
         ) : (
           <Text style={styles.noEventsText}>
             No upcoming Pings tagged to this group yet — when you create one and select just this group to invite
@@ -462,6 +469,7 @@ const styles = StyleSheet.create({
   // the section itself cancels that out to avoid a doubled 40px inset.
   eventsSection: { marginHorizontal: -20 },
   eventsSectionLabel: { marginHorizontal: 20 },
+  eventsScroll: { maxHeight: 280 },
   noEventsText: { marginHorizontal: 20, color: colors.textMuted, fontSize: 13, lineHeight: 18, fontStyle: 'italic' },
   importRow: {
     backgroundColor: colors.surfaceAlt,
