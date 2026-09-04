@@ -112,8 +112,22 @@ export default function AdminScreen() {
           if (!report.content_id) return;
           const table = report.content_type === 'event' ? 'events' : report.content_type === 'message' ? 'messages' : 'group_messages';
           if (report.content_type !== 'block') {
-            const { error } = await supabase.from(table).delete().eq('id', report.content_id);
-            if (error) console.error(`Error deleting ${table} row:`, error);
+            const { error, count } = await supabase
+              .from(table)
+              .delete({ count: 'exact' })
+              .eq('id', report.content_id);
+            // A failed delete (RLS denial, row already gone, etc.) used to
+            // still mark the report "removed" regardless - meaning Apple's
+            // Guideline 1.2 "remove the content within 24 hours"
+            // requirement could silently not actually happen while the
+            // admin screen showed it as handled. count===0 with no error
+            // is RLS quietly matching zero rows, not a thrown error - both
+            // cases need to stop here, not just a truthy `error` check.
+            if (error || !count) {
+              console.error(`Error deleting ${table} row:`, error || 'no matching row (RLS denied or already gone)');
+              Alert.alert('Could not remove content', "This content couldn't be deleted. It may already be gone, or something went wrong - try again or check manually.");
+              return;
+            }
           }
           await resolve(report.id, 'removed');
         },
