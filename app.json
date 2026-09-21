@@ -62,7 +62,7 @@
       [
         "expo-contacts",
         {
-          "contactsPermission": "Ping uses your contacts to help you invite friends and family to events and groups."
+          "contactsPermission": "Ping reads your contacts so you can pick people to invite. Only the contacts you choose to import are uploaded to Ping's servers (name and phone number), to add them to your events and groups and to check whether they already use Ping."
         }
       ],
       [
@@ -78,7 +78,9 @@
         {
           "locationWhenInUsePermission": "Ping uses your location to show how far away nearby events and activities in Discover actually are."
         }
-      ]
+      ],
+      "./plugins/withUISceneLifecycle",
+      "./plugins/withXcode27PodDeploymentTarget"
     ],
     "experiments": {
       "typedRoutes": true,

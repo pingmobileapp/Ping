@@ -13,10 +13,13 @@ import {
   Linking,
 } from 'react-native';
 import * as Contacts from 'expo-contacts';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../supabase';
 import { useAuth } from '../lib/AuthContext';
 import { findOrCreateContact } from '../lib/phone';
 import { colors } from '../lib/theme';
+
+const CONSENT_KEY = 'ping.contactsUploadConsent.v1';
 
 type DeviceContact = { key: string; name: string; phone: string | null };
 type AppContact = {
@@ -42,14 +45,35 @@ export default function ImportContactsModal({ visible, onClose, onImported }: Pr
   const [search, setSearch] = useState('');
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [importing, setImporting] = useState(false);
+  const [needsConsent, setNeedsConsent] = useState(false);
 
   useEffect(() => {
-    if (visible) {
-      setSelectedKeys([]);
-      setSearch('');
-      loadDeviceContacts();
-    }
+    if (!visible) return;
+    setSelectedKeys([]);
+    setSearch('');
+    setNeedsConsent(false);
+    setLoading(true);
+    (async () => {
+      let consented = false;
+      try {
+        consented = (await AsyncStorage.getItem(CONSENT_KEY)) === 'yes';
+      } catch {}
+      if (consented) {
+        loadDeviceContacts();
+      } else {
+        setNeedsConsent(true);
+        setLoading(false);
+      }
+    })();
   }, [visible]);
+
+  const handleConsent = async () => {
+    try {
+      await AsyncStorage.setItem(CONSENT_KEY, 'yes');
+    } catch {}
+    setNeedsConsent(false);
+    loadDeviceContacts();
+  };
 
   const loadDeviceContacts = async () => {
     setLoading(true);
@@ -127,7 +151,27 @@ export default function ImportContactsModal({ visible, onClose, onImported }: Pr
           <View style={styles.handle} />
           <Text style={styles.header}>Import from Contacts</Text>
 
-          {loading ? (
+          {needsConsent ? (
+            <View style={{ flex: 1 }}>
+              <Text style={styles.consentTitle}>Before you import contacts</Text>
+              <Text style={styles.consentText}>
+                Ping will ask to read your contacts so you can pick people to invite. Your contact list is
+                not uploaded.
+              </Text>
+              <Text style={styles.consentText}>
+                Only the contacts you select and import are uploaded to Ping's servers, and only their name
+                and phone number.
+              </Text>
+              <Text style={styles.consentText}>
+                We use them to add those people to your events and groups, and to check whether they already
+                have a Ping account so you can invite them. Ping does not sell your contacts or use them for
+                advertising.
+              </Text>
+              <Text style={styles.consentText}>
+                You can stop at any time. Nothing is uploaded until you tap Import.
+              </Text>
+            </View>
+          ) : loading ? (
             <ActivityIndicator color={colors.primary} style={{ marginTop: 40 }} />
           ) : permissionDenied ? (
             <View style={{ paddingVertical: 40 }}>
@@ -180,19 +224,31 @@ export default function ImportContactsModal({ visible, onClose, onImported }: Pr
             </>
           )}
 
+          {!needsConsent && !loading && !permissionDenied && (
+            <Text style={styles.uploadNote}>
+              Importing saves each selected contact's name and phone number to your Ping account.
+            </Text>
+          )}
+
           <View style={styles.footer}>
             <TouchableOpacity style={[styles.footerButton, styles.cancelButton]} onPress={onClose}>
-              <Text style={styles.cancelButtonText}>Cancel</Text>
+              <Text style={styles.cancelButtonText}>{needsConsent ? 'Not now' : 'Cancel'}</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.footerButton, styles.importButton]}
-              onPress={handleImport}
-              disabled={importing || selectedKeys.length === 0}
-            >
-              <Text style={styles.importButtonText}>
-                {importing ? 'Importing...' : `Import${selectedKeys.length ? ` (${selectedKeys.length})` : ''}`}
-              </Text>
-            </TouchableOpacity>
+            {needsConsent ? (
+              <TouchableOpacity style={[styles.footerButton, styles.importButton]} onPress={handleConsent}>
+                <Text style={styles.importButtonText}>Agree & Continue</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={[styles.footerButton, styles.importButton]}
+                onPress={handleImport}
+                disabled={importing || selectedKeys.length === 0}
+              >
+                <Text style={styles.importButtonText}>
+                  {importing ? 'Importing...' : `Import${selectedKeys.length ? ` (${selectedKeys.length})` : ''}`}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </View>
@@ -206,6 +262,9 @@ const styles = StyleSheet.create({
   card: { height: '80%', backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: 'center', marginBottom: 12 },
   header: { fontSize: 20, fontWeight: '700', color: colors.textPrimary, marginBottom: 12 },
+  consentTitle: { fontSize: 17, fontWeight: '700', color: colors.textPrimary, marginBottom: 10 },
+  consentText: { color: colors.textSecondary, fontSize: 15, lineHeight: 22, marginBottom: 12 },
+  uploadNote: { color: colors.textMuted, fontSize: 12, lineHeight: 17, marginTop: 8 },
   helperText: { color: colors.textMuted, fontSize: 14, lineHeight: 20 },
   limitedBanner: {
     backgroundColor: colors.surfaceAlt,
