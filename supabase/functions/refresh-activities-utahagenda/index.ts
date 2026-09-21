@@ -1,5 +1,7 @@
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { getRegion, type Region } from '../_shared/regions.ts';
+import { crawlerModel, noteUsage } from '../_shared/anthropic.ts';
 
 // A dedicated companion to refresh-activities, specifically for
 // utahagenda.com - it catalogs a lot of local activities (fairs,
@@ -21,8 +23,6 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // (DST-dependent) margin. zonedDateTimeToUtcIso below does a real,
 // DST-aware conversion via Intl's own timezone database instead of a
 // naive string - shared logic with refresh-activities' own copy.
-const ANCHOR_TIMEZONE = Deno.env.get('DISCOVER_ANCHOR_TIMEZONE') || 'America/Denver';
-
 function zonedDateTimeToUtcIso(dateStr: string, timeStr: string, timeZone: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
   const [hh, mm] = timeStr.split(':').map(Number);
@@ -60,7 +60,7 @@ const CATEGORIES = [
 type Category = (typeof CATEGORIES)[number];
 
 type ActivityRow = {
-  source: 'ai_search_utahagenda';
+  source: string;
   external_id: null;
   title: string;
   category: Category;
@@ -76,20 +76,11 @@ type ActivityRow = {
   distance_miles: number | null;
 };
 
+const SOURCE_BASE = 'ai_search_utahagenda';
+
 const DAYS_AHEAD = 30;
 const RADIUS_MILES = 25;
 const RADIUS_SLACK_MILES = 5;
-
-// The specific utahagenda.com pages worth reading in full - web_fetch can
-// only fetch a URL that's explicitly present in the conversation (a
-// security restriction on the tool), so these are handed to Claude
-// directly rather than left for it to discover via search.
-const UTAHAGENDA_URLS = [
-  'https://utahagenda.com/utah-movies-in-the-park/',
-  'https://utahagenda.com/todays-utah-events/',
-  'https://utahagenda.com/best-utah-city-events/',
-  'https://utahagenda.com/best-of-utah/',
-];
 
 function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 3958.8;
@@ -193,7 +184,7 @@ const AI_SEARCH_SCHEMA = {
           end_time: { type: ['string', 'null'] },
           location: { type: 'string', description: 'Venue name and/or city.' },
           price_label: { type: 'string', description: 'e.g. "Free", "$10", "$8+". "Unknown" if truly not stated.' },
-          url: { type: 'string', description: 'The real utahagenda.com URL (or a further link on that page) for this specific activity.' },
+          url: { type: 'string', description: 'The real URL of the calendar page (or a further link on that page) for this specific activity.' },
           description: { type: ['string', 'null'], description: 'One short sentence, or null.' },
         },
         required: ['title', 'category', 'date', 'start_time', 'end_time', 'location', 'price_label', 'url', 'description'],
@@ -209,6 +200,7 @@ const AI_SEARCH_SCHEMA = {
 // function for why that distinction (vs. a real empty array) matters.
 async function fetchUtahAgendaActivities(
   anchorLabel: string,
+  region: Region,
   debug: Record<string, unknown>
 ): Promise<ActivityRow[] | null> {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
@@ -233,16 +225,12 @@ async function fetchUtahAgendaActivities(
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-5',
+        model: crawlerModel(),
         max_tokens: 16000,
         system:
-          `You fetch and read specific pages on utahagenda.com to find real, currently-scheduled activities and ` +
+          `You fetch and read specific pages on ${region.calendar.siteLabel} to find real, currently-scheduled activities and ` +
           `events near ${anchorLabel}, within about ${RADIUS_MILES} miles, happening between ${isoToday} and ` +
-          `${isoEnd}. These pages cover the whole state, so only keep what's actually near ${anchorLabel} - skip ` +
-          `anything for a clearly distant city. The "movies in the park" page lists free outdoor movie nights at ` +
-          `parks across Utah - pull every showing within range, not just the first one you see, and check whether ` +
-          `it recurs (e.g. weekly all summer) so you can list several upcoming dates rather than just one. If a ` +
-          `page links to a more specific city or category page that looks relevant, fetch that one too. Only ` +
+          `${isoEnd}. ${region.calendar.guidance(anchorLabel)} Only ` +
           `include something with a real date you actually read on the page - never guess or invent a date, time, ` +
           `price, or URL. Once you've fetched what's useful and have a good list, call record_activities with ` +
           `everything you found - that call is mandatory, do not end your turn with only a text response. If a ` +
@@ -250,12 +238,12 @@ async function fetchUtahAgendaActivities(
           `it with anything uncertain.`,
         tools: [
           { type: 'web_fetch_20250910', name: 'web_fetch', max_uses: 8, max_content_tokens: 8000 },
-          { name: 'record_activities', description: 'Record the activities found on utahagenda.com.', input_schema: AI_SEARCH_SCHEMA },
+          { name: 'record_activities', description: `Record the activities found on ${region.calendar.siteLabel}.`, input_schema: AI_SEARCH_SCHEMA },
         ],
         messages: [
           {
             role: 'user',
-            content: `Fetch and read these utahagenda.com pages, and find activities near ${anchorLabel}:\n${UTAHAGENDA_URLS.join('\n')}`,
+            content: `Fetch and read these pages (${region.calendar.siteLabel}), and find activities near ${anchorLabel}:\n${region.calendar.urls.join('\n')}`,
           },
         ],
       }),
@@ -269,6 +257,7 @@ async function fetchUtahAgendaActivities(
     }
 
     const result = await response.json();
+    noteUsage('refresh-activities-utahagenda', debug, result);
     const toolUse = (result.content || []).find(
       (block: any) => block.type === 'tool_use' && block.name === 'record_activities'
     );
@@ -293,10 +282,10 @@ async function fetchUtahAgendaActivities(
       // timestamp is worse than dropping the row.
       .filter((a: any) => a?.title && a?.date && a?.start_time && a?.url && CATEGORIES.includes(a.category))
       .map((a: any): ActivityRow => {
-        const startsAt = zonedDateTimeToUtcIso(a.date, a.start_time, ANCHOR_TIMEZONE);
-        const endsAt = a.end_time ? zonedDateTimeToUtcIso(a.date, a.end_time, ANCHOR_TIMEZONE) : null;
+        const startsAt = zonedDateTimeToUtcIso(a.date, a.start_time, region.timezone);
+        const endsAt = a.end_time ? zonedDateTimeToUtcIso(a.date, a.end_time, region.timezone) : null;
         return {
-          source: 'ai_search_utahagenda',
+          source: `${SOURCE_BASE}${region.sourceSuffix}`,
           external_id: null,
           title: a.title,
           category: a.category,
@@ -319,14 +308,24 @@ async function fetchUtahAgendaActivities(
   }
 }
 
-serve(async (req) => {
+const FUNCTION_NAME = 'refresh-activities-utahagenda';
+
+async function run(req: Request): Promise<Response> {
   try {
     let debugRequested = false;
+    let regionId: unknown;
     try {
       const body = await req.json();
       debugRequested = !!body?.debug;
+      regionId = body?.region;
     } catch {
       // No/invalid JSON body (e.g. the cron job posts an empty body).
+    }
+    let region: Region;
+    try {
+      region = getRegion(regionId);
+    } catch (err) {
+      return new Response(JSON.stringify({ error: String(err) }), { status: 400 });
     }
     const debug: Record<string, unknown> = {};
 
@@ -337,11 +336,10 @@ serve(async (req) => {
     }
     const admin = createClient(supabaseUrl, serviceRoleKey);
 
-    const lat = Number(Deno.env.get('DISCOVER_ANCHOR_LAT') ?? '0');
-    const lng = Number(Deno.env.get('DISCOVER_ANCHOR_LNG') ?? '0');
-    const label = Deno.env.get('DISCOVER_ANCHOR_LABEL') ?? 'the area';
+    const { lat, lng, label } = region.anchor();
+    const sourceName = SOURCE_BASE + region.sourceSuffix;
 
-    const rawActivities = await fetchUtahAgendaActivities(label, debug);
+    const rawActivities = await fetchUtahAgendaActivities(label, region, debug);
     const activities = rawActivities !== null ? await verifyDistances(admin, rawActivities, lat, lng) : null;
 
     // Housekeeping: drop anything already over, regardless of source -
@@ -352,19 +350,20 @@ serve(async (req) => {
     const errors: string[] = [];
 
     if (activities !== null) {
-      await admin.from('activities').delete().eq('source', 'ai_search_utahagenda');
+      await admin.from('activities').delete().eq('source', sourceName);
       if (activities.length > 0) {
         const { error } = await admin.from('activities').insert(activities);
         if (error) errors.push(`utahagenda insert: ${error.message}`);
       }
     } else {
-      errors.push('utahagenda fetch failed - left existing ai_search_utahagenda rows untouched');
+      errors.push(`utahagenda fetch failed - left existing ${sourceName} rows untouched`);
     }
 
     return new Response(
       JSON.stringify({
         count: activities === null ? 'failed (left untouched)' : activities.length,
         errors,
+        usage: debug.usage ?? null,
         ...(debugRequested ? { debug } : {}),
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
@@ -373,4 +372,97 @@ serve(async (req) => {
     console.error(err);
     return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
   }
+}
+
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
+
+// Supabase closes a request that sends nothing back for 150 seconds, and the
+// Boise crawls (more pages/venues to look up) can run longer than that. So a
+// Boise run answers right away and does its work in the background, where
+// only the longer overall function limit applies - cron doesn't read the
+// response anyway. Utah runs are untouched: same request, same response.
+serve(async (req) => {
+  const text = await req.text();
+  const again = () => new Request(req.url, { method: 'POST', body: text });
+  let regionId: unknown;
+  let debugRequested = false;
+  try {
+    const parsed = JSON.parse(text);
+    regionId = parsed?.region;
+    debugRequested = !!parsed?.debug;
+  } catch {
+    // No/invalid JSON body - Utah, handled by run() as before.
+  }
+  // Debugging aid: a Boise run with "debug": true stays attached and sends a
+  // blank keep-alive every 15s so the 150s idle limit doesn't cut it off,
+  // then returns the real outcome (the normal background path only logs it).
+  if (regionId === 'boise' && debugRequested) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        const keepAlive = setInterval(() => controller.enqueue(encoder.encode(' ')), 15000);
+        try {
+          const res = await run(again());
+          controller.enqueue(encoder.encode(await res.text()));
+        } catch (err) {
+          controller.enqueue(encoder.encode(JSON.stringify({ error: String(err) })));
+        } finally {
+          clearInterval(keepAlive);
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  if (regionId === 'boise' && typeof EdgeRuntime !== 'undefined') {
+    // Record how the run ends (see supabase/crawler_runs.sql). A row still
+    // 'running' long after the start means the run was cut off. Logging
+    // problems never affect the run itself.
+    const url = Deno.env.get('SUPABASE_URL');
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const logClient = url && serviceKey ? createClient(url, serviceKey) : null;
+    let runId: string | null = null;
+    const started = (async () => {
+      try {
+        const { data } = await logClient!
+          .from('crawler_runs')
+          .insert({ function_name: FUNCTION_NAME, region: 'boise' })
+          .select('id')
+          .single();
+        runId = data?.id ?? null;
+      } catch (err) {
+        console.error('crawler_runs insert failed:', err);
+      }
+    })();
+    const finish = async (status: string, detail: string) => {
+      try {
+        await started;
+        if (logClient && runId) {
+          await logClient
+            .from('crawler_runs')
+            .update({ status, detail: detail.slice(0, 4000), finished_at: new Date().toISOString() })
+            .eq('id', runId);
+        }
+      } catch (err) {
+        console.error('crawler_runs update failed:', err);
+      }
+    };
+    EdgeRuntime.waitUntil(
+      run(again())
+        .then(async (res) => {
+          const body = await res.text();
+          console.log('background run finished:', res.status, body);
+          await finish(res.ok ? 'finished' : 'failed', `${res.status} ${body}`);
+        })
+        .catch(async (err) => {
+          console.error('background run failed:', err);
+          await finish('failed', String(err));
+        })
+    );
+    return new Response(JSON.stringify({ accepted: true, region: 'boise', note: 'running in the background' }), {
+      status: 202,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  return await run(again());
 });

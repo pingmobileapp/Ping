@@ -1,5 +1,7 @@
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { getRegion, type Region } from '../_shared/regions.ts';
+import { crawlerModel, noteUsage } from '../_shared/anthropic.ts';
 
 // A dedicated companion to refresh-activities and refresh-activities-
 // utahagenda, this time for allevents.in - unlike utahagenda.com (one
@@ -13,8 +15,6 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // Writes into the same public.activities table under its own
 // source='ai_search_allevents' so this function's delete-and-replace
 // each run never touches the other two passes' own rows.
-
-const ANCHOR_TIMEZONE = Deno.env.get('DISCOVER_ANCHOR_TIMEZONE') || 'America/Denver';
 
 function zonedDateTimeToUtcIso(dateStr: string, timeStr: string, timeZone: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -53,7 +53,7 @@ const CATEGORIES = [
 type Category = (typeof CATEGORIES)[number];
 
 type ActivityRow = {
-  source: 'ai_search_allevents';
+  source: string;
   external_id: null;
   title: string;
   category: Category;
@@ -69,25 +69,11 @@ type ActivityRow = {
   distance_miles: number | null;
 };
 
+const SOURCE_BASE = 'ai_search_allevents';
+
 const DAYS_AHEAD = 30;
 const RADIUS_MILES = 25;
 const RADIUS_SLACK_MILES = 5;
-
-// Nearby-city landing pages, closest to the anchor (Alpine, UT) first -
-// one fetch per city, no slack for Claude to go chasing extra links, so
-// total runtime stays predictable. Picked to actually cover a 25mi
-// radius: the small towns directly adjacent to Alpine, plus the larger
-// cities further out that draw more events.
-const ALLEVENTS_URLS = [
-  'https://allevents.in/lehi-us/all',
-  'https://allevents.in/american-fork-us/all',
-  'https://allevents.in/highland-us/all',
-  'https://allevents.in/pleasant-grove-us/all',
-  'https://allevents.in/orem-us/all',
-  'https://allevents.in/provo-us/all',
-  'https://allevents.in/draper-us/all',
-  'https://allevents.in/sandy-us/all',
-];
 
 function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 3958.8;
@@ -205,6 +191,7 @@ const AI_SEARCH_SCHEMA = {
 // function for why that distinction (vs. a real empty array) matters.
 async function fetchAllEventsActivities(
   anchorLabel: string,
+  region: Region,
   debug: Record<string, unknown>
 ): Promise<ActivityRow[] | null> {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
@@ -229,8 +216,8 @@ async function fetchAllEventsActivities(
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-5',
-        max_tokens: 16000,
+        model: crawlerModel(),
+        max_tokens: region.allevents.maxTokens,
         system:
           `You fetch and read specific allevents.in city event-listing pages to find real, currently-scheduled ` +
           `activities near ${anchorLabel}, within about ${RADIUS_MILES} miles, happening between ${isoToday} and ` +
@@ -248,7 +235,7 @@ async function fetchAllEventsActivities(
         messages: [
           {
             role: 'user',
-            content: `Fetch and read these allevents.in pages, and find activities near ${anchorLabel}:\n${ALLEVENTS_URLS.join('\n')}`,
+            content: `Fetch and read these allevents.in pages, and find activities near ${anchorLabel}:\n${region.allevents.urls.join('\n')}`,
           },
         ],
       }),
@@ -262,6 +249,7 @@ async function fetchAllEventsActivities(
     }
 
     const result = await response.json();
+    noteUsage('refresh-activities-allevents', debug, result);
     const toolUse = (result.content || []).find(
       (block: any) => block.type === 'tool_use' && block.name === 'record_activities'
     );
@@ -282,10 +270,10 @@ async function fetchAllEventsActivities(
       // this caused.
       .filter((a: any) => a?.title && a?.date && a?.start_time && a?.url && CATEGORIES.includes(a.category))
       .map((a: any): ActivityRow => {
-        const startsAt = zonedDateTimeToUtcIso(a.date, a.start_time, ANCHOR_TIMEZONE);
-        const endsAt = a.end_time ? zonedDateTimeToUtcIso(a.date, a.end_time, ANCHOR_TIMEZONE) : null;
+        const startsAt = zonedDateTimeToUtcIso(a.date, a.start_time, region.timezone);
+        const endsAt = a.end_time ? zonedDateTimeToUtcIso(a.date, a.end_time, region.timezone) : null;
         return {
-          source: 'ai_search_allevents',
+          source: `${SOURCE_BASE}${region.sourceSuffix}`,
           external_id: null,
           title: a.title,
           category: a.category,
@@ -308,14 +296,24 @@ async function fetchAllEventsActivities(
   }
 }
 
-serve(async (req) => {
+const FUNCTION_NAME = 'refresh-activities-allevents';
+
+async function run(req: Request): Promise<Response> {
   try {
     let debugRequested = false;
+    let regionId: unknown;
     try {
       const body = await req.json();
       debugRequested = !!body?.debug;
+      regionId = body?.region;
     } catch {
       // No/invalid JSON body (e.g. the cron job posts an empty body).
+    }
+    let region: Region;
+    try {
+      region = getRegion(regionId);
+    } catch (err) {
+      return new Response(JSON.stringify({ error: String(err) }), { status: 400 });
     }
     const debug: Record<string, unknown> = {};
 
@@ -326,11 +324,10 @@ serve(async (req) => {
     }
     const admin = createClient(supabaseUrl, serviceRoleKey);
 
-    const lat = Number(Deno.env.get('DISCOVER_ANCHOR_LAT') ?? '0');
-    const lng = Number(Deno.env.get('DISCOVER_ANCHOR_LNG') ?? '0');
-    const label = Deno.env.get('DISCOVER_ANCHOR_LABEL') ?? 'the area';
+    const { lat, lng, label } = region.anchor();
+    const sourceName = SOURCE_BASE + region.sourceSuffix;
 
-    const rawActivities = await fetchAllEventsActivities(label, debug);
+    const rawActivities = await fetchAllEventsActivities(label, region, debug);
     const activities = rawActivities !== null ? await verifyDistances(admin, rawActivities, lat, lng) : null;
 
     // Housekeeping: drop anything already over, regardless of source -
@@ -340,19 +337,20 @@ serve(async (req) => {
     const errors: string[] = [];
 
     if (activities !== null) {
-      await admin.from('activities').delete().eq('source', 'ai_search_allevents');
+      await admin.from('activities').delete().eq('source', sourceName);
       if (activities.length > 0) {
         const { error } = await admin.from('activities').insert(activities);
         if (error) errors.push(`allevents insert: ${error.message}`);
       }
     } else {
-      errors.push('allevents fetch failed - left existing ai_search_allevents rows untouched');
+      errors.push(`allevents fetch failed - left existing ${sourceName} rows untouched`);
     }
 
     return new Response(
       JSON.stringify({
         count: activities === null ? 'failed (left untouched)' : activities.length,
         errors,
+        usage: debug.usage ?? null,
         ...(debugRequested ? { debug } : {}),
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
@@ -361,4 +359,97 @@ serve(async (req) => {
     console.error(err);
     return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
   }
+}
+
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
+
+// Supabase closes a request that sends nothing back for 150 seconds, and the
+// Boise crawls (more pages/venues to look up) can run longer than that. So a
+// Boise run answers right away and does its work in the background, where
+// only the longer overall function limit applies - cron doesn't read the
+// response anyway. Utah runs are untouched: same request, same response.
+serve(async (req) => {
+  const text = await req.text();
+  const again = () => new Request(req.url, { method: 'POST', body: text });
+  let regionId: unknown;
+  let debugRequested = false;
+  try {
+    const parsed = JSON.parse(text);
+    regionId = parsed?.region;
+    debugRequested = !!parsed?.debug;
+  } catch {
+    // No/invalid JSON body - Utah, handled by run() as before.
+  }
+  // Debugging aid: a Boise run with "debug": true stays attached and sends a
+  // blank keep-alive every 15s so the 150s idle limit doesn't cut it off,
+  // then returns the real outcome (the normal background path only logs it).
+  if (regionId === 'boise' && debugRequested) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        const keepAlive = setInterval(() => controller.enqueue(encoder.encode(' ')), 15000);
+        try {
+          const res = await run(again());
+          controller.enqueue(encoder.encode(await res.text()));
+        } catch (err) {
+          controller.enqueue(encoder.encode(JSON.stringify({ error: String(err) })));
+        } finally {
+          clearInterval(keepAlive);
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  if (regionId === 'boise' && typeof EdgeRuntime !== 'undefined') {
+    // Record how the run ends (see supabase/crawler_runs.sql). A row still
+    // 'running' long after the start means the run was cut off. Logging
+    // problems never affect the run itself.
+    const url = Deno.env.get('SUPABASE_URL');
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const logClient = url && serviceKey ? createClient(url, serviceKey) : null;
+    let runId: string | null = null;
+    const started = (async () => {
+      try {
+        const { data } = await logClient!
+          .from('crawler_runs')
+          .insert({ function_name: FUNCTION_NAME, region: 'boise' })
+          .select('id')
+          .single();
+        runId = data?.id ?? null;
+      } catch (err) {
+        console.error('crawler_runs insert failed:', err);
+      }
+    })();
+    const finish = async (status: string, detail: string) => {
+      try {
+        await started;
+        if (logClient && runId) {
+          await logClient
+            .from('crawler_runs')
+            .update({ status, detail: detail.slice(0, 4000), finished_at: new Date().toISOString() })
+            .eq('id', runId);
+        }
+      } catch (err) {
+        console.error('crawler_runs update failed:', err);
+      }
+    };
+    EdgeRuntime.waitUntil(
+      run(again())
+        .then(async (res) => {
+          const body = await res.text();
+          console.log('background run finished:', res.status, body);
+          await finish(res.ok ? 'finished' : 'failed', `${res.status} ${body}`);
+        })
+        .catch(async (err) => {
+          console.error('background run failed:', err);
+          await finish('failed', String(err));
+        })
+    );
+    return new Response(JSON.stringify({ accepted: true, region: 'boise', note: 'running in the background' }), {
+      status: 202,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  return await run(again());
 });

@@ -1,5 +1,7 @@
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { getRegion, swapExamples, type Region } from '../_shared/regions.ts';
+import { crawlerModel, noteUsage } from '../_shared/anthropic.ts';
 
 // A dedicated, low-frequency companion to the other refresh-activities-*
 // functions - nearly every Utah city runs its own annual "[City] Days"
@@ -12,8 +14,6 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // since a given year's dates don't change once set. Writes into the same
 // activities table under its own source='ai_search_citydays' so its
 // delete-and-replace never touches the other passes' rows.
-
-const ANCHOR_TIMEZONE = Deno.env.get('DISCOVER_ANCHOR_TIMEZONE') || 'America/Denver';
 
 function zonedDateTimeToUtcIso(dateStr: string, timeStr: string, timeZone: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -52,7 +52,7 @@ const CATEGORIES = [
 type Category = (typeof CATEGORIES)[number];
 
 type ActivityRow = {
-  source: 'ai_search_citydays';
+  source: string;
   external_id: null;
   title: string;
   category: Category;
@@ -71,35 +71,13 @@ type ActivityRow = {
 // A full year, not the 30-day window the nightly passes use - this job
 // runs once a year (see the cron schedule), so it needs to catch a summer
 // festival even when run in early spring, months before it happens.
+const SOURCE_BASE = 'ai_search_citydays';
+
 const DAYS_AHEAD = 365;
 const RADIUS_MILES = 25;
 const RADIUS_SLACK_MILES = 15; // wider than the other passes - a real
 // destination festival (a whole city's "Days" celebration) is worth
 // showing even a bit further out than a random Tuesday farmers market.
-
-// Utah County cities (plus a few just outside it) that traditionally run
-// their own annual "[City] Days" celebration - a real, well-known Utah
-// summer tradition with no single directory covering all of them.
-const CITIES = [
-  'Alpine',
-  'Highland',
-  'Cedar Hills',
-  'Lehi',
-  'American Fork',
-  'Pleasant Grove',
-  'Lindon',
-  'Orem',
-  'Provo',
-  'Springville',
-  'Spanish Fork',
-  'Payson',
-  'Eagle Mountain',
-  'Saratoga Springs',
-  'Draper',
-  'Sandy',
-  'Riverton',
-  'Bluffdale',
-];
 
 function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 3958.8;
@@ -212,6 +190,7 @@ const CITY_DAYS_SCHEMA = {
 
 async function fetchCityDaysActivities(
   anchorLabel: string,
+  region: Region,
   debug: Record<string, unknown>
 ): Promise<ActivityRow[] | null> {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
@@ -235,14 +214,11 @@ async function fetchCityDaysActivities(
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-5',
+        model: crawlerModel(),
         max_tokens: 24000,
         system:
-          `Most Utah cities run their own annual "[City] Days" summer celebration (e.g. Lehi Round-Up Days, ` +
-          `American Fork Steel Days, Pleasant Grove Strawberry Days, Alpine Days) - a multi-day festival with a ` +
-          `parade, carnival, rodeo, or fireworks, usually announced on that city's own website with no single ` +
-          `directory listing all of them. Search for the real, current celebration for each of these cities: ` +
-          `${CITIES.join(', ')}. For each one, find its ${currentYear} dates if they haven't passed yet as of ` +
+          `${region.cityDays.intro} Search for the real, current celebration for each of these cities: ` +
+          `${region.cityDays.cities.join(', ')}. For each one, find its ${currentYear} dates if they haven't passed yet as of ` +
           `${isoToday}, or its ${nextYear} dates if ${currentYear}'s has already happened and ${nextYear}'s are ` +
           `already announced. Only include a city if you found a real, dated celebration via an actual search ` +
           `result - never guess a date, and skip a city entirely rather than invent one for it (not every city ` +
@@ -253,12 +229,12 @@ async function fetchCityDaysActivities(
           `with an empty list rather than padding it with anything uncertain.`,
         tools: [
           { type: 'web_search_20250305', name: 'web_search', max_uses: 14 },
-          { name: 'record_activities', description: 'Record the city days celebrations found.', input_schema: CITY_DAYS_SCHEMA },
+          { name: 'record_activities', description: 'Record the city days celebrations found.', input_schema: swapExamples(CITY_DAYS_SCHEMA, [['Lehi Round-Up Days', region.examples.cityDayName]]) },
         ],
         messages: [
           {
             role: 'user',
-            content: `Find each Utah city's annual "Days" celebration near ${anchorLabel} for this year or next.`,
+            content: `${region.cityDays.userPrompt} near ${anchorLabel} for this year or next.`,
           },
         ],
       }),
@@ -272,6 +248,7 @@ async function fetchCityDaysActivities(
     }
 
     const result = await response.json();
+    noteUsage('refresh-city-days', debug, result);
     const toolUse = (result.content || []).find(
       (block: any) => block.type === 'tool_use' && block.name === 'record_activities'
     );
@@ -292,10 +269,10 @@ async function fetchCityDaysActivities(
       // this caused.
       .filter((a: any) => a?.title && a?.date && a?.start_time && a?.url && CATEGORIES.includes(a.category))
       .map((a: any): ActivityRow => {
-        const startsAt = zonedDateTimeToUtcIso(a.date, a.start_time, ANCHOR_TIMEZONE);
-        const endsAt = a.end_time ? zonedDateTimeToUtcIso(a.date, a.end_time, ANCHOR_TIMEZONE) : null;
+        const startsAt = zonedDateTimeToUtcIso(a.date, a.start_time, region.timezone);
+        const endsAt = a.end_time ? zonedDateTimeToUtcIso(a.date, a.end_time, region.timezone) : null;
         return {
-          source: 'ai_search_citydays',
+          source: `${SOURCE_BASE}${region.sourceSuffix}`,
           external_id: null,
           title: a.title,
           category: a.category,
@@ -318,14 +295,24 @@ async function fetchCityDaysActivities(
   }
 }
 
-serve(async (req) => {
+const FUNCTION_NAME = 'refresh-city-days';
+
+async function run(req: Request): Promise<Response> {
   try {
     let debugRequested = false;
+    let regionId: unknown;
     try {
       const body = await req.json();
       debugRequested = !!body?.debug;
+      regionId = body?.region;
     } catch {
       // No/invalid JSON body.
+    }
+    let region: Region;
+    try {
+      region = getRegion(regionId);
+    } catch (err) {
+      return new Response(JSON.stringify({ error: String(err) }), { status: 400 });
     }
     const debug: Record<string, unknown> = {};
 
@@ -336,11 +323,10 @@ serve(async (req) => {
     }
     const admin = createClient(supabaseUrl, serviceRoleKey);
 
-    const lat = Number(Deno.env.get('DISCOVER_ANCHOR_LAT') ?? '0');
-    const lng = Number(Deno.env.get('DISCOVER_ANCHOR_LNG') ?? '0');
-    const label = Deno.env.get('DISCOVER_ANCHOR_LABEL') ?? 'the area';
+    const { lat, lng, label } = region.anchor();
+    const sourceName = SOURCE_BASE + region.sourceSuffix;
 
-    const rawActivities = await fetchCityDaysActivities(label, debug);
+    const rawActivities = await fetchCityDaysActivities(label, region, debug);
     const activities = rawActivities !== null ? await verifyDistances(admin, rawActivities, lat, lng) : null;
 
     // Note: no "delete anything already past" housekeeping here, unlike
@@ -350,19 +336,20 @@ serve(async (req) => {
     const errors: string[] = [];
 
     if (activities !== null) {
-      await admin.from('activities').delete().eq('source', 'ai_search_citydays');
+      await admin.from('activities').delete().eq('source', sourceName);
       if (activities.length > 0) {
         const { error } = await admin.from('activities').insert(activities);
         if (error) errors.push(`citydays insert: ${error.message}`);
       }
     } else {
-      errors.push('city days fetch failed - left existing ai_search_citydays rows untouched');
+      errors.push(`city days fetch failed - left existing ${sourceName} rows untouched`);
     }
 
     return new Response(
       JSON.stringify({
         count: activities === null ? 'failed (left untouched)' : activities.length,
         errors,
+        usage: debug.usage ?? null,
         ...(debugRequested ? { debug } : {}),
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
@@ -371,4 +358,97 @@ serve(async (req) => {
     console.error(err);
     return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
   }
+}
+
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
+
+// Supabase closes a request that sends nothing back for 150 seconds, and the
+// Boise crawls (more pages/venues to look up) can run longer than that. So a
+// Boise run answers right away and does its work in the background, where
+// only the longer overall function limit applies - cron doesn't read the
+// response anyway. Utah runs are untouched: same request, same response.
+serve(async (req) => {
+  const text = await req.text();
+  const again = () => new Request(req.url, { method: 'POST', body: text });
+  let regionId: unknown;
+  let debugRequested = false;
+  try {
+    const parsed = JSON.parse(text);
+    regionId = parsed?.region;
+    debugRequested = !!parsed?.debug;
+  } catch {
+    // No/invalid JSON body - Utah, handled by run() as before.
+  }
+  // Debugging aid: a Boise run with "debug": true stays attached and sends a
+  // blank keep-alive every 15s so the 150s idle limit doesn't cut it off,
+  // then returns the real outcome (the normal background path only logs it).
+  if (regionId === 'boise' && debugRequested) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        const keepAlive = setInterval(() => controller.enqueue(encoder.encode(' ')), 15000);
+        try {
+          const res = await run(again());
+          controller.enqueue(encoder.encode(await res.text()));
+        } catch (err) {
+          controller.enqueue(encoder.encode(JSON.stringify({ error: String(err) })));
+        } finally {
+          clearInterval(keepAlive);
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  if (regionId === 'boise' && typeof EdgeRuntime !== 'undefined') {
+    // Record how the run ends (see supabase/crawler_runs.sql). A row still
+    // 'running' long after the start means the run was cut off. Logging
+    // problems never affect the run itself.
+    const url = Deno.env.get('SUPABASE_URL');
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const logClient = url && serviceKey ? createClient(url, serviceKey) : null;
+    let runId: string | null = null;
+    const started = (async () => {
+      try {
+        const { data } = await logClient!
+          .from('crawler_runs')
+          .insert({ function_name: FUNCTION_NAME, region: 'boise' })
+          .select('id')
+          .single();
+        runId = data?.id ?? null;
+      } catch (err) {
+        console.error('crawler_runs insert failed:', err);
+      }
+    })();
+    const finish = async (status: string, detail: string) => {
+      try {
+        await started;
+        if (logClient && runId) {
+          await logClient
+            .from('crawler_runs')
+            .update({ status, detail: detail.slice(0, 4000), finished_at: new Date().toISOString() })
+            .eq('id', runId);
+        }
+      } catch (err) {
+        console.error('crawler_runs update failed:', err);
+      }
+    };
+    EdgeRuntime.waitUntil(
+      run(again())
+        .then(async (res) => {
+          const body = await res.text();
+          console.log('background run finished:', res.status, body);
+          await finish(res.ok ? 'finished' : 'failed', `${res.status} ${body}`);
+        })
+        .catch(async (err) => {
+          console.error('background run failed:', err);
+          await finish('failed', String(err));
+        })
+    );
+    return new Response(JSON.stringify({ accepted: true, region: 'boise', note: 'running in the background' }), {
+      status: 202,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  return await run(again());
 });

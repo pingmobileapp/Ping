@@ -1,5 +1,7 @@
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { getRegion, type Region } from '../_shared/regions.ts';
+import { crawlerModel, noteUsage } from '../_shared/anthropic.ts';
 
 // Backs the Discover feature (see app/(tabs)/explore.tsx and the Open
 // Slots roadmap) - a scheduled job (see supabase/activities_cron.sql) that
@@ -23,8 +25,6 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // (DST-dependent) margin - seen live as a "noon" event stored and
 // displayed as 6am. zonedDateTimeToUtcIso below does a real, DST-aware
 // conversion via Intl's own timezone database instead of a naive string.
-const ANCHOR_TIMEZONE = Deno.env.get('DISCOVER_ANCHOR_TIMEZONE') || 'America/Denver';
-
 function zonedDateTimeToUtcIso(dateStr: string, timeStr: string, timeZone: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
   const [hh, mm] = timeStr.split(':').map(Number);
@@ -67,7 +67,7 @@ const CATEGORIES = [
 type Category = (typeof CATEGORIES)[number];
 
 type ActivityRow = {
-  source: 'ai_search' | 'ticketmaster' | 'seatgeek';
+  source: string;
   external_id: string | null;
   title: string;
   category: Category;
@@ -85,6 +85,8 @@ type ActivityRow = {
   // verifyDistances below, which is what actually fills this in.
   distance_miles: number | null;
 };
+
+const SOURCE_BASE = 'ai_search';
 
 const DAYS_AHEAD = 30;
 const RADIUS_MILES = 25;
@@ -224,6 +226,7 @@ const AI_SEARCH_SCHEMA = {
 // truncated response doesn't wipe out real data with nothing.
 async function fetchAiSearchActivities(
   anchorLabel: string,
+  region: Region,
   debug: Record<string, unknown>
 ): Promise<ActivityRow[] | null> {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
@@ -248,7 +251,7 @@ async function fetchAiSearchActivities(
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-5',
+        model: crawlerModel(),
         // Each web search/fetch round (server_tool_use + its result + the
         // model's own reasoning between rounds) burns real tokens before any
         // of it becomes the final record_activities call - 4096 was
@@ -292,6 +295,7 @@ async function fetchAiSearchActivities(
     }
 
     const result = await response.json();
+    noteUsage('refresh-activities', debug, result);
     const toolUse = (result.content || []).find(
       (block: any) => block.type === 'tool_use' && block.name === 'record_activities'
     );
@@ -317,10 +321,10 @@ async function fetchAiSearchActivities(
     return rawActivities
       .filter((a: any) => a?.title && a?.date && a?.start_time && a?.url && CATEGORIES.includes(a.category))
       .map((a: any): ActivityRow => {
-        const startsAt = zonedDateTimeToUtcIso(a.date, a.start_time, ANCHOR_TIMEZONE);
-        const endsAt = a.end_time ? zonedDateTimeToUtcIso(a.date, a.end_time, ANCHOR_TIMEZONE) : null;
+        const startsAt = zonedDateTimeToUtcIso(a.date, a.start_time, region.timezone);
+        const endsAt = a.end_time ? zonedDateTimeToUtcIso(a.date, a.end_time, region.timezone) : null;
         return {
-          source: 'ai_search',
+          source: `${SOURCE_BASE}${region.sourceSuffix}`,
           external_id: null,
           title: a.title,
           category: a.category,
@@ -358,7 +362,7 @@ const mapTicketmasterCategory = (segment: string | undefined, genre: string | un
   return 'community';
 };
 
-async function fetchTicketmasterActivities(lat: number, lng: number): Promise<ActivityRow[]> {
+async function fetchTicketmasterActivities(lat: number, lng: number, region: Region): Promise<ActivityRow[]> {
   const apiKey = Deno.env.get('TICKETMASTER_API_KEY');
   if (!apiKey) return [];
 
@@ -367,19 +371,32 @@ async function fetchTicketmasterActivities(lat: number, lng: number): Promise<Ac
   end.setDate(end.getDate() + DAYS_AHEAD);
   const endDateTime = end.toISOString().slice(0, 19) + 'Z';
 
-  const url =
-    `https://app.ticketmaster.com/discovery/v2/events.json?apikey=${apiKey}` +
-    `&latlong=${lat},${lng}&radius=${RADIUS_MILES}&unit=miles` +
-    `&startDateTime=${startDateTime}&endDateTime=${endDateTime}&sort=date,asc&size=50`;
+  // One page of 50 was silently dropping whole venues (the busiest ones fill
+  // a date-sorted page first), and the concerts crawler now leans on this
+  // pass to decide which venues it can skip - so page through the window.
+  // Discovery API allows 200 per page and size*page < 1000.
+  const PAGE_SIZE = 200;
+  const MAX_PAGES = 4;
 
   try {
-    const res = await fetch(url);
-    if (!res.ok) {
-      console.error('Ticketmaster API error:', res.status, await res.text());
-      return [];
+    const events: any[] = [];
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const url =
+        `https://app.ticketmaster.com/discovery/v2/events.json?apikey=${apiKey}` +
+        `&latlong=${lat},${lng}&radius=${RADIUS_MILES}&unit=miles` +
+        `&startDateTime=${startDateTime}&endDateTime=${endDateTime}&sort=date,asc&size=${PAGE_SIZE}&page=${page}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        console.error('Ticketmaster API error:', res.status, await res.text());
+        // Keep whatever earlier pages returned rather than dropping them all.
+        break;
+      }
+      const data = await res.json();
+      const pageEvents = data?._embedded?.events || [];
+      events.push(...pageEvents);
+      const totalPages = data?.page?.totalPages ?? 1;
+      if (pageEvents.length < PAGE_SIZE || page + 1 >= totalPages) break;
     }
-    const data = await res.json();
-    const events = data?._embedded?.events || [];
     // Ticketmaster's search results include events regardless of whether
     // they're actually purchasable right now - dates.status.code also
     // covers "offsale" (presale not started yet, or sales already ended),
@@ -407,7 +424,7 @@ async function fetchTicketmasterActivities(lat: number, lng: number): Promise<Ac
       // every other source after the "12:00 AM" duplicate bug.
       let startsAt: string | null = e.dates?.start?.dateTime || null;
       if (!startsAt && e.dates?.start?.localDate && e.dates?.start?.localTime) {
-        startsAt = zonedDateTimeToUtcIso(e.dates.start.localDate, e.dates.start.localTime, ANCHOR_TIMEZONE);
+        startsAt = zonedDateTimeToUtcIso(e.dates.start.localDate, e.dates.start.localTime, region.timezone);
       }
       if (!startsAt) return null;
 
@@ -435,7 +452,7 @@ async function fetchTicketmasterActivities(lat: number, lng: number): Promise<Ac
   }
 }
 
-async function fetchSeatGeekActivities(lat: number, lng: number): Promise<ActivityRow[]> {
+async function fetchSeatGeekActivities(lat: number, lng: number, region: Region): Promise<ActivityRow[]> {
   const clientId = Deno.env.get('SEATGEEK_CLIENT_ID');
   if (!clientId) return [];
 
@@ -471,7 +488,7 @@ async function fetchSeatGeekActivities(lat: number, lng: number): Promise<Activi
           location: e.venue?.name || null,
           lat: e.venue?.location?.lat ?? null,
           lng: e.venue?.location?.lon ?? null,
-          starts_at: zonedDateTimeToUtcIso(datePart, timePart, ANCHOR_TIMEZONE),
+          starts_at: zonedDateTimeToUtcIso(datePart, timePart, region.timezone),
           ends_at: null,
           price_label: e.stats?.lowest_price ? `$${e.stats.lowest_price}+` : 'See listing',
           url: e.url || null,
@@ -486,15 +503,25 @@ async function fetchSeatGeekActivities(lat: number, lng: number): Promise<Activi
   }
 }
 
-serve(async (req) => {
+const FUNCTION_NAME = 'refresh-activities';
+
+async function run(req: Request): Promise<Response> {
   try {
     let debugRequested = false;
+    let regionId: unknown;
     try {
       const body = await req.json();
       debugRequested = !!body?.debug;
+      regionId = body?.region;
     } catch {
       // No/invalid JSON body (e.g. the cron job posts an empty body) - not
       // an error, debug just stays off.
+    }
+    let region: Region;
+    try {
+      region = getRegion(regionId);
+    } catch (err) {
+      return new Response(JSON.stringify({ error: String(err) }), { status: 400 });
     }
     const debug: Record<string, unknown> = {};
 
@@ -505,14 +532,13 @@ serve(async (req) => {
     }
     const admin = createClient(supabaseUrl, serviceRoleKey);
 
-    const lat = Number(Deno.env.get('DISCOVER_ANCHOR_LAT') ?? '0');
-    const lng = Number(Deno.env.get('DISCOVER_ANCHOR_LNG') ?? '0');
-    const label = Deno.env.get('DISCOVER_ANCHOR_LABEL') ?? 'the area';
+    const { lat, lng, label } = region.anchor();
+    const sourceName = SOURCE_BASE + region.sourceSuffix;
 
     const [rawAiActivities, rawTicketmasterActivities, rawSeatgeekActivities] = await Promise.all([
-      fetchAiSearchActivities(label, debug),
-      fetchTicketmasterActivities(lat, lng),
-      fetchSeatGeekActivities(lat, lng),
+      fetchAiSearchActivities(label, region, debug),
+      fetchTicketmasterActivities(lat, lng, region),
+      fetchSeatGeekActivities(lat, lng, region),
     ]);
 
     // The real verification pass - geocodes anything without known
@@ -538,7 +564,7 @@ serve(async (req) => {
     if (aiActivities !== null) {
       // AI-search rows have no stable id across runs (see ActivityRow) -
       // fully replaced each time rather than upserted.
-      await admin.from('activities').delete().eq('source', 'ai_search');
+      await admin.from('activities').delete().eq('source', sourceName);
       if (aiActivities.length > 0) {
         const { error } = await admin.from('activities').insert(aiActivities);
         if (error) errors.push(`ai_search insert: ${error.message}`);
@@ -561,6 +587,7 @@ serve(async (req) => {
           seatgeek: seatgeekActivities.length,
         },
         errors,
+        usage: debug.usage ?? null,
         ...(debugRequested ? { debug } : {}),
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
@@ -569,4 +596,97 @@ serve(async (req) => {
     console.error(err);
     return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
   }
+}
+
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
+
+// Supabase closes a request that sends nothing back for 150 seconds, and the
+// Boise crawls (more pages/venues to look up) can run longer than that. So a
+// Boise run answers right away and does its work in the background, where
+// only the longer overall function limit applies - cron doesn't read the
+// response anyway. Utah runs are untouched: same request, same response.
+serve(async (req) => {
+  const text = await req.text();
+  const again = () => new Request(req.url, { method: 'POST', body: text });
+  let regionId: unknown;
+  let debugRequested = false;
+  try {
+    const parsed = JSON.parse(text);
+    regionId = parsed?.region;
+    debugRequested = !!parsed?.debug;
+  } catch {
+    // No/invalid JSON body - Utah, handled by run() as before.
+  }
+  // Debugging aid: a Boise run with "debug": true stays attached and sends a
+  // blank keep-alive every 15s so the 150s idle limit doesn't cut it off,
+  // then returns the real outcome (the normal background path only logs it).
+  if (regionId === 'boise' && debugRequested) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        const keepAlive = setInterval(() => controller.enqueue(encoder.encode(' ')), 15000);
+        try {
+          const res = await run(again());
+          controller.enqueue(encoder.encode(await res.text()));
+        } catch (err) {
+          controller.enqueue(encoder.encode(JSON.stringify({ error: String(err) })));
+        } finally {
+          clearInterval(keepAlive);
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  if (regionId === 'boise' && typeof EdgeRuntime !== 'undefined') {
+    // Record how the run ends (see supabase/crawler_runs.sql). A row still
+    // 'running' long after the start means the run was cut off. Logging
+    // problems never affect the run itself.
+    const url = Deno.env.get('SUPABASE_URL');
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const logClient = url && serviceKey ? createClient(url, serviceKey) : null;
+    let runId: string | null = null;
+    const started = (async () => {
+      try {
+        const { data } = await logClient!
+          .from('crawler_runs')
+          .insert({ function_name: FUNCTION_NAME, region: 'boise' })
+          .select('id')
+          .single();
+        runId = data?.id ?? null;
+      } catch (err) {
+        console.error('crawler_runs insert failed:', err);
+      }
+    })();
+    const finish = async (status: string, detail: string) => {
+      try {
+        await started;
+        if (logClient && runId) {
+          await logClient
+            .from('crawler_runs')
+            .update({ status, detail: detail.slice(0, 4000), finished_at: new Date().toISOString() })
+            .eq('id', runId);
+        }
+      } catch (err) {
+        console.error('crawler_runs update failed:', err);
+      }
+    };
+    EdgeRuntime.waitUntil(
+      run(again())
+        .then(async (res) => {
+          const body = await res.text();
+          console.log('background run finished:', res.status, body);
+          await finish(res.ok ? 'finished' : 'failed', `${res.status} ${body}`);
+        })
+        .catch(async (err) => {
+          console.error('background run failed:', err);
+          await finish('failed', String(err));
+        })
+    );
+    return new Response(JSON.stringify({ accepted: true, region: 'boise', note: 'running in the background' }), {
+      status: 202,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  return await run(again());
 });
