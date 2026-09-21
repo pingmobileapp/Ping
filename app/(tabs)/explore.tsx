@@ -29,6 +29,7 @@ import {
   isFreeActivity,
   toggleInterest,
 } from '../../lib/discoverActivities';
+import { filterActivitiesForRegion, filterActivitiesNearby, regionForCoords } from '../../lib/discoverRegion';
 import {
   createPersonalCalendarEvent,
   getCalendarPermissionStatus,
@@ -245,14 +246,22 @@ export default function DiscoverScreen() {
       }
     });
 
+  // Discover holds events for more than one area (Utah, Boise) - only show
+  // the one the person is actually in, and within 25 miles of where they are.
+  // No location means Utah with no distance limit, as before.
+  const regionActivities = useMemo(
+    () => filterActivitiesNearby(filterActivitiesForRegion(activities, regionForCoords(coords)), coords),
+    [activities, coords]
+  );
+
   const timeScoped = useMemo(() => {
-    if (showAllDay || gapStartMinutes === null || gapEndMinutes === null) return activities;
-    return activities.filter((a) => {
+    if (showAllDay || gapStartMinutes === null || gapEndMinutes === null) return regionActivities;
+    return regionActivities.filter((a) => {
       const start = new Date(a.startsAt);
       const mins = start.getHours() * 60 + start.getMinutes();
       return mins >= gapStartMinutes && mins <= gapEndMinutes;
     });
-  }, [activities, gapStartMinutes, gapEndMinutes, showAllDay]);
+  }, [regionActivities, gapStartMinutes, gapEndMinutes, showAllDay]);
 
   const visibleActivities = useMemo(() => {
     let list = timeScoped;

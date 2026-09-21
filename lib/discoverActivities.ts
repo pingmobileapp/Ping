@@ -1,5 +1,6 @@
 import { supabase } from '../supabase';
 import { formatPrice } from './pricing';
+import { baseSource } from './discoverRegion';
 
 // Backs the Discover feature - real data now, written by the
 // refresh-activities edge function (Ticketmaster/SeatGeek + an
@@ -188,7 +189,7 @@ const jaccardSimilarity = (a: Set<string>, b: Set<string>): number => {
 // built so far.
 export function dedupeActivities(activities: Activity[]): Activity[] {
   const bySourcePriority = [...activities].sort(
-    (a, b) => (SOURCE_PRIORITY[b.source] ?? 0) - (SOURCE_PRIORITY[a.source] ?? 0)
+    (a, b) => (SOURCE_PRIORITY[baseSource(b.source)] ?? 0) - (SOURCE_PRIORITY[baseSource(a.source)] ?? 0)
   );
 
   const kept: Activity[] = [];
