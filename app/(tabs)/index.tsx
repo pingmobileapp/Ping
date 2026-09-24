@@ -659,10 +659,14 @@ export default function HomeScreen() {
       const p = declinedFilteredEvents.find((e) => e.id === id.slice(5));
       if (p) openEvent(p);
     } else if (id.startsWith("ext-")) {
+      // Matched by hiddenKeyFor, not e.id - buildDayColumns/buildAllDayColumns
+      // build this id the same way (see their own comments), since a bare id
+      // would resolve to whichever occurrence of a recurring event happens
+      // to come first in externalEvents rather than the one actually pressed.
       // A tap here reads as "what is this", not "let me edit this" - unlike
       // the Upcoming list's explicit pencil icon, so this shows a read-only
       // peek instead of opening the edit form.
-      const ext = externalEvents.find((e) => e.id === id.slice(4));
+      const ext = externalEvents.find((e) => hiddenKeyFor(e) === id.slice(4));
       if (ext) Alert.alert(ext.title, formatExternalEventTime(ext));
     }
   };
@@ -673,7 +677,7 @@ export default function HomeScreen() {
   // only an external item does anything here.
   const handleWeekItemLongPress = (id: string) => {
     if (!id.startsWith("ext-")) return;
-    const ext = externalEvents.find((e) => e.id === id.slice(4));
+    const ext = externalEvents.find((e) => hiddenKeyFor(e) === id.slice(4));
     if (ext) showHideOptions(ext);
   };
 
@@ -875,6 +879,14 @@ export default function HomeScreen() {
     start < monthEnd && (end ?? start) >= monthStart;
 
   const upcomingListItems = useMemo<UpcomingListItem[]>(() => {
+    // key uses hiddenKeyFor, not a bare `ext-${e.id}`, here and in every
+    // other external-item list below - EventKit really does hand back the
+    // same e.id for more than one occurrence of a recurring event (seen
+    // live: "Encountered two children with the same key" once a weekly
+    // personal item had a few occurrences in range at once). Folding in
+    // the occurrence's own startDate is the same fix isHidden already
+    // relies on for hiding one occurrence without touching its siblings.
+    //
     // Hidden is its own standalone view (phone-calendar events only, same
     // as hiding itself) rather than another filter layered on top of the
     // normal list - showing what's hidden alongside what isn't would just
@@ -884,7 +896,7 @@ export default function HomeScreen() {
         .filter((e) => isHidden(e, hiddenEventIds))
         .map((e) => ({
           kind: "external" as const,
-          key: `ext-${e.id}`,
+          key: `ext-${hiddenKeyFor(e)}`,
           date: e.startDate,
           event: e,
         }))
@@ -899,7 +911,7 @@ export default function HomeScreen() {
         .filter((e) => importantItemIds.has(e.id))
         .map((e) => ({
           kind: "external" as const,
-          key: `ext-${e.id}`,
+          key: `ext-${hiddenKeyFor(e)}`,
           date: e.startDate,
           event: e,
         }))
@@ -962,7 +974,7 @@ export default function HomeScreen() {
 
     const externalItems: UpcomingListItem[] = dayFiltered.map((e) => ({
       kind: "external",
-      key: `ext-${e.id}`,
+      key: `ext-${hiddenKeyFor(e)}`,
       date: e.startDate,
       event: e,
     }));

@@ -3,6 +3,7 @@ import { ExternalEvent } from './calendarConflicts';
 import { colors } from './theme';
 import { externalItemDuplicatesPing } from './eventDedup';
 import { eachDayKeyInRange } from './eventDate';
+import { hiddenKeyFor } from './hiddenEvents';
 
 export type AllDayItem = { id: string; title: string; dayKey: string };
 // startMinutes/endMinutes are minutes since that day's midnight - directly
@@ -110,9 +111,15 @@ export function buildDayColumns(
   for (const e of external) {
     if (e.allDay) continue;
     if (externalItemDuplicatesPing(pingTimedEntries, { title: e.title, start: e.startDate })) continue;
+    // hiddenKeyFor, not a bare e.id - EventKit can hand back the same id for
+    // more than one occurrence of a recurring event, and Week view's own
+    // press/long-press handlers resolve this id straight back to one
+    // ExternalEvent (see handleWeekItemPress/handleWeekItemLongPress) - a
+    // bare id there would resolve to whichever occurrence happens to come
+    // first in externalEvents, not the one actually pressed.
     for (const seg of splitByDay(e.startDate, e.endDate)) {
       if (!inRange(seg.start, rangeStart, rangeEnd)) continue;
-      pushSegment(seg, `ext-${e.id}`, e.title, colors.textMuted);
+      pushSegment(seg, `ext-${hiddenKeyFor(e)}`, e.title, colors.textMuted);
     }
   }
 
@@ -210,7 +217,8 @@ export function buildAllDayColumns(
     const end = e.endDate ? new Date(e.endDate) : null;
     if ((end ?? e.startDate) < rangeStart || e.startDate >= rangeEnd) continue;
     if (externalItemDuplicatesPing(pingAllDayEntries, { title: e.title, start: e.startDate })) continue;
-    pushAllDayAcrossSpan(columns, `ext-${e.id}`, e.title, e.startDate, end, rangeStart, rangeEnd);
+    // Same non-unique-id reasoning as buildDayColumns above.
+    pushAllDayAcrossSpan(columns, `ext-${hiddenKeyFor(e)}`, e.title, e.startDate, end, rangeStart, rangeEnd);
   }
 
   return columns;
