@@ -57,6 +57,12 @@ type Props = {
   allDayByDay: Record<string, AllDayItem[]>;
   height: number;
   onEventPress: (id: string) => void;
+  // Long-pressing an event (as opposed to empty grid space - see
+  // onEmptySlotLongPress) - the hide/hide-series menu for an external
+  // item, see handleWeekItemLongPress in app/(tabs)/index.tsx. Optional so
+  // call sites that don't need it (none currently) aren't forced to wire
+  // a no-op.
+  onEventLongPress?: (id: string) => void;
   onVisibleWeekChange: (weekStart: Date) => void;
   // Long-pressing empty space in a day column (not on top of an existing
   // event - see isFreeSlot) shows a pill right where the press landed;
@@ -114,6 +120,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       allDayByDay,
       height,
       onEventPress,
+      onEventLongPress,
       onVisibleWeekChange,
       onEmptySlotLongPress,
       onDateHeaderLongPress,
@@ -402,6 +409,11 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                       onPress={() =>
                         dayItems.length > 1 ? setDayPicker({ dayKey: key, items: dayItems }) : onEventPress(first.id)
                       }
+                      // Same "which one" ambiguity as onPress above - only
+                      // wired when there's exactly one item to act on.
+                      onLongPress={
+                        dayItems.length > 1 || !onEventLongPress ? undefined : () => onEventLongPress(first.id)
+                      }
                     >
                       <Text style={styles.allDayChipText} numberOfLines={1}>
                         {first.title}
@@ -491,6 +503,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                           // background - only opens the event card once
                           // this day is already the focused, widened one.
                           onPress={() => (isFocused ? onEventPress(ev.id) : handleDayTap(key, dayIndex))}
+                          onLongPress={isFocused && onEventLongPress ? () => onEventLongPress(ev.id) : undefined}
                         >
                           <Text style={styles.eventBlockText} numberOfLines={2}>
                             {ev.title}
@@ -530,6 +543,14 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                     setDayPicker(null);
                     onEventPress(item.id);
                   }}
+                  onLongPress={
+                    onEventLongPress
+                      ? () => {
+                          setDayPicker(null);
+                          onEventLongPress(item.id);
+                        }
+                      : undefined
+                  }
                 >
                   <Text style={styles.dayPickerRowText} numberOfLines={2}>
                     {item.title}

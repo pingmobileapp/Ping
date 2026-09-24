@@ -38,3 +38,25 @@ export async function unhideEvent(eventId: string): Promise<Set<string>> {
   await saveHiddenEventIds(ids);
   return ids;
 }
+
+// A recurring calendar event's occurrences aren't guaranteed to be unique
+// by e.id alone across every calendar/OS combination expo-calendar runs
+// on - hiding by a bare id risked either silently hiding every occurrence
+// of the series (if the id turns out to be shared) or the hide quietly
+// not sticking on the next fetch (if it isn't). Folding the occurrence's
+// own start time into the key sidesteps both failure modes without
+// needing to know which one applies on a given device - this is what was
+// behind a converted (Ping'd) calendar item's original occurrence
+// reappearing on the calendar after the fact (real reported bug).
+export function hiddenKeyFor(event: { id: string; recurrenceRule?: unknown; startDate: Date }): string {
+  return event.recurrenceRule ? `${event.id}::${event.startDate.toISOString()}` : event.id;
+}
+
+// True if this exact occurrence was hidden (hiddenKeyFor's per-occurrence
+// key) OR the whole series was ("hide this and following events" - stored
+// as the bare, occurrence-less id, since there's no single instanceStartDate
+// that covers every future occurrence). For a non-recurring event the two
+// checks are the same key, so this is just a plain membership test there.
+export function isHidden(event: { id: string; recurrenceRule?: unknown; startDate: Date }, hiddenIds: Set<string>): boolean {
+  return hiddenIds.has(hiddenKeyFor(event)) || hiddenIds.has(event.id);
+}

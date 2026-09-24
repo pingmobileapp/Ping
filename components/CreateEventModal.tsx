@@ -1324,7 +1324,12 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
 
 const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(43,43,43,0.4)' },
-  card: { height: '92%', backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 },
+  // width/maxWidth/alignSelf: on a phone this sheet already spans the full
+  // width (maxWidth exceeds it, so no change); on iPad it stops the sheet
+  // from stretching edge-to-edge into a wall of oversized fields and keeps
+  // it centered instead - see components/ResponsiveContainer.tsx for the
+  // same fix applied to the tab screens.
+  card: { height: '92%', width: '100%', maxWidth: 700, alignSelf: 'center', backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 },
   dragHandleArea: { paddingVertical: 12, marginBottom: 4 },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: 'center' },
   header: { fontSize: 22, fontWeight: '700', color: colors.textPrimary, marginBottom: 16 },

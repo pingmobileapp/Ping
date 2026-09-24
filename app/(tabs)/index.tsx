@@ -54,7 +54,7 @@ import {
   getUpcomingExternalEvents,
   requestCalendarAccess,
 } from "../../lib/calendarConflicts";
-import { getHiddenEventIds, hideEvent, unhideEvent } from "../../lib/hiddenEvents";
+import { getHiddenEventIds, hideEvent, hiddenKeyFor, isHidden, unhideEvent } from "../../lib/hiddenEvents";
 import { getAllImportantItemIds } from "../../lib/eventReminders";
 import { DailyWeather, fetchWeatherForEvents } from "../../lib/eventWeather";
 import InterestedActivityCard from "../../components/InterestedActivityCard";
@@ -117,7 +117,16 @@ export default function HomeScreen() {
   // The personal/synced calendar item being replaced by the Ping just
   // created from it - cleaned up in handleCreated once that succeeds, so
   // it doesn't keep showing up alongside its own replacement.
-  const [convertSource, setConvertSource] = useState<{ id: string; isPersonal: boolean } | null>(null);
+  // recurrenceRule/startDate are carried along purely so that cleanup can
+  // compute the same per-occurrence hiddenKeyFor key (or, for a personal
+  // item, tell deleteCalendarEvent to remove just this occurrence) rather
+  // than acting on the whole series - see handleCreated below.
+  const [convertSource, setConvertSource] = useState<{
+    id: string;
+    isPersonal: boolean;
+    recurrenceRule: ExternalEvent['recurrenceRule'];
+    startDate: Date;
+  } | null>(null);
   const [scanningSchedule, setScanningSchedule] = useState(false);
   const [scheduleReviewEvents, setScheduleReviewEvents] = useState<ExtractedEvent[] | null>(null);
   const [justCreatedId, setJustCreatedId] = useState<string | null>(null);
@@ -483,16 +492,47 @@ export default function HomeScreen() {
     getAllImportantItemIds().then(setImportantItemIds);
   };
 
-  const handleHideEvent = async (eventId: string) => {
-    setHiddenEventIds(await hideEvent(eventId));
+  const handleHideEvent = async (event: ExternalEvent) => {
+    setHiddenEventIds(await hideEvent(hiddenKeyFor(event)));
   };
 
-  const handleUnhideEvent = async (eventId: string) => {
-    const next = await unhideEvent(eventId);
+  // "This and following events" - stored under the bare series id (no
+  // instanceStartDate) rather than this occurrence's own hiddenKeyFor key,
+  // since one occurrence's key can't stand in for every future one. See
+  // isHidden, which checks both keys so either form of hiding is honored.
+  const handleHideSeries = async (event: ExternalEvent) => {
+    setHiddenEventIds(await hideEvent(event.id));
+  };
+
+  const handleUnhideEvent = async (event: ExternalEvent) => {
+    // A hidden item may have been hidden either way (this occurrence only,
+    // or the whole series) - clear both keys so "Unhide" always actually
+    // un-hides it, regardless of which one applied.
+    await unhideEvent(hiddenKeyFor(event));
+    const next = await unhideEvent(event.id);
     setHiddenEventIds(next);
     // Nothing left to review - drop back to the normal Upcoming view
     // instead of leaving the user stranded on an empty "Hidden" screen.
     if (next.size === 0) setActiveFilter((f) => (f === 'hidden' ? null : f));
+  };
+
+  // Long-press entry point for hiding a calendar item, shared by Week
+  // view (WeekGrid's onEventLongPress) and the Upcoming list
+  // (ExternalEventRow's onLongPressHide) - a recurring event gets the
+  // this-occurrence/whole-series choice; a one-off event just confirms.
+  const showHideOptions = (event: ExternalEvent) => {
+    if (event.recurrenceRule) {
+      Alert.alert("Hide which events?", undefined, [
+        { text: "Cancel", style: "cancel" },
+        { text: "This event only", onPress: () => handleHideEvent(event) },
+        { text: "This and following events", onPress: () => handleHideSeries(event) },
+      ]);
+      return;
+    }
+    Alert.alert("Hide this event?", "You can bring it back later from the Hidden filter.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Hide", onPress: () => handleHideEvent(event) },
+    ]);
   };
 
   const handleGroupChatClose = useCallback(() => {
@@ -509,7 +549,12 @@ export default function HomeScreen() {
       isAllDay: event.allDay,
       description: event.details || undefined,
     });
-    setConvertSource({ id: event.id, isPersonal: event.isPersonal });
+    setConvertSource({
+      id: event.id,
+      isPersonal: event.isPersonal,
+      recurrenceRule: event.recurrenceRule,
+      startDate: event.startDate,
+    });
     setModalVisible(true);
   };
 
@@ -544,9 +589,20 @@ export default function HomeScreen() {
       setConvertSource(null);
       try {
         if (source.isPersonal) {
-          await deleteCalendarEvent(source.id);
+          // futureEvents: false - remove just the occurrence that got
+          // converted, never the rest of the series, matching what
+          // AddPersonalItemModal's own recurring-edit options do. Passing
+          // no span at all for a recurring event is what let the original
+          // occurrence silently survive the delete before (real reported
+          // bug) - undefined here (non-recurring) keeps the original
+          // one-off delete path exactly as it was.
+          await deleteCalendarEvent(
+            source.id,
+            source.recurrenceRule ? false : undefined,
+            source.recurrenceRule ? source.startDate : undefined
+          );
         } else {
-          setHiddenEventIds(await hideEvent(source.id));
+          setHiddenEventIds(await hideEvent(hiddenKeyFor(source)));
         }
         await fetchExternalEvents();
       } catch (err) {
@@ -611,6 +667,16 @@ export default function HomeScreen() {
     }
   };
 
+  // Week view's long-press equivalent of the Upcoming list's hide icon -
+  // a Ping isn't something Week view can hide (it's a real event you're
+  // hosting or attending, not a calendar-sync display preference), so
+  // only an external item does anything here.
+  const handleWeekItemLongPress = (id: string) => {
+    if (!id.startsWith("ext-")) return;
+    const ext = externalEvents.find((e) => e.id === id.slice(4));
+    if (ext) showHideOptions(ext);
+  };
+
   // Long-pressing empty grid space in Week view (see WeekGrid's pill,
   // onEmptySlotLongPress) opens Add Personal Item directly - a quick
   // reminder for that exact day/time, not a menu of choices, since it can
@@ -648,7 +714,7 @@ export default function HomeScreen() {
   // calendar, not the filtered Upcoming list, so it doesn't respect the
   // Drafts/Declined/Pings Only/Hidden list toggles.
   const visibleExternalEvents = useMemo(
-    () => externalEvents.filter((e) => !hiddenEventIds.has(e.id)),
+    () => externalEvents.filter((e) => !isHidden(e, hiddenEventIds)),
     [externalEvents, hiddenEventIds],
   );
   // WeekGrid's pre-rendered day range: a fixed 8-week (56-day) window
@@ -707,7 +773,7 @@ export default function HomeScreen() {
     // <View> bar (drawn by MonthDayCell, see `marking.important`) renders
     // far more reliably/visibly than CSS underline-on-a-number-glyph did.
     externalEvents.forEach((e) => {
-      if (hiddenEventIds.has(e.id) || !importantItemIds.has(e.id)) return;
+      if (isHidden(e, hiddenEventIds) || !importantItemIds.has(e.id)) return;
       const key = toDateKey(e.startDate);
       marks[key] = { ...(marks[key] || {}), important: true };
     });
@@ -815,7 +881,7 @@ export default function HomeScreen() {
     // recreate the clutter hiding is meant to remove.
     if (showHiddenOnly) {
       return externalEvents
-        .filter((e) => hiddenEventIds.has(e.id))
+        .filter((e) => isHidden(e, hiddenEventIds))
         .map((e) => ({
           kind: "external" as const,
           key: `ext-${e.id}`,
@@ -891,7 +957,7 @@ export default function HomeScreen() {
             .filter((e) => viewMode !== "month" || inVisibleMonth(e.startDate, null))
             .filter((e) => (e.endDate ?? e.startDate).getTime() >= now)
     )
-      .filter((e) => !hiddenEventIds.has(e.id))
+      .filter((e) => !isHidden(e, hiddenEventIds))
       .filter((e) => !externalItemDuplicatesPing(pingEntriesForDedup, { title: e.title, start: e.startDate }));
 
     const externalItems: UpcomingListItem[] = dayFiltered.map((e) => ({
@@ -1202,12 +1268,13 @@ export default function HomeScreen() {
         onUnstar={handleUnstarInterested}
       />
     ) : showHiddenOnly ? (
-      <ExternalEventRow event={item.event} onUnhide={() => handleUnhideEvent(item.event.id)} />
+      <ExternalEventRow event={item.event} onUnhide={() => handleUnhideEvent(item.event)} />
     ) : (
       <ExternalEventRow
         event={item.event}
         onEdit={item.event.editable ? () => setEditingPersonalEvent(item.event) : undefined}
-        onHide={() => handleHideEvent(item.event.id)}
+        onHide={() => handleHideEvent(item.event)}
+        onLongPressHide={() => showHideOptions(item.event)}
       />
     );
   const upcomingEmptyComponent = !loading ? <Text style={styles.emptyText}>{emptyText}</Text> : null;
@@ -1296,6 +1363,7 @@ export default function HomeScreen() {
               allDayByDay={weekAllDayColumns}
               height={weekGridMaxHeight}
               onEventPress={handleWeekItemPress}
+              onEventLongPress={handleWeekItemLongPress}
               onVisibleWeekChange={setVisibleWeekStart}
               onEmptySlotLongPress={handleEmptySlotLongPress}
               onDateHeaderLongPress={handleDateHeaderLongPress}

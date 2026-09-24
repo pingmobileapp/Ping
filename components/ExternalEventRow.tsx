@@ -10,6 +10,11 @@ type Props = {
   // Upcoming going forward (see lib/hiddenEvents). Not a calendar mutation,
   // just a local display preference, so it works regardless of `editable`.
   onHide?: () => void;
+  // Long-pressing the row is the discoverable route to the same hide
+  // action plus, for a recurring event, the choice to hide the whole
+  // series - see showHideOptions in app/(tabs)/index.tsx. Independent of
+  // onEdit/disabled: hiding never requires edit permission.
+  onLongPressHide?: () => void;
   // Present instead of onEdit/onHide when this row is rendered inside the
   // "Hidden" view - tapping the whole row restores it.
   onUnhide?: () => void;
@@ -21,7 +26,7 @@ type Props = {
 // tap target so it can be edited or deleted from here - personal items
 // Ping wrote itself, or any other calendar event the user can already
 // edit in their own Calendar app.
-export default function ExternalEventRow({ event, onEdit, onHide, onUnhide }: Props) {
+export default function ExternalEventRow({ event, onEdit, onHide, onLongPressHide, onUnhide }: Props) {
   const dateLabel = event.startDate.toLocaleDateString(undefined, {
     weekday: 'short',
     month: 'short',
@@ -46,13 +51,18 @@ export default function ExternalEventRow({ event, onEdit, onHide, onUnhide }: Pr
   }
 
   const editable = event.editable && !!onEdit;
+  // Long-press-to-hide works regardless of edit permission (same rule
+  // onHide already follows), so a read-only row still needs to accept
+  // touches when onLongPressHide is given, not just when editable.
+  const pressable = editable || !!onLongPressHide;
 
   return (
     <TouchableOpacity
       style={styles.row}
       onPress={editable ? onEdit : undefined}
-      disabled={!editable}
-      activeOpacity={editable ? 0.6 : 1}
+      onLongPress={onLongPressHide}
+      disabled={!pressable}
+      activeOpacity={pressable ? 0.6 : 1}
     >
       <Text style={styles.text} numberOfLines={1}>
         <Text style={styles.meta}>
