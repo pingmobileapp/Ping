@@ -833,6 +833,9 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   };
 
   const handleSave = async (sendNow: boolean, notifyExisting: boolean, applyToFuture: boolean) => {
+    // See the matching guard in CreateEventModal's submit() - disabled={submitting}
+    // only takes effect on the next render, so a fast double-tap can call this twice.
+    if (submitting) return;
     if (!event || !session?.user?.id) return;
     if (!title) {
       Alert.alert('Missing info', 'Please add at least a title.');

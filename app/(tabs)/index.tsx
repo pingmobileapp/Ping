@@ -1,4 +1,5 @@
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useNavigation, useRouter } from "expo-router";
+import * as ScreenOrientation from "expo-screen-orientation";
 import React, {
   useCallback,
   useEffect,
@@ -16,8 +17,10 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   Extrapolation,
@@ -29,6 +32,7 @@ import Animated, {
 import AddPersonalItemModal from "../../components/AddPersonalItemModal";
 import CalendarHeaderRow from "../../components/CalendarHeaderRow";
 import CreateEventModal from "../../components/CreateEventModal";
+import DayNoteModal from "../../components/DayNoteModal";
 import EventCard, { PingEvent } from "../../components/EventCard";
 import EventDetailModal from "../../components/EventDetailModal";
 import ExternalEventRow from "../../components/ExternalEventRow";
@@ -56,6 +60,7 @@ import {
 } from "../../lib/calendarConflicts";
 import { getHiddenEventIds, hideEvent, hiddenKeyFor, isHidden, unhideEvent } from "../../lib/hiddenEvents";
 import { getAllImportantItemIds } from "../../lib/eventReminders";
+import { fetchDayNotes, saveDayNote } from "../../lib/dayNotes";
 import { DailyWeather, fetchWeatherForEvents } from "../../lib/eventWeather";
 import InterestedActivityCard from "../../components/InterestedActivityCard";
 import {
@@ -168,6 +173,27 @@ export default function HomeScreen() {
   // the visible week changed, WeekGrid would re-derive a new range (and
   // reset its scroll position) on every scroll event.
   const [weekGridAnchor, setWeekGridAnchor] = useState(() => startOfWeek(new Date()));
+
+  // Turning a phone sideways in Week view shows just the week, full screen,
+  // with wider day columns. Every other screen (and Month view) stays
+  // portrait - rotation is only unlocked while Week view is on screen. iPad
+  // never rotates (see plugins/withIPadPortraitOnly.js), and a phone's short
+  // side is always under 600pt, so this never triggers there.
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const landscapeWeek = viewMode === "week" && windowWidth > windowHeight && Math.min(windowWidth, windowHeight) < 600;
+  const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
+  useFocusEffect(
+    useCallback(() => {
+      const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+      if (viewMode === "week") ScreenOrientation.unlockAsync().catch(() => {});
+      else portrait();
+      return portrait;
+    }, [viewMode]),
+  );
+  useEffect(() => {
+    navigation.setOptions({ tabBarStyle: landscapeWeek ? { display: "none" } : undefined });
+  }, [navigation, landscapeWeek]);
   const weekGridRef = useRef<WeekGridHandle>(null);
   const onSelectMonth = () => setViewMode("month");
   // Shared by the header's Week toggle and tapping a day in Month view -
@@ -663,11 +689,15 @@ export default function HomeScreen() {
       // build this id the same way (see their own comments), since a bare id
       // would resolve to whichever occurrence of a recurring event happens
       // to come first in externalEvents rather than the one actually pressed.
-      // A tap here reads as "what is this", not "let me edit this" - unlike
-      // the Upcoming list's explicit pencil icon, so this shows a read-only
-      // peek instead of opening the edit form.
       const ext = externalEvents.find((e) => hiddenKeyFor(e) === id.slice(4));
-      if (ext) Alert.alert(ext.title, formatExternalEventTime(ext));
+      if (!ext) return;
+      const buttons: { text: string; style?: "cancel" | "destructive"; onPress?: () => void }[] = [];
+      if (ext.editable) {
+        buttons.push({ text: "Edit", onPress: () => setEditingPersonalEvent(ext) });
+      }
+      buttons.push({ text: "Convert to Ping", onPress: () => handleConvertToPing(ext) });
+      buttons.push({ text: "Cancel", style: "cancel" });
+      Alert.alert(ext.title, formatExternalEventTime(ext), buttons);
     }
   };
 
@@ -754,6 +784,33 @@ export default function HomeScreen() {
     () => buildAllDayColumns(weekGridRangeStart, weekGridRangeEnd, declinedFilteredEvents, visibleExternalEvents),
     [weekGridRangeStart, weekGridRangeEnd, declinedFilteredEvents, visibleExternalEvents],
   );
+
+  // Week view's per-day notes bar - loaded for the whole rendered range,
+  // and again on focus so an edit made on another device shows up.
+  const [dayNotes, setDayNotes] = useState<Record<string, string>>({});
+  const [noteDayKey, setNoteDayKey] = useState<string | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      fetchDayNotes(toDateKey(weekGridRangeStart), toDateKey(weekGridRangeEnd)).then(setDayNotes);
+    }, [weekGridRangeStart, weekGridRangeEnd]),
+  );
+  const handleCloseDayNote = async (body: string) => {
+    const key = noteDayKey;
+    setNoteDayKey(null);
+    if (!key) return;
+    const previous = dayNotes[key] ?? "";
+    if (body.trim() === previous.trim()) return;
+    setDayNotes((prev) => {
+      const next = { ...prev };
+      if (body.trim()) next[key] = body;
+      else delete next[key];
+      return next;
+    });
+    if (!(await saveDayNote(key, body))) {
+      setDayNotes((prev) => ({ ...prev, [key]: previous }));
+      Alert.alert("Couldn't save note", "Check your connection and try again.");
+    }
+  };
   // Calendar's own built-in header (title + arrows) is hidden below in
   // favor of CalendarHeaderRow (needs room for the Month/Week toggle too) -
   // this recreates just the title text it would otherwise have shown.
@@ -1069,6 +1126,8 @@ export default function HomeScreen() {
     ? Math.max(0, totalHeight! - MIN_TOP_INSET - weekGridBaseHeight - FAB_CLEARANCE)
     : 0;
   const weekGridMaxHeight = weekGridBaseHeight + weekBottomLimit;
+  // Landscape Week view: the grid takes everything below the week header.
+  const landscapeGridHeight = Math.max(0, (totalHeight ?? 0) - MIN_TOP_INSET);
   // Resting (dragY=0) height sits halfway between the bare default and the
   // fully-dragged-down max, so the sheet visibly has room to move in both
   // directions from rest (up to fullscreen Upcoming, down to the fully
@@ -1320,22 +1379,29 @@ export default function HomeScreen() {
   );
 
   return (
-    <View style={styles.container}>
-      <View style={styles.headerRow}>
-        <PingLogoMenu
-          hasNotifications={unreadCount > 0}
-          onCreatePing={() => setModalVisible(true)}
-        />
-        <View style={styles.headerActions}>
-          <TouchableOpacity onPress={() => setModalVisible(true)}>
-            <Text style={styles.createText}>Create</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => router.push("/groups")}>
-            <Text style={styles.groupsText}>Groups</Text>
-          </TouchableOpacity>
-          <ProfileMenu />
+    <View
+      style={[
+        styles.container,
+        landscapeWeek && { paddingTop: 4, paddingLeft: insets.left, paddingRight: insets.right, paddingBottom: insets.bottom },
+      ]}
+    >
+      {!landscapeWeek && (
+        <View style={styles.headerRow}>
+          <PingLogoMenu
+            hasNotifications={unreadCount > 0}
+            onCreatePing={() => setModalVisible(true)}
+          />
+          <View style={styles.headerActions}>
+            <TouchableOpacity onPress={() => setModalVisible(true)}>
+              <Text style={styles.createText}>Create</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => router.push("/groups")}>
+              <Text style={styles.groupsText}>Groups</Text>
+            </TouchableOpacity>
+            <ProfileMenu />
+          </View>
         </View>
-      </View>
+      )}
 
       <View style={styles.contentArea} onLayout={handleContentLayout}>
         <View style={styles.calendarWrapper}>
@@ -1373,49 +1439,55 @@ export default function HomeScreen() {
               initialDayIndex={WEEK_GRID_LOOKBACK_DAYS}
               eventsByDay={weekDayColumns}
               allDayByDay={weekAllDayColumns}
-              height={weekGridMaxHeight}
+              notesByDay={dayNotes}
+              onNotePress={setNoteDayKey}
+              height={landscapeWeek ? landscapeGridHeight : weekGridMaxHeight}
               onEventPress={handleWeekItemPress}
               onEventLongPress={handleWeekItemLongPress}
               onVisibleWeekChange={setVisibleWeekStart}
               onEmptySlotLongPress={handleEmptySlotLongPress}
               onDateHeaderLongPress={handleDateHeaderLongPress}
               dragY={dragY}
-              visibleHeight={weekGridBaseHeight}
-              maxExtraHeight={weekBottomLimit}
-              defaultExpansion={weekDefaultExpansion}
+              visibleHeight={landscapeWeek ? landscapeGridHeight : weekGridBaseHeight}
+              maxExtraHeight={landscapeWeek ? 0 : weekBottomLimit}
+              defaultExpansion={landscapeWeek ? 0 : weekDefaultExpansion}
             />
           )}
         </View>
 
-        <Animated.View style={[styles.cardsSheet, ready && animatedCardsSheetStyle]}>
-          <View style={styles.handleSpacer} />
-          {renderListHeader("Upcoming")}
-          {upcomingBanners}
-          <FlatList
-            style={{ flex: 1 }}
-            data={upcomingListItems}
-            keyExtractor={(item) => item.key}
-            extraData={myRsvpByEvent}
-            refreshControl={<RefreshControl refreshing={loading} onRefresh={handleRefresh} tintColor={colors.primary} />}
-            renderItem={renderUpcomingItem}
-            ListEmptyComponent={upcomingEmptyComponent}
-            contentContainerStyle={{ paddingVertical: 12, paddingBottom: 120 }}
-          />
-        </Animated.View>
+        {!landscapeWeek && (
+          <>
+          <Animated.View style={[styles.cardsSheet, ready && animatedCardsSheetStyle]}>
+            <View style={styles.handleSpacer} />
+            {renderListHeader("Upcoming")}
+            {upcomingBanners}
+            <FlatList
+              style={{ flex: 1 }}
+              data={upcomingListItems}
+              keyExtractor={(item) => item.key}
+              extraData={myRsvpByEvent}
+              refreshControl={<RefreshControl refreshing={loading} onRefresh={handleRefresh} tintColor={colors.primary} />}
+              renderItem={renderUpcomingItem}
+              ListEmptyComponent={upcomingEmptyComponent}
+              contentContainerStyle={{ paddingVertical: 12, paddingBottom: 120 }}
+            />
+          </Animated.View>
 
-        <Animated.View style={[styles.handleWrap, ready && animatedHandleStyle]}>
-          <GestureDetector gesture={pan}>
-            {/* Without hitSlop, a touch that starts a few px off this
-                28px-tall band misses the gesture entirely and can instead
-                land on the grid behind it - reported as "pulling down
-                works, but starting a fresh drag upward often doesn't."
-                EventDetailModal's own drag handle already needed the same
-                fix (see its hitSlop). */}
-            <View style={styles.dragHandleArea} hitSlop={{ top: 16, bottom: 16, left: 40, right: 40 }}>
-              <View style={styles.dragHandle} />
-            </View>
-          </GestureDetector>
-        </Animated.View>
+          <Animated.View style={[styles.handleWrap, ready && animatedHandleStyle]}>
+            <GestureDetector gesture={pan}>
+              {/* Without hitSlop, a touch that starts a few px off this
+                  28px-tall band misses the gesture entirely and can instead
+                  land on the grid behind it - reported as "pulling down
+                  works, but starting a fresh drag upward often doesn't."
+                  EventDetailModal's own drag handle already needed the same
+                  fix (see its hitSlop). */}
+              <View style={styles.dragHandleArea} hitSlop={{ top: 16, bottom: 16, left: 40, right: 40 }}>
+                <View style={styles.dragHandle} />
+              </View>
+            </GestureDetector>
+          </Animated.View>
+          </>
+        )}
       </View>
 
       {fabMenuVisible && (
@@ -1425,13 +1497,15 @@ export default function HomeScreen() {
         />
       )}
 
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => setFabMenuVisible(true)}
-        activeOpacity={0.85}
-      >
-        <Text style={styles.fabPlus}>+</Text>
-      </TouchableOpacity>
+      {!landscapeWeek && (
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() => setFabMenuVisible(true)}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.fabPlus}>+</Text>
+        </TouchableOpacity>
+      )}
 
       {fabMenuVisible && (
         <View style={styles.fabMenuItems} pointerEvents="box-none">
@@ -1478,6 +1552,11 @@ export default function HomeScreen() {
         prefill={convertPrefill}
       />
 
+      <DayNoteModal
+        dayKey={noteDayKey}
+        initialBody={noteDayKey ? dayNotes[noteDayKey] ?? "" : ""}
+        onClose={handleCloseDayNote}
+      />
       <AddPersonalItemModal
         visible={personalItemModalVisible || !!editingPersonalEvent}
         editingEvent={editingPersonalEvent}

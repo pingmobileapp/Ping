@@ -10,11 +10,24 @@
 
 export type FeedGame = {
   title: string;
-  startsAt: string; // ISO UTC
+  startsAt: string; // ISO UTC - a noon placeholder on the game date when timeTba
+  timeTba: boolean;
   location: string | null;
   url: string | null;
   description: string | null;
 };
+
+// Noon UTC-6ish lands on the same calendar date in every US timezone, so a
+// date-only game shows on the right day wherever it's read.
+const tbaPlaceholder = (dateKey: string): string => `${dateKey}T18:00:00.000Z`;
+
+// ESPN parks a game with no announced time at midnight US Eastern, so its
+// real date is the Eastern calendar date - read as UTC or Mountain time it
+// would fall on the day before.
+const easternDateKey = (ms: number): string =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(
+    new Date(ms)
+  );
 
 export type TeamFeed =
   | { kind: 'espn'; path: string; id: string } // e.g. path 'basketball/nba'
@@ -66,10 +79,10 @@ export async function espnGames(
   for (const event of data.events) {
     const comp = event?.competitions?.[0];
     if (!comp) continue;
-    // ESPN parks games with no announced time at midnight local with
-    // timeValid=false - the same confident-but-wrong "12:00 AM" the AI
-    // crawlers had to filter out, so drop them until a real time exists.
-    if (comp.timeValid === false || event.timeValid === false) continue;
+    // timeValid=false means the date is set but the kickoff time isn't -
+    // kept as a date-only game rather than trusting ESPN's midnight
+    // placeholder as a real "12:00 AM" start.
+    const timeTba = comp.timeValid === false || event.timeValid === false;
     const status = comp.status?.type?.name ?? event.status?.type?.name;
     if (status && status !== 'STATUS_SCHEDULED') continue;
 
@@ -78,8 +91,11 @@ export async function espnGames(
     if (!mine || !opponent) continue;
     if (mine.homeAway !== 'home' && !comp.neutralSite) continue;
 
-    const startMs = Date.parse(event.date);
-    if (Number.isNaN(startMs) || startMs < fromMs || startMs > toMs) continue;
+    const rawMs = Date.parse(event.date);
+    if (Number.isNaN(rawMs)) continue;
+    const startsAt = timeTba ? tbaPlaceholder(easternDateKey(rawMs)) : new Date(rawMs).toISOString();
+    const startMs = Date.parse(startsAt);
+    if (startMs < fromMs || startMs > toMs) continue;
 
     const link = (event.links || []).find(
       (l: any) => Array.isArray(l.rel) && l.rel.includes('desktop') && l.rel.includes('event')
@@ -90,7 +106,8 @@ export async function espnGames(
 
     games.push({
       title: `${me} vs. ${them}`,
-      startsAt: new Date(startMs).toISOString(),
+      startsAt,
+      timeTba,
       location: venueLabel(comp.venue),
       url: link?.href ?? data.team?.clubhouse ?? null,
       description: `${sportLabel ? `${sportLabel}: ` : ''}${me} host ${them}.`,
@@ -115,10 +132,12 @@ export async function mlbGames(
   const games: FeedGame[] = [];
   for (const date of data.dates) {
     for (const g of date.games || []) {
-      if (g.status?.startTimeTBD) continue;
       if (g.status?.abstractGameState !== 'Preview') continue;
       if (g.teams?.home?.team?.id !== teamId) continue;
-      const startMs = Date.parse(g.gameDate);
+      const timeTba = !!g.status?.startTimeTBD;
+      if (timeTba && !g.officialDate) continue;
+      const startsAt = timeTba ? tbaPlaceholder(g.officialDate) : g.gameDate;
+      const startMs = Date.parse(startsAt);
       if (Number.isNaN(startMs) || startMs < fromMs || startMs > toMs) continue;
 
       const home = g.teams.home.team.name;
@@ -127,6 +146,7 @@ export async function mlbGames(
       games.push({
         title: `${home} vs. ${away}`,
         startsAt: new Date(startMs).toISOString(),
+        timeTba,
         location: g.venue?.name
           ? [g.venue.name, loc?.city, loc?.stateAbbrev ?? loc?.state].filter(Boolean).join(', ')
           : null,

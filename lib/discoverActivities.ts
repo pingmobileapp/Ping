@@ -50,6 +50,9 @@ export type Activity = {
   priceLabel: string | null;
   url: string | null;
   confidence: 'high' | 'low';
+  // Game date is set but the start time isn't announced yet - startsAt is
+  // a noon placeholder on that date, never a real time to display.
+  timeTba?: boolean;
   // Set only for a Ping a host listed on Discover (source === 'ping') -
   // the real events.id to open via /event/[id] for the full RSVP/detail
   // experience, since these aren't ticketed listings with an external URL.
@@ -88,6 +91,7 @@ type ActivityRow = {
   url: string | null;
   confidence: string;
   distance_miles: number | null;
+  time_tba: boolean;
 };
 
 const isKnownCategory = (c: string): c is ActivityCategory => c in CATEGORY_LABELS;
@@ -107,6 +111,7 @@ const toActivity = (row: ActivityRow): Activity => ({
   priceLabel: row.price_label,
   url: row.url,
   confidence: row.confidence === 'low' ? 'low' : 'high',
+  timeTba: row.time_tba,
 });
 
 // Recomputes a real distance from the device's actual location once it's
@@ -188,8 +193,12 @@ const jaccardSimilarity = (a: Set<string>, b: Set<string>): number => {
 // every candidate is checked against the full priority-sorted "kept" list
 // built so far.
 export function dedupeActivities(activities: Activity[]): Activity[] {
+  // A listing with a real start time beats a time-TBA copy of the same game
+  // at equal source priority.
   const bySourcePriority = [...activities].sort(
-    (a, b) => (SOURCE_PRIORITY[baseSource(b.source)] ?? 0) - (SOURCE_PRIORITY[baseSource(a.source)] ?? 0)
+    (a, b) =>
+      (SOURCE_PRIORITY[baseSource(b.source)] ?? 0) - (SOURCE_PRIORITY[baseSource(a.source)] ?? 0) ||
+      Number(!!a.timeTba) - Number(!!b.timeTba)
   );
 
   const kept: Activity[] = [];
@@ -199,7 +208,11 @@ export function dedupeActivities(activities: Activity[]): Activity[] {
     const candidateTitle = wordSet(candidate.title);
 
     const isDuplicate = kept.some((existing) => {
-      if (Math.abs(new Date(existing.startsAt).getTime() - candidateStart) > TIME_TOLERANCE_MS) return false;
+      // A time-TBA start is only a placeholder, so it can only be matched
+      // on the date, not within the usual time window.
+      if (candidate.timeTba || existing.timeTba) {
+        if (new Date(existing.startsAt).toDateString() !== new Date(candidateStart).toDateString()) return false;
+      } else if (Math.abs(new Date(existing.startsAt).getTime() - candidateStart) > TIME_TOLERANCE_MS) return false;
 
       const titleSimilarity = jaccardSimilarity(candidateTitle, wordSet(existing.title));
       // Titles sharing basically nothing are never the same event, no
@@ -298,7 +311,7 @@ export async function fetchActivities(options: { dateKey?: string; daysAhead?: n
     supabase
       .from('activities')
       .select(
-        'id, source, title, category, description, location, lat, lng, starts_at, ends_at, price_label, url, confidence, distance_miles'
+        'id, source, title, category, description, location, lat, lng, starts_at, ends_at, price_label, url, confidence, distance_miles, time_tba'
       )
       .gte('starts_at', rangeStart.toISOString())
       .lte('starts_at', rangeEnd.toISOString())

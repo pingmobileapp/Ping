@@ -16,10 +16,13 @@ import { colors } from '../lib/theme';
 const MAX_CONTENT_WIDTH = 700;
 
 export default function ResponsiveContainer({ children }: { children: React.ReactNode }) {
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
 
   // Phone width (or a narrowed-down iPad window) - unchanged from before.
-  if (width <= MAX_CONTENT_WIDTH) {
+  // A phone turned sideways (Week view's landscape mode) is also wider than
+  // the cap but should use its full width, so only tablet-sized screens -
+  // short side 600pt+ - get capped.
+  if (width <= MAX_CONTENT_WIDTH || Math.min(width, height) < 600) {
     return <>{children}</>;
   }
 

@@ -3,7 +3,7 @@
     "name": "Ping",
     "slug": "ping",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "pingapp",
     "userInterfaceStyle": "automatic",
@@ -80,7 +80,14 @@
         }
       ],
       "./plugins/withUISceneLifecycle",
-      "./plugins/withXcode27PodDeploymentTarget"
+      "./plugins/withXcode27PodDeploymentTarget",
+      [
+        "expo-screen-orientation",
+        {
+          "initialOrientation": "PORTRAIT_UP"
+        }
+      ],
+      "./plugins/withIPadPortraitOnly"
     ],
     "experiments": {
       "typedRoutes": true,

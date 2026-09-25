@@ -2,6 +2,8 @@ import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getRegion, swapExamples, type Region } from '../_shared/regions.ts';
 import { crawlerModel, noteUsage } from '../_shared/anthropic.ts';
+import { cityStateOf } from '../_shared/location.ts';
+import { geocodeLocation } from '../_shared/geocode.ts';
 
 // A dedicated, low-frequency companion to the other refresh-activities-*
 // functions - nearly every Utah city runs its own annual "[City] Days"
@@ -90,49 +92,6 @@ function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number):
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-let lastGeocodeCallAt = 0;
-
-async function geocodeLocation(
-  admin: ReturnType<typeof createClient>,
-  locationText: string
-): Promise<{ lat: number; lng: number } | null> {
-  const key = locationText.trim().toLowerCase();
-  if (!key) return null;
-
-  const { data: cached } = await admin
-    .from('geocode_cache')
-    .select('lat, lng')
-    .eq('location_text', key)
-    .maybeSingle();
-  if (cached) {
-    return cached.lat !== null && cached.lng !== null ? { lat: cached.lat, lng: cached.lng } : null;
-  }
-
-  const elapsed = Date.now() - lastGeocodeCallAt;
-  if (elapsed < 1100) await new Promise((r) => setTimeout(r, 1100 - elapsed));
-  lastGeocodeCallAt = Date.now();
-
-  try {
-    const url =
-      `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q=${encodeURIComponent(locationText)}`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'PingApp-Discover/1.0' } });
-    if (!res.ok) {
-      await admin.from('geocode_cache').insert({ location_text: key, lat: null, lng: null });
-      return null;
-    }
-    const results = await res.json();
-    const first = Array.isArray(results) ? results[0] : null;
-    const lat = first ? Number(first.lat) : null;
-    const lng = first ? Number(first.lon) : null;
-    const resolved = lat !== null && lng !== null && !Number.isNaN(lat) && !Number.isNaN(lng);
-    await admin.from('geocode_cache').upsert({ location_text: key, lat: resolved ? lat : null, lng: resolved ? lng : null });
-    return resolved ? { lat: lat as number, lng: lng as number } : null;
-  } catch (err) {
-    console.error('Geocoding failed for', locationText, err);
-    return null;
-  }
-}
-
 async function verifyDistances(
   admin: ReturnType<typeof createClient>,
   rows: ActivityRow[],
@@ -143,7 +102,10 @@ async function verifyDistances(
   for (const row of rows) {
     let { lat, lng } = row;
     if ((lat === null || lng === null) && row.location) {
-      const geo = await geocodeLocation(admin, row.location);
+      const cityState = cityStateOf(row.location);
+      const geo =
+        (await geocodeLocation(admin, row.location)) ??
+        (cityState ? await geocodeLocation(admin, cityState) : null);
       if (geo) {
         lat = geo.lat;
         lng = geo.lng;

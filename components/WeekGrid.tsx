@@ -19,6 +19,7 @@ import { DayColumnEvent, AllDayItem } from '../lib/weekTimeline';
 const TIMELINE_LEFT_INSET = 50;
 const DAY_LABEL_ROW_HEIGHT = 36;
 const ALL_DAY_ROW_HEIGHT = 32;
+const NOTES_BAR_HEIGHT = 22;
 const GRID_HEIGHT = 24 * HOUR_BLOCK_HEIGHT;
 // How far each card in a same-time cascade is nudged right of the one
 // behind it - see the stackIndex/stackSize comment where it's used below.
@@ -55,6 +56,10 @@ type Props = {
   initialDayIndex: number;
   eventsByDay: Record<string, DayColumnEvent[]>;
   allDayByDay: Record<string, AllDayItem[]>;
+  // Each day's note (see lib/dayNotes.ts), shown as a slim bar above that
+  // day's all-day chip - tapping it calls onNotePress to open the full note.
+  notesByDay: Record<string, string>;
+  onNotePress: (dayKey: string) => void;
   height: number;
   onEventPress: (id: string) => void;
   // Long-pressing an event (as opposed to empty grid space - see
@@ -118,6 +123,8 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       initialDayIndex,
       eventsByDay,
       allDayByDay,
+      notesByDay,
+      onNotePress,
       height,
       onEventPress,
       onEventLongPress,
@@ -131,7 +138,11 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     },
     ref,
   ) => {
-    const columnWidth = Dimensions.get('window').width - TIMELINE_LEFT_INSET;
+    // Measured from the grid's own frame (see the root View's onLayout), not
+    // the window - on iPad the content is capped narrower than the window
+    // (ResponsiveContainer), and turning a phone sideways changes it.
+    const [gridWidth, setGridWidth] = useState(() => Dimensions.get('window').width);
+    const columnWidth = gridWidth - TIMELINE_LEFT_INSET;
     // Tapping a day's header widens just that one column - the others stay
     // their normal size and simply don't all fit on screen together
     // anymore (scroll to see them, same as always), rather than a "zoom"
@@ -159,7 +170,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
 
     // The header row and all-day strip above the scroll area are fixed
     // height - only the remainder is this ScrollView's own frame.
-    const scrollAreaBaseHeight = Math.max(0, visibleHeight - DAY_LABEL_ROW_HEIGHT - ALL_DAY_ROW_HEIGHT);
+    const scrollAreaBaseHeight = Math.max(0, visibleHeight - DAY_LABEL_ROW_HEIGHT - ALL_DAY_ROW_HEIGHT - NOTES_BAR_HEIGHT);
     const animatedScrollAreaStyle = useAnimatedStyle(() => {
       if (maxExtraHeight <= 0) {
         return { height: scrollAreaBaseHeight };
@@ -281,6 +292,27 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // Keeps the same leading day in view when the column width changes
+    // (rotation, or the first real measurement replacing the window-based
+    // guess) - a scroll offset in points would otherwise land on a
+    // different day once every column is a new width.
+    const prevDayWidthRef = useRef(NORMAL_DAY_WIDTH);
+    useEffect(() => {
+      const prev = prevDayWidthRef.current;
+      prevDayWidthRef.current = NORMAL_DAY_WIDTH;
+      if (prev === NORMAL_DAY_WIDTH) return;
+      const idx = Math.round(scrollX.value / prev);
+      setFocusedDayKey(null);
+      requestAnimationFrame(() => {
+        const x = idx * NORMAL_DAY_WIDTH;
+        scrollX.value = x;
+        mainScrollRef.current?.scrollTo({ x, y: 0, animated: false });
+        dayHeaderRef.current?.scrollTo({ x, y: 0, animated: false });
+        allDayRef.current?.scrollTo({ x, y: 0, animated: false });
+      });
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [NORMAL_DAY_WIDTH]);
+
     // Re-centers on the tapped day once dayOffsets has actually recomputed
     // to reflect its new (focused/unfocused) width - doing this inside the
     // tap handler itself would still be scrolling by the OLD offsets,
@@ -353,7 +385,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     const nowTop = ((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_BLOCK_HEIGHT;
 
     return (
-      <View style={{ height }}>
+      <View style={{ height }} onLayout={(e) => setGridWidth(e.nativeEvent.layout.width)}>
         <View style={styles.headerRow}>
           <View style={{ width: TIMELINE_LEFT_INSET }} />
           <Animated.ScrollView
@@ -397,30 +429,42 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
               const key = toDayKey(d);
               const dayItems = allDayByDay[key] || [];
               const first = dayItems[0];
+              const note = notesByDay[key]?.trim();
               return (
                 <View key={key} style={[styles.allDayCell, { width: dayWidths[i] }]}>
-                  {first && (
-                    <TouchableOpacity
-                      style={styles.allDayChip}
-                      // More than one full-day item on this day - a tap
-                      // shouldn't silently jump into whichever one happened
-                      // to be first, so it opens a chooser listing all of
-                      // them instead.
-                      onPress={() =>
-                        dayItems.length > 1 ? setDayPicker({ dayKey: key, items: dayItems }) : onEventPress(first.id)
-                      }
-                      // Same "which one" ambiguity as onPress above - only
-                      // wired when there's exactly one item to act on.
-                      onLongPress={
-                        dayItems.length > 1 || !onEventLongPress ? undefined : () => onEventLongPress(first.id)
-                      }
-                    >
-                      <Text style={styles.allDayChipText} numberOfLines={1}>
-                        {first.title}
-                        {dayItems.length > 1 ? ` +${dayItems.length - 1}` : ''}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
+                  <TouchableOpacity
+                    style={[styles.noteBar, note ? styles.noteBarFilled : styles.noteBarEmpty]}
+                    onPress={() => onNotePress(key)}
+                    accessibilityLabel={note ? `Note: ${note}` : 'Add a note for this day'}
+                  >
+                    <Text style={note ? styles.noteBarText : styles.noteBarPlus} numberOfLines={1}>
+                      {note ? note.split('\n')[0] : '+'}
+                    </Text>
+                  </TouchableOpacity>
+                  <View style={styles.allDayChipSlot}>
+                    {first && (
+                      <TouchableOpacity
+                        style={styles.allDayChip}
+                        // More than one full-day item on this day - a tap
+                        // shouldn't silently jump into whichever one happened
+                        // to be first, so it opens a chooser listing all of
+                        // them instead.
+                        onPress={() =>
+                          dayItems.length > 1 ? setDayPicker({ dayKey: key, items: dayItems }) : onEventPress(first.id)
+                        }
+                        // Same "which one" ambiguity as onPress above - only
+                        // wired when there's exactly one item to act on.
+                        onLongPress={
+                          dayItems.length > 1 || !onEventLongPress ? undefined : () => onEventLongPress(first.id)
+                        }
+                      >
+                        <Text style={styles.allDayChipText} numberOfLines={1}>
+                          {first.title}
+                          {dayItems.length > 1 ? ` +${dayItems.length - 1}` : ''}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
                 </View>
               );
             })}
@@ -573,8 +617,14 @@ const styles = StyleSheet.create({
   dayLabelDow: { color: colors.textSecondary, fontSize: 11, fontWeight: '600' },
   dayLabelNum: { color: colors.textPrimary, fontSize: 13, fontWeight: '700' },
   dayLabelNumToday: { color: colors.primary },
-  allDayRow: { height: ALL_DAY_ROW_HEIGHT, flexDirection: 'row', alignItems: 'center' },
-  allDayCell: { paddingHorizontal: 2, justifyContent: 'center' },
+  allDayRow: { height: ALL_DAY_ROW_HEIGHT + NOTES_BAR_HEIGHT, flexDirection: 'row' },
+  allDayCell: { paddingHorizontal: 2 },
+  allDayChipSlot: { height: ALL_DAY_ROW_HEIGHT, justifyContent: 'center' },
+  noteBar: { height: NOTES_BAR_HEIGHT - 4, marginTop: 4, borderRadius: 5, justifyContent: 'center', paddingHorizontal: 5 },
+  noteBarFilled: { backgroundColor: colors.warningPale },
+  noteBarEmpty: { backgroundColor: colors.surface, alignItems: 'center' },
+  noteBarText: { color: colors.textPrimary, fontSize: 10, fontWeight: '600' },
+  noteBarPlus: { color: colors.textMuted, fontSize: 12, fontWeight: '600', lineHeight: 14 },
   allDayChip: { backgroundColor: colors.primaryPale, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3 },
   allDayChipText: { color: colors.textPrimary, fontSize: 10, fontWeight: '600' },
   hourLabel: { position: 'absolute', left: 0, right: 8, textAlign: 'right', fontSize: 11, color: colors.textSecondary },

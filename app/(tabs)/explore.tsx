@@ -79,6 +79,7 @@ const sourceDomain = (url: string | null): string | null => {
 };
 
 const formatActivityTime = (activity: Activity): string => {
+  if (activity.timeTba) return 'Time TBA';
   const start = formatTime(new Date(activity.startsAt));
   if (!activity.endsAt) return start;
   return `${start} – ${formatTime(new Date(activity.endsAt))}`;
@@ -257,6 +258,8 @@ export default function DiscoverScreen() {
   const timeScoped = useMemo(() => {
     if (showAllDay || gapStartMinutes === null || gapEndMinutes === null) return regionActivities;
     return regionActivities.filter((a) => {
+      // No real start time to test against the gap - keep it visible.
+      if (a.timeTba) return true;
       const start = new Date(a.startsAt);
       const mins = start.getHours() * 60 + start.getMinutes();
       return mins >= gapStartMinutes && mins <= gapEndMinutes;
@@ -309,11 +312,16 @@ export default function DiscoverScreen() {
       Alert.alert('Calendar access needed', 'Enable calendar access in Settings to add this to your calendar.');
       return;
     }
-    const start = new Date(activity.startsAt);
-    const end = activity.endsAt ? new Date(activity.endsAt) : new Date(start.getTime() + 60 * 60000);
+    let start = new Date(activity.startsAt);
+    let end = activity.endsAt ? new Date(activity.endsAt) : new Date(start.getTime() + 60 * 60000);
+    if (activity.timeTba) {
+      // All-day on the game date, with an exclusive end at the next midnight.
+      start = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+      end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1);
+    }
     try {
       const details = [activity.location, activity.description, activity.url].filter(Boolean).join('\n');
-      await createPersonalCalendarEvent(activity.title, start, end, false, details);
+      await createPersonalCalendarEvent(activity.title, start, end, !!activity.timeTba, details);
       Alert.alert('Added', `${activity.title} was added to your calendar.`);
     } catch (err) {
       console.error('Error adding activity to calendar:', err);

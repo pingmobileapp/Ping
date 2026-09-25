@@ -214,7 +214,13 @@ export function buildAllDayColumns(
 
   for (const e of external) {
     if (!e.allDay) continue;
-    const end = e.endDate ? new Date(e.endDate) : null;
+    // EventKit's all-day endDate is exclusive (midnight of the day AFTER
+    // the last day), but pushAllDayAcrossSpan/eachDayKeyInRange treat the
+    // end as inclusive - subtract a day so a single-day all-day event
+    // (e.g. a synced birthday) doesn't also show up on the following day.
+    const end = e.endDate
+      ? new Date(Math.max(e.startDate.getTime(), e.endDate.getTime() - 24 * 60 * 60000))
+      : null;
     if ((end ?? e.startDate) < rangeStart || e.startDate >= rangeEnd) continue;
     if (externalItemDuplicatesPing(pingAllDayEntries, { title: e.title, start: e.startDate })) continue;
     // Same non-unique-id reasoning as buildDayColumns above.

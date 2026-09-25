@@ -722,6 +722,12 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
   };
 
   const submit = async (status: 'sent' | 'draft') => {
+    // The Send/Save buttons' disabled={submitting} only takes effect on the
+    // next render, so a fast double-tap can call submit() twice before that
+    // lands - without this guard, both calls run createOccurrence and the
+    // event gets created twice with the same title (reported as a renamed
+    // title "saved twice").
+    if (submitting) return;
     if (!title) {
       Alert.alert('Missing info', 'Please add at least a title.');
       return;
