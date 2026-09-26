@@ -56,6 +56,11 @@ export default function DayNoteChecklist({ dayKey, body, maxHeight, onChange, on
     commit(flipped.done ? [...open, ...done, flipped] : [...open, flipped, ...done]);
   };
 
+  const remove = (id: number) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    commit(itemsRef.current.filter((i) => i.id !== id));
+  };
+
   const withDraft = (current: Item[]): Item[] => {
     const text = draftRef.current.trim();
     if (!text) return current;
@@ -115,6 +120,15 @@ export default function DayNoteChecklist({ dayKey, body, maxHeight, onChange, on
         onEndEditing={finishEdit}
         returnKeyType="done"
       />
+      <TouchableOpacity
+        onPress={() => remove(item.id)}
+        hitSlop={10}
+        style={styles.remove}
+        accessibilityRole="button"
+        accessibilityLabel={`Delete ${item.text}`}
+      >
+        <Text style={styles.removeText}>✕</Text>
+      </TouchableOpacity>
     </View>
   );
 
@@ -195,4 +209,6 @@ const styles = StyleSheet.create({
   plus: { color: colors.textMuted, fontSize: 14, fontWeight: '700', lineHeight: 16 },
   itemText: { flex: 1, fontSize: 16, color: colors.textPrimary, paddingVertical: 2 },
   itemTextDone: { color: colors.textMuted, textDecorationLine: 'line-through' },
+  remove: { paddingLeft: 10, paddingVertical: 2 },
+  removeText: { color: colors.textMuted, fontSize: 14, fontWeight: '600' },
 });

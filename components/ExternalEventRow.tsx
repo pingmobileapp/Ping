@@ -22,10 +22,10 @@ type Props = {
 
 // Deliberately plain (no card, no border) so a phone-calendar event reads as
 // a quick reference line rather than a full Ping event. Anything on a
-// writable calendar (see ExternalEvent.editable) still gets a pencil and a
-// tap target so it can be edited or deleted from here - personal items
-// Ping wrote itself, or any other calendar event the user can already
-// edit in their own Calendar app.
+// writable calendar (see ExternalEvent.editable) opens for editing when the
+// row is tapped - personal items Ping wrote itself, or any other calendar
+// event the user can already edit in their own Calendar app. No separate
+// edit icon: next to the hide ✕ it was too easy to hit the wrong one.
 export default function ExternalEventRow({ event, onEdit, onHide, onLongPressHide, onUnhide }: Props) {
   const dateLabel = event.startDate.toLocaleDateString(undefined, {
     weekday: 'short',
@@ -70,7 +70,6 @@ export default function ExternalEventRow({ event, onEdit, onHide, onLongPressHid
         </Text>
         {event.title}
       </Text>
-      {editable && <Text style={styles.editIcon}>✎</Text>}
       {!!onHide && (
         <TouchableOpacity onPress={onHide} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Text style={styles.hideIcon}>✕</Text>
@@ -84,7 +83,6 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 24 },
   text: { flex: 1, fontSize: 14, color: colors.textSecondary },
   meta: { color: colors.textMuted },
-  editIcon: { fontSize: 12, color: colors.textMuted, marginLeft: 8 },
   hideIcon: { fontSize: 12, color: colors.textMuted, marginLeft: 10 },
   unhideText: { color: colors.primary, fontSize: 13, fontWeight: '600', marginLeft: 10 },
 });

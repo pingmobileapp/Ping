@@ -262,6 +262,7 @@ export default function HomeScreen() {
   // grid became legitimately tall (event bars) for reasons that have
   // nothing to do with how many hours of a day is a sane default to show.
   const [totalHeight, setTotalHeight] = useState<number | null>(null);
+  const [liveContentHeight, setLiveContentHeight] = useState<number | null>(null);
   const totalMeasuredRef = useRef(false);
 
   const dragY = useSharedValue(0);
@@ -1144,7 +1145,10 @@ export default function HomeScreen() {
     : 0;
   const weekGridMaxHeight = weekGridBaseHeight + weekBottomLimit;
   // Landscape Week view: the grid takes everything below the week header.
-  const landscapeGridHeight = Math.max(0, (totalHeight ?? 0) - MIN_TOP_INSET);
+  // totalHeight is measured once, in portrait - rotating needs the live
+  // height, or the grid is sized for the taller portrait screen and its
+  // bottom hours end up off-screen, unreachable by scrolling.
+  const landscapeGridHeight = Math.max(0, (liveContentHeight ?? totalHeight ?? 0) - MIN_TOP_INSET);
   // Resting (dragY=0) height sits halfway between the bare default and the
   // fully-dragged-down max, so the sheet visibly has room to move in both
   // directions from rest (up to fullscreen Upcoming, down to the fully
@@ -1174,6 +1178,7 @@ export default function HomeScreen() {
   const topLimit = ready ? -gridBaseHeight : 0;
 
   const handleContentLayout = (e: LayoutChangeEvent) => {
+    setLiveContentHeight(e.nativeEvent.layout.height);
     if (totalMeasuredRef.current) return;
     totalMeasuredRef.current = true;
     setTotalHeight(e.nativeEvent.layout.height);
