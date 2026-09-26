@@ -15,6 +15,7 @@ import Animated, {
 import { HOUR_BLOCK_HEIGHT } from 'react-native-calendars/src/timeline/Packer';
 import { colors } from '../lib/theme';
 import { DayColumnEvent, AllDayItem } from '../lib/weekTimeline';
+import { notePreview } from '../lib/dayNotes';
 
 const TIMELINE_LEFT_INSET = 50;
 const DAY_LABEL_ROW_HEIGHT = 36;
@@ -60,6 +61,10 @@ type Props = {
   // day's all-day chip - tapping it calls onNotePress to open the full note.
   notesByDay: Record<string, string>;
   onNotePress: (dayKey: string) => void;
+  // The day whose notes are expanded in place, and the panel to show for it
+  // (see DayNoteChecklist) - drawn just under the notes row, over the grid.
+  expandedNoteDayKey?: string | null;
+  notePanel?: React.ReactNode;
   height: number;
   onEventPress: (id: string) => void;
   // Long-pressing an event (as opposed to empty grid space - see
@@ -125,6 +130,8 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       allDayByDay,
       notesByDay,
       onNotePress,
+      expandedNoteDayKey,
+      notePanel,
       height,
       onEventPress,
       onEventLongPress,
@@ -429,16 +436,17 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
               const key = toDayKey(d);
               const dayItems = allDayByDay[key] || [];
               const first = dayItems[0];
-              const note = notesByDay[key]?.trim();
+              const note = notePreview(notesByDay[key] ?? '');
+              const expanded = key === expandedNoteDayKey;
               return (
                 <View key={key} style={[styles.allDayCell, { width: dayWidths[i] }]}>
                   <TouchableOpacity
-                    style={[styles.noteBar, note ? styles.noteBarFilled : styles.noteBarEmpty]}
+                    style={[styles.noteBar, note ? styles.noteBarFilled : styles.noteBarEmpty, expanded && styles.noteBarExpanded]}
                     onPress={() => onNotePress(key)}
                     accessibilityLabel={note ? `Note: ${note}` : 'Add a note for this day'}
                   >
                     <Text style={note ? styles.noteBarText : styles.noteBarPlus} numberOfLines={1}>
-                      {note ? note.split('\n')[0] : '+'}
+                      {note || '+'}
                     </Text>
                   </TouchableOpacity>
                   <View style={styles.allDayChipSlot}>
@@ -573,6 +581,8 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
           </View>
         </Animated.ScrollView>
 
+        {expandedNoteDayKey && notePanel ? <View style={styles.notePanelWrap}>{notePanel}</View> : null}
+
         <Modal visible={!!dayPicker} transparent animationType="fade" onRequestClose={() => setDayPicker(null)}>
           <Pressable style={styles.dayPickerBackdrop} onPress={() => setDayPicker(null)}>
             <View style={styles.dayPickerCard}>
@@ -623,6 +633,15 @@ const styles = StyleSheet.create({
   noteBar: { height: NOTES_BAR_HEIGHT - 4, marginTop: 4, borderRadius: 5, justifyContent: 'center', paddingHorizontal: 5 },
   noteBarFilled: { backgroundColor: colors.warningPale },
   noteBarEmpty: { backgroundColor: colors.surface, alignItems: 'center' },
+  noteBarExpanded: { borderWidth: 1.5, borderColor: colors.warning },
+  notePanelWrap: {
+    position: 'absolute',
+    top: DAY_LABEL_ROW_HEIGHT + NOTES_BAR_HEIGHT + 2,
+    left: 6,
+    right: 6,
+    zIndex: 30,
+    elevation: 30,
+  },
   noteBarText: { color: colors.textPrimary, fontSize: 10, fontWeight: '600' },
   noteBarPlus: { color: colors.textMuted, fontSize: 12, fontWeight: '600', lineHeight: 14 },
   allDayChip: { backgroundColor: colors.primaryPale, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3 },

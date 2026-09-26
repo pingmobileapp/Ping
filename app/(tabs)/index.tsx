@@ -32,7 +32,7 @@ import Animated, {
 import AddPersonalItemModal from "../../components/AddPersonalItemModal";
 import CalendarHeaderRow from "../../components/CalendarHeaderRow";
 import CreateEventModal from "../../components/CreateEventModal";
-import DayNoteModal from "../../components/DayNoteModal";
+import DayNoteChecklist from "../../components/DayNoteChecklist";
 import EventCard, { PingEvent } from "../../components/EventCard";
 import EventDetailModal from "../../components/EventDetailModal";
 import ExternalEventRow from "../../components/ExternalEventRow";
@@ -789,28 +789,44 @@ export default function HomeScreen() {
   // Week view's per-day notes bar - loaded for the whole rendered range,
   // and again on focus so an edit made on another device shows up.
   const [dayNotes, setDayNotes] = useState<Record<string, string>>({});
-  const [noteDayKey, setNoteDayKey] = useState<string | null>(null);
+  const [expandedNoteDay, setExpandedNoteDay] = useState<string | null>(null);
   useFocusEffect(
     useCallback(() => {
       fetchDayNotes(toDateKey(weekGridRangeStart), toDateKey(weekGridRangeEnd)).then(setDayNotes);
     }, [weekGridRangeStart, weekGridRangeEnd]),
   );
-  const handleCloseDayNote = async (body: string) => {
-    const key = noteDayKey;
-    setNoteDayKey(null);
-    if (!key) return;
-    const previous = dayNotes[key] ?? "";
-    if (body.trim() === previous.trim()) return;
+  // Checklist edits save shortly after the last change (so ticking off
+  // several items in a row is one write), and immediately on close.
+  const noteSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const pendingNoteBodies = useRef<Record<string, string>>({});
+  const flushDayNote = (key: string) => {
+    clearTimeout(noteSaveTimers.current[key]);
+    delete noteSaveTimers.current[key];
+    const body = pendingNoteBodies.current[key];
+    if (body === undefined) return;
+    delete pendingNoteBodies.current[key];
+    saveDayNote(key, body).then((ok) => {
+      if (!ok) Alert.alert("Couldn't save note", "Check your connection and try again.");
+    });
+  };
+  const handleDayNoteChange = (key: string, body: string) => {
     setDayNotes((prev) => {
       const next = { ...prev };
       if (body.trim()) next[key] = body;
       else delete next[key];
       return next;
     });
-    if (!(await saveDayNote(key, body))) {
-      setDayNotes((prev) => ({ ...prev, [key]: previous }));
-      Alert.alert("Couldn't save note", "Check your connection and try again.");
-    }
+    pendingNoteBodies.current[key] = body;
+    clearTimeout(noteSaveTimers.current[key]);
+    noteSaveTimers.current[key] = setTimeout(() => flushDayNote(key), 800);
+  };
+  const handleNotePress = (key: string) => {
+    if (expandedNoteDay) flushDayNote(expandedNoteDay);
+    setExpandedNoteDay((prev) => (prev === key ? null : key));
+  };
+  const closeDayNote = () => {
+    if (expandedNoteDay) flushDayNote(expandedNoteDay);
+    setExpandedNoteDay(null);
   };
   // Calendar's own built-in header (title + arrows) is hidden below in
   // favor of CalendarHeaderRow (needs room for the Month/Week toggle too) -
@@ -1441,7 +1457,19 @@ export default function HomeScreen() {
               eventsByDay={weekDayColumns}
               allDayByDay={weekAllDayColumns}
               notesByDay={dayNotes}
-              onNotePress={setNoteDayKey}
+              onNotePress={handleNotePress}
+              expandedNoteDayKey={expandedNoteDay}
+              notePanel={
+                expandedNoteDay ? (
+                  <DayNoteChecklist
+                    dayKey={expandedNoteDay}
+                    body={dayNotes[expandedNoteDay] ?? ""}
+                    maxHeight={Math.max(200, (landscapeWeek ? landscapeGridHeight : weekGridBaseHeight) - 70)}
+                    onChange={(body) => handleDayNoteChange(expandedNoteDay, body)}
+                    onClose={closeDayNote}
+                  />
+                ) : null
+              }
               height={landscapeWeek ? landscapeGridHeight : weekGridMaxHeight}
               onEventPress={handleWeekItemPress}
               onEventLongPress={handleWeekItemLongPress}
@@ -1553,11 +1581,6 @@ export default function HomeScreen() {
         prefill={convertPrefill}
       />
 
-      <DayNoteModal
-        dayKey={noteDayKey}
-        initialBody={noteDayKey ? dayNotes[noteDayKey] ?? "" : ""}
-        onClose={handleCloseDayNote}
-      />
       <AddPersonalItemModal
         visible={personalItemModalVisible || !!editingPersonalEvent}
         editingEvent={editingPersonalEvent}
