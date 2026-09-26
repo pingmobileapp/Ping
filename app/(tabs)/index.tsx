@@ -177,8 +177,9 @@ export default function HomeScreen() {
   // Turning a phone sideways in Week view shows just the week, full screen,
   // with wider day columns. Every other screen (and Month view) stays
   // portrait - rotation is only unlocked while Week view is on screen. iPad
-  // never rotates (see plugins/withIPadPortraitOnly.js), and a phone's short
-  // side is always under 600pt, so this never triggers there.
+  // ignores these locks (Apple requires all four orientations for iPad
+  // multitasking, so it rotates freely as before), and its short side is
+  // 600pt+, so it never gets this phone-only landscape layout.
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const landscapeWeek = viewMode === "week" && windowWidth > windowHeight && Math.min(windowWidth, windowHeight) < 600;
   const insets = useSafeAreaInsets();

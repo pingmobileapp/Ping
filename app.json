@@ -86,8 +86,7 @@
         {
           "initialOrientation": "PORTRAIT_UP"
         }
-      ],
-      "./plugins/withIPadPortraitOnly"
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
