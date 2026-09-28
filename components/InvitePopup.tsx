@@ -4,7 +4,7 @@ import { supabase } from '../supabase';
 import { useAuth } from '../lib/AuthContext';
 import { colors, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
 import { displayName } from '../lib/displayName';
-import { submitRsvp } from '../lib/rsvp';
+import { askRsvpScope, findMySeriesInvites, submitRsvp, submitSeriesRsvp } from '../lib/rsvp';
 import { startEventCheckout } from '../lib/discoverCheckout';
 import { toListingActivity, activityKey, fetchInterestedKeys, toggleInterest } from '../lib/discoverActivities';
 import { formatPrice } from '../lib/pricing';
@@ -32,6 +32,7 @@ type PopupEvent = {
   discover_category: string | null;
   capacity: number | null;
   accepted_count: number | null;
+  recurrence_id: string | null;
 };
 
 type RsvpChoice = 'accepted' | 'interested' | 'declined';
@@ -101,7 +102,7 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
           supabase
             .from('events')
             .select(
-              'id, title, location, event_date, end_date, is_all_day, host_id, image_url, price_cents, discoverable, description, discover_category, capacity, accepted_count'
+              'id, title, location, event_date, end_date, is_all_day, host_id, image_url, price_cents, discoverable, description, discover_category, capacity, accepted_count, recurrence_id'
             )
             .eq('id', eventId)
             .single(),
@@ -211,13 +212,36 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
       return;
     }
 
+    const hostIds = [event.host_id, ...coHostIds].filter((id): id is string => !!id);
+    const responderName = displayName({ full_name: session.user.user_metadata?.full_name, email: session.user.email });
+
+    // A repeating Ping: offer to answer every upcoming date at once (see
+    // submitSeriesRsvp in lib/rsvp.ts).
+    if (event.recurrence_id) {
+      const invites = await findMySeriesInvites(event.recurrence_id, event.event_date, session.user.id);
+      if (invites.length > 1) {
+        const scope = await askRsvpScope(invites.length);
+        if (!scope) {
+          setSelected(null);
+          setResponding(false);
+          return;
+        }
+        if (scope === 'all') {
+          await submitSeriesRsvp({ invites, hostIds, eventTitle: event.title, userId: session.user.id, responderName, status });
+          setResponding(false);
+          setTimeout(onClose, 700);
+          return;
+        }
+      }
+    }
+
     await submitRsvp({
       eventId: event.id,
-      hostIds: [event.host_id, ...coHostIds].filter((id): id is string => !!id),
+      hostIds,
       eventTitle: event.title,
       userId: session.user.id,
       myInviteeId,
-      responderName: displayName({ full_name: session.user.user_metadata?.full_name, email: session.user.email }),
+      responderName,
       status,
     });
 

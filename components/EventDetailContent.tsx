@@ -24,7 +24,7 @@ import PhotoViewerModal from './PhotoViewerModal';
 import Avatar from './Avatar';
 import { colors, cardFrameGradient, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
 import { notify } from '../lib/notify';
-import { submitRsvp, RsvpStatus } from '../lib/rsvp';
+import { submitRsvp, RsvpStatus, findMySeriesInvites, submitSeriesRsvp, askRsvpScope } from '../lib/rsvp';
 import { removeEventFromDeviceCalendar, syncAcceptedEventToDeviceCalendar } from '../lib/pingCalendarSync';
 import { scheduleEventReminder, cancelEventReminder, REMINDER_OPTIONS } from '../lib/eventReminders';
 import { displayName } from '../lib/displayName';
@@ -190,6 +190,16 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     const invitee = invitees.find((inv) => inv.id === claim.invitee_id);
     return invitee ? inviteeName(invitee) : 'Someone';
   };
+
+  // Who's bringing a counted item: "You", "Ruby Jane", or "Ruby Jane (2)"
+  // when one person claimed several.
+  const claimantsLabel = (claims: ClaimRow[]) =>
+    claims
+      .map((c) => {
+        const name = c.invitee_id === myInvitee?.id ? 'You' : claimantName(c);
+        return c.quantity > 1 ? `${name} (${c.quantity})` : name;
+      })
+      .join(', ');
 
   const myName = () => {
     const mine = invitees.find((inv) => inv.user_id === session?.user?.id);
@@ -488,6 +498,39 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
       setTimeout(fetchData, 1500);
       setUpdating(false);
       return;
+    }
+
+    // A repeating Ping: offer to answer every upcoming date at once rather
+    // than one date at a time (see submitSeriesRsvp in lib/rsvp.ts).
+    if (event.recurrence_id) {
+      const invites = await findMySeriesInvites(event.recurrence_id, event.event_date, session.user.id);
+      if (invites.length > 1) {
+        const scope = await askRsvpScope(invites.length);
+        if (!scope) {
+          setUpdating(false);
+          return;
+        }
+        if (scope === 'all') {
+          const updated = await submitSeriesRsvp({
+            invites,
+            hostIds: allHostIds,
+            eventTitle: event.title,
+            userId: session.user.id,
+            responderName: myName(),
+            status,
+          });
+          if (updated.length < invites.length) {
+            Alert.alert(
+              'Some dates are full',
+              `Updated ${updated.length} of ${invites.length} dates. The rest have reached their limit on going.`
+            );
+          }
+          for (const invite of updated) await syncAcceptedEventToDeviceCalendar(invite.event, status);
+          await fetchData();
+          setUpdating(false);
+          return;
+        }
+      }
     }
 
     const { error } = await submitRsvp({
@@ -1155,8 +1198,9 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
               <View key={item.id} style={styles.itemRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.itemName}>{item.name}</Text>
-                  <Text style={styles.itemMeta}>
+                  <Text style={styles.itemMeta} numberOfLines={2}>
                     {claimedTotal}/{item.quantity_needed} claimed
+                    {item.item_claims.length > 0 ? ` · ${claimantsLabel(item.item_claims)}` : ''}
                   </Text>
                 </View>
 

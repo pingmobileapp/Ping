@@ -158,7 +158,7 @@ export default function HomeScreen() {
     monthGridRef.current?.scrollByMonths(delta);
   };
 
-  const [viewMode, setViewMode] = useState<"month" | "week">("month");
+  const [viewMode, setViewMode] = useState<"month" | "week">("week");
   const startOfWeek = (d: Date) => {
     const r = new Date(d);
     r.setHours(0, 0, 0, 0);

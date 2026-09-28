@@ -30,14 +30,26 @@ export default function CalendarHeaderRow({ title, onPrev, onNext, viewMode, onS
           width - not flush against the arrow, where it's easy to fat-
           finger the arrow instead (the original complaint this fixes). */}
       <View style={styles.gap}>
-        <TouchableOpacity onPress={onSelectWeek} hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}>
-          <Text style={[styles.toggleGlyph, viewMode === 'week' && styles.toggleGlyphActive]}>▥</Text>
+        <TouchableOpacity
+          onPress={onSelectWeek}
+          hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
+          style={[styles.toggle, viewMode === 'week' && styles.toggleActive]}
+          accessibilityRole="button"
+          accessibilityState={{ selected: viewMode === 'week' }}
+        >
+          <Text style={[styles.toggleText, viewMode === 'week' && styles.toggleTextActive]}>Week</Text>
         </TouchableOpacity>
       </View>
       <Text style={styles.title} numberOfLines={1}>{title}</Text>
       <View style={styles.gap}>
-        <TouchableOpacity onPress={onSelectMonth} hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}>
-          <Text style={[styles.toggleGlyph, viewMode === 'month' && styles.toggleGlyphActive]}>▦</Text>
+        <TouchableOpacity
+          onPress={onSelectMonth}
+          hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
+          style={[styles.toggle, viewMode === 'month' && styles.toggleActive]}
+          accessibilityRole="button"
+          accessibilityState={{ selected: viewMode === 'month' }}
+        >
+          <Text style={[styles.toggleText, viewMode === 'month' && styles.toggleTextActive]}>Month</Text>
         </TouchableOpacity>
       </View>
       <TouchableOpacity onPress={onNext} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
@@ -57,6 +69,8 @@ const styles = StyleSheet.create({
   arrow: { color: colors.primary, fontSize: 28, fontWeight: '700', paddingHorizontal: 8 },
   gap: { flex: 1, alignItems: 'center' },
   title: { textAlign: 'center', color: colors.textPrimary, fontSize: 16, fontWeight: '700' },
-  toggleGlyph: { fontSize: 18, color: colors.textSecondary },
-  toggleGlyphActive: { color: colors.primary },
+  toggle: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+  toggleActive: { backgroundColor: colors.primary },
+  toggleText: { fontSize: 13, fontWeight: '600', color: colors.textSecondary },
+  toggleTextActive: { color: colors.textOnPrimary },
 });

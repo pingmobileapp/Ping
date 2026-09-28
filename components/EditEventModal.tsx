@@ -26,7 +26,7 @@ import { loadMemberGroups } from '../lib/sharedGroups';
 import { uploadEventImage, uploadEventImageFull } from '../lib/imageUpload';
 import { pickEventImage } from '../lib/imagePicker';
 import { colors, cardFrameGradient, calendarTheme, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
-import { isMultiDayEvent } from '../lib/eventDate';
+import { isMultiDayEvent, resolveEndDate } from '../lib/eventDate';
 import { displayName } from '../lib/displayName';
 import { notify } from '../lib/notify';
 import { RecurrenceConfig, generateOccurrences } from '../lib/recurrence';
@@ -695,7 +695,8 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
 
   const confirmNotifyAndSave = (sendNow: boolean, applyToFuture: boolean) => {
     if (!event) return;
-    const nextEndDate = isMultiDay && endDate ? endDate.toISOString() : null;
+    const resolvedEnd = resolveEndDate(eventDate, endDate, isMultiDay, isAllDay);
+    const nextEndDate = resolvedEnd ? resolvedEnd.toISOString() : null;
     const changedDetails =
       !isDraft &&
       (title !== event.title ||
@@ -740,7 +741,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   ): Promise<string[]> => {
     if (!event || !session?.user?.id || !recurrence) return [];
 
-    const occurrences = generateOccurrences(eventDate, endDate, recurrence);
+    const occurrences = generateOccurrences(eventDate, resolveEndDate(eventDate, endDate, isMultiDay, isAllDay), recurrence);
     const futureOccurrences = occurrences.slice(1);
     if (futureOccurrences.length === 0) return [];
 
@@ -843,6 +844,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
     }
 
     setSubmitting(true);
+    const finalEndDate = resolveEndDate(eventDate, endDate, isMultiDay, isAllDay);
 
     // Freshly minted only when the host just picked a recurrence on an
     // event that wasn't already part of one - applyToFuture can never be
@@ -911,7 +913,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
         description: description.trim() || null,
         location,
         event_date: eventDate.toISOString(),
-        end_date: endDate ? endDate.toISOString() : null,
+        end_date: finalEndDate ? finalEndDate.toISOString() : null,
         is_all_day: isAllDay,
         is_public: isPublic || discoverable,
         discoverable,

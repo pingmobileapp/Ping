@@ -1,3 +1,4 @@
+import { resolveEndDate } from '../lib/eventDate';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Modal,
@@ -756,10 +757,11 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
     }
 
     let smsQueueItems: QueueContact[] = [];
+    const finalEndDate = resolveEndDate(eventDate, endDate, isMultiDay, isAllDay);
 
     if (recurrence) {
       const recurrenceId = Crypto.randomUUID();
-      const occurrences = generateOccurrences(eventDate, endDate, recurrence);
+      const occurrences = generateOccurrences(eventDate, finalEndDate, recurrence);
       const failedDates: string[] = [];
       let firstOccurrenceCreated = false;
 
@@ -799,7 +801,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
       }
     } else {
       try {
-        const result = await createOccurrence(eventDate, endDate, null, imageUrl, imageUrlFull, status, true);
+        const result = await createOccurrence(eventDate, finalEndDate, null, imageUrl, imageUrlFull, status, true);
         smsQueueItems = result.smsQueueItems;
       } catch (err) {
         setSubmitting(false);

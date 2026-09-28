@@ -80,3 +80,15 @@ export function eachDayKeyInRange(startKey: string, endKey: string): string[] {
   }
   return keys;
 }
+
+// With "Multi-day" off, the end is picked as a time only and keeps whatever
+// date the picker happened to hold. It belongs on the start's day - and if
+// that lands at or before the start (10 PM to 12:30 AM), the event runs past
+// midnight, so it ends the next morning. All-day events never roll over.
+export function resolveEndDate(start: Date, end: Date | null, isMultiDay: boolean, isAllDay: boolean): Date | null {
+  if (!end || isMultiDay) return end;
+  const resolved = new Date(start);
+  resolved.setHours(end.getHours(), end.getMinutes(), 0, 0);
+  if (!isAllDay && resolved.getTime() <= start.getTime()) resolved.setDate(resolved.getDate() + 1);
+  return resolved;
+}
