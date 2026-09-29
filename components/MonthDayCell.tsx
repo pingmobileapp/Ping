@@ -82,7 +82,7 @@ export default function MonthDayCell({ date, marking, onPress }: Props) {
                   connected segment would read as separate same-named
                   events instead of one continuous span. */}
               {!conn?.connectsLeft && (
-                <Text style={styles.barText} numberOfLines={1}>
+                <Text style={[styles.barText, ev.textColor ? { color: ev.textColor } : null]} numberOfLines={1}>
                   {ev.title}
                 </Text>
               )}

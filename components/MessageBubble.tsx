@@ -4,6 +4,7 @@ import * as Haptics from 'expo-haptics';
 import { colors } from '../lib/theme';
 import { ReactionCount } from '../lib/useMessageReactions';
 import Avatar from './Avatar';
+import { splitMentions } from '../lib/mentions';
 
 export type BubbleAnchor = { x: number; y: number; width: number; height: number };
 
@@ -19,6 +20,8 @@ type Props = {
   showSenderName?: boolean;
   avatarUrl?: string | null;
   body: string;
+  // Guest names to highlight as @mentions in the body (MessageThread only).
+  mentionLabels?: string[];
   timestamp: string;
   reactions: ReactionCount[];
   isActive: boolean;
@@ -32,6 +35,7 @@ export default function MessageBubble({
   showSenderName = true,
   avatarUrl,
   body,
+  mentionLabels,
   timestamp,
   reactions,
   isActive,
@@ -87,7 +91,19 @@ export default function MessageBubble({
               {!isMine && showSenderName && senderLabel && (
                 <Text style={styles.senderName} numberOfLines={1}>{senderLabel}</Text>
               )}
-              <Text style={[styles.bubbleText, isMine && styles.bubbleTextMine]}>{body}</Text>
+              <Text style={[styles.bubbleText, isMine && styles.bubbleTextMine]}>
+                {mentionLabels?.length
+                  ? splitMentions(body, mentionLabels).map((part, i) =>
+                      part.mention ? (
+                        <Text key={i} style={styles.mention}>
+                          {part.text}
+                        </Text>
+                      ) : (
+                        part.text
+                      )
+                    )
+                  : body}
+              </Text>
               <Text style={[styles.timestamp, isMine && styles.timestampMine]} numberOfLines={1}>
                 {timestamp}
               </Text>
@@ -168,6 +184,7 @@ const styles = StyleSheet.create({
   senderName: { color: colors.textSecondary, fontSize: 11, fontWeight: '700', marginBottom: 4 },
   bubbleText: { color: colors.textPrimary, fontSize: 15 },
   bubbleTextMine: { color: colors.textOnPrimary },
+  mention: { fontWeight: '700' },
   timestamp: { color: colors.textMuted, fontSize: 10, marginTop: 6, textAlign: 'right' },
   timestampMine: { color: 'rgba(255,255,255,0.75)' },
   // Bubble's own positioning context for the absolutely-positioned

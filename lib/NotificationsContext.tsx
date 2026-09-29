@@ -41,7 +41,7 @@ type PendingGroupChat = { groupId: string; groupName?: string } | null;
 type NotificationsContextType = ReturnType<typeof useNotifications> & {
   popupEventId: string | null;
   openInvitePopup: (eventId: string) => void;
-  closeInvitePopup: () => void;
+  closeInvitePopup: (answeredEventIds?: string[]) => void;
   pendingEventModal: PendingEventModal;
   openEventModal: (eventId: string, startOnMessages?: boolean) => void;
   clearEventModal: () => void;
@@ -101,13 +101,21 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   // X'ing out or responding both call this (InvitePopup calls onClose
   // after a successful RSVP too) - either way, move on to the next queued
   // invite instead of just closing, until the queue's empty.
-  const closeInvitePopup = () => {
-    if (inviteQueue.length > 0) {
-      const [next, ...rest] = inviteQueue;
+  // answeredEventIds comes from a "respond to all upcoming dates" RSVP on a
+  // repeating Ping - those dates are already answered, so their queued
+  // popups are dropped instead of asking again one by one.
+  const closeInvitePopup = (answeredEventIds?: string[]) => {
+    const queue = answeredEventIds?.length
+      ? inviteQueue.filter((id) => !answeredEventIds.includes(id))
+      : inviteQueue;
+    if (answeredEventIds?.length) notificationsValue.refresh();
+    if (queue.length > 0) {
+      const [next, ...rest] = queue;
       setPopupEventId(next);
       setInviteQueue(rest);
     } else {
       setPopupEventId(null);
+      setInviteQueue([]);
     }
   };
   const openEventModal = (eventId: string, startOnMessages = false) =>

@@ -45,7 +45,9 @@ const RSVP_OPTIONS: { label: string; value: RsvpChoice; color: string }[] = [
 
 type Props = {
   eventId: string | null;
-  onClose: () => void;
+  // answeredEventIds: dates a series RSVP just answered, so queued popups
+  // for them get skipped.
+  onClose: (answeredEventIds?: string[]) => void;
   onOpenFull: (eventId: string) => void;
 };
 
@@ -227,9 +229,9 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
           return;
         }
         if (scope === 'all') {
-          await submitSeriesRsvp({ invites, hostIds, eventTitle: event.title, userId: session.user.id, responderName, status });
+          const updated = await submitSeriesRsvp({ invites, hostIds, eventTitle: event.title, userId: session.user.id, responderName, status });
           setResponding(false);
-          setTimeout(onClose, 700);
+          setTimeout(() => onClose(updated.map((u) => u.event.id)), 700);
           return;
         }
       }
@@ -246,7 +248,7 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
     });
 
     setResponding(false);
-    setTimeout(onClose, 700);
+    setTimeout(() => onClose(), 700);
   };
 
   if (!eventId) return null;
@@ -261,10 +263,10 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
 
   return (
     <>
-    <Modal visible={!!eventId} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible={!!eventId} transparent animationType="fade" onRequestClose={() => onClose()}>
       <View style={styles.overlay}>
         <View style={styles.card}>
-          <TouchableOpacity style={styles.closeButton} onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <TouchableOpacity style={styles.closeButton} onPress={() => onClose()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Text style={styles.closeButtonText}>✕</Text>
           </TouchableOpacity>
 

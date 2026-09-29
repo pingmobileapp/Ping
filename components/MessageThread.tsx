@@ -23,6 +23,7 @@ import { reportContent, blockUser } from '../lib/moderation';
 import { containsObjectionableContent } from '../lib/contentFilter';
 import ReactionPicker from './ReactionPicker';
 import MessageBubble, { BubbleAnchor } from './MessageBubble';
+import { MentionGuest, activeMentionQuery, findMentionedUserIds, routeMessageAlerts, withMentionLabels } from '../lib/mentions';
 
 const PAGE_SIZE = 30;
 
@@ -58,6 +59,9 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
   const [sending, setSending] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [myInviteeId, setMyInviteeId] = useState<string | null>(null);
+  // Everyone on this Ping with an account, for @mentions.
+  const [guests, setGuests] = useState<MentionGuest[]>([]);
+  const [cursor, setCursor] = useState(0);
   const [muted, setMuted] = useState(false);
   const listRef = useRef<FlatList>(null);
   const [reactingToId, setReactingToId] = useState<string | null>(null);
@@ -99,6 +103,41 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
         setMuted(!!data?.muted);
       });
   }, [eventId, session?.user?.id]);
+
+  useEffect(() => {
+    supabase
+      .from('invitees')
+      .select('user_id, profiles(full_name, email), contacts(name)')
+      .eq('event_id', eventId)
+      .not('user_id', 'is', null)
+      .then(({ data }) => {
+        const seen = new Set<string>();
+        const list = ((data as any[]) || [])
+          .filter((r) => r.user_id && !seen.has(r.user_id) && seen.add(r.user_id))
+          .map((r) => ({
+            userId: r.user_id as string,
+            fullName: r.profiles?.full_name || r.contacts?.name || displayName(r.profiles, 'Guest'),
+          }));
+        setGuests(withMentionLabels(list));
+      });
+  }, [eventId]);
+
+  const otherGuests = guests.filter((g) => g.userId !== session?.user?.id);
+  const mention = activeMentionQuery(draft, cursor);
+  const mentionSuggestions = mention
+    ? otherGuests
+        .filter((g) => {
+          const q = mention.query.toLowerCase();
+          return !q || g.label.toLowerCase().startsWith(q) || g.fullName.toLowerCase().split(/\s+/).some((w) => w.startsWith(q));
+        })
+        .slice(0, 5)
+    : [];
+  const insertMention = (g: MentionGuest) => {
+    if (!mention) return;
+    const next = `${draft.slice(0, mention.start)}@${g.label} ${draft.slice(cursor)}`;
+    updateDraft(next);
+    setCursor(mention.start + g.label.length + 2);
+  };
 
   const toggleMuted = async () => {
     if (!myInviteeId) return;
@@ -290,20 +329,28 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
     await fetchLatest();
 
     const [{ data: otherInvitees }, { data: eventRow }] = await Promise.all([
-      supabase.from('invitees').select('user_id, muted').eq('event_id', eventId).neq('user_id', session.user.id),
+      supabase
+        .from('invitees')
+        .select('user_id, muted, rsvp_status')
+        .eq('event_id', eventId)
+        .neq('user_id', session.user.id)
+        .not('user_id', 'is', null),
       supabase.from('events').select('title').eq('id', eventId).single(),
     ]);
 
-    const recipientIds = (otherInvitees || []).filter((i: any) => !i.muted).map((i: any) => i.user_id);
-    // Muted still means "don't buzz my phone," not "hide this from me
-    // entirely" - those recipients still get a silent, no-push notification
-    // row so there's something to catch up on later.
-    const mutedRecipientIds = (otherInvitees || []).filter((i: any) => i.muted).map((i: any) => i.user_id);
+    const { mentioned, normal: recipientIds, silent: mutedRecipientIds } = routeMessageAlerts(
+      (otherInvitees as any[]) || [],
+      findMentionedUserIds(body, otherGuests)
+    );
     const senderDisplayName =
       session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Someone';
     const notifTitle = eventRow?.title ? `New message — ${eventRow.title}` : 'New message';
     const notifBody = `${senderDisplayName}: ${body}`;
+    const mentionTitle = eventRow?.title
+      ? `${senderDisplayName} mentioned you — ${eventRow.title}`
+      : `${senderDisplayName} mentioned you`;
 
+    await notify(mentioned, mentionTitle, body, { eventId, type: 'message' });
     await notify(recipientIds, notifTitle, notifBody, { eventId, type: 'message' });
     await notify(mutedRecipientIds, notifTitle, notifBody, { eventId, type: 'message', silent: true });
   };
@@ -409,6 +456,7 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
                 showSenderName={showSenderLabel}
                 avatarUrl={!isMine ? item.profiles?.avatar_url : undefined}
                 body={item.body}
+                mentionLabels={guests.map((g) => g.label)}
                 timestamp={new Date(item.created_at).toLocaleTimeString(undefined, {
                   hour: '2-digit',
                   minute: '2-digit',
@@ -438,6 +486,16 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
         />
       )}
 
+      {mentionSuggestions.length > 0 && (
+        <View style={styles.mentionList}>
+          {mentionSuggestions.map((g) => (
+            <TouchableOpacity key={g.userId} style={styles.mentionRow} onPress={() => insertMention(g)}>
+              <Text style={styles.mentionName}>@{g.label}</Text>
+              {g.label !== g.fullName && <Text style={styles.mentionFull}>{g.fullName}</Text>}
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
       <View
         style={[
           styles.inputRow,
@@ -451,10 +509,14 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
         <TextInput
           ref={inputRef}
           style={styles.input}
-          placeholder="Message..."
+          placeholder="Message... (type @ to mention someone)"
           placeholderTextColor={colors.textMuted}
           value={draft}
-          onChangeText={updateDraft}
+          onChangeText={(text) => {
+            updateDraft(text);
+            setCursor(text.length);
+          }}
+          onSelectionChange={(e) => setCursor(e.nativeEvent.selection.end)}
           multiline
         />
         <TouchableOpacity style={styles.sendButton} onPress={handleSend} disabled={sending || !draft.trim()}>
@@ -507,6 +569,17 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     maxHeight: 100,
   },
+  mentionList: {
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 4,
+    marginTop: 6,
+  },
+  mentionRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8, paddingHorizontal: 14, paddingVertical: 10 },
+  mentionName: { color: colors.primary, fontSize: 15, fontWeight: '700' },
+  mentionFull: { color: colors.textSecondary, fontSize: 13 },
   sendButton: { backgroundColor: colors.primary, borderRadius: 18, paddingHorizontal: 16, paddingVertical: 10 },
   sendButtonText: { color: colors.textOnPrimary, fontWeight: '600', fontSize: 14 },
 });

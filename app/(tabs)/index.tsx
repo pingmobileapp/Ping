@@ -227,7 +227,8 @@ export default function HomeScreen() {
   // Consolidates what used to be four independent (and only partially
   // mutually-exclusive) booleans into one single-select filter - see
   // components/FilterMenu.tsx for why that's the right model here.
-  const [activeFilter, setActiveFilter] = useState<HomeFilter>(null);
+  // Pings Only by default - All (with phone-calendar items) is one tap away in Filter.
+  const [activeFilter, setActiveFilter] = useState<HomeFilter>('pingsOnly');
   const showDraftsOnly = activeFilter === 'drafts';
   const showDeclinedOnly = activeFilter === 'declined';
   const showHiddenOnly = activeFilter === 'hidden';
@@ -541,7 +542,7 @@ export default function HomeScreen() {
     setHiddenEventIds(next);
     // Nothing left to review - drop back to the normal Upcoming view
     // instead of leaving the user stranded on an empty "Hidden" screen.
-    if (next.size === 0) setActiveFilter((f) => (f === 'hidden' ? null : f));
+    if (next.size === 0) setActiveFilter((f) => (f === 'hidden' ? 'pingsOnly' : f));
   };
 
   // Long-press entry point for hiding a calendar item, shared by Week
@@ -683,6 +684,11 @@ export default function HomeScreen() {
   };
 
   const handleWeekItemPress = (id: string) => {
+    if (id.startsWith("int-")) {
+      const a = interestedActivities.find((x) => x.activityKey === id.slice(4));
+      if (a) router.push({ pathname: "/explore", params: { date: toDateKey(new Date(a.startsAt)), activityKey: a.activityKey } });
+      return;
+    }
     if (id.startsWith("ping-")) {
       const p = declinedFilteredEvents.find((e) => e.id === id.slice(5));
       if (p) openEvent(p);
@@ -779,8 +785,9 @@ export default function HomeScreen() {
     return d;
   }, [weekGridRangeStart]);
   const weekDayColumns = useMemo(
-    () => buildDayColumns(weekGridRangeStart, weekGridRangeEnd, declinedFilteredEvents, visibleExternalEvents),
-    [weekGridRangeStart, weekGridRangeEnd, declinedFilteredEvents, visibleExternalEvents],
+    () =>
+      buildDayColumns(weekGridRangeStart, weekGridRangeEnd, declinedFilteredEvents, visibleExternalEvents, interestedActivities),
+    [weekGridRangeStart, weekGridRangeEnd, declinedFilteredEvents, visibleExternalEvents, interestedActivities],
   );
   const weekAllDayColumns = useMemo(
     () => buildAllDayColumns(weekGridRangeStart, weekGridRangeEnd, declinedFilteredEvents, visibleExternalEvents),
@@ -904,8 +911,9 @@ export default function HomeScreen() {
   // month, since it's all real, simultaneously-mounted content now (no
   // more page-one-month-at-a-time swiping to re-trigger this).
   const monthDayBars = useMemo(
-    () => buildMonthDayBars(monthGridRangeStart, monthGridRangeEnd, declinedFilteredEvents, visibleExternalEvents),
-    [monthGridRangeStart, monthGridRangeEnd, declinedFilteredEvents, visibleExternalEvents],
+    () =>
+      buildMonthDayBars(monthGridRangeStart, monthGridRangeEnd, declinedFilteredEvents, visibleExternalEvents, interestedActivities),
+    [monthGridRangeStart, monthGridRangeEnd, declinedFilteredEvents, visibleExternalEvents, interestedActivities],
   );
   const onVisibleMonthChange = (monthStart: Date) => setVisibleMonth(monthStart);
 

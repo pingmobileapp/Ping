@@ -4,6 +4,7 @@ import { colors } from './theme';
 import { externalItemDuplicatesPing } from './eventDedup';
 import { eachDayKeyInRange } from './eventDate';
 import { hiddenKeyFor } from './hiddenEvents';
+import type { InterestedActivity } from './discoverActivities';
 
 export type AllDayItem = { id: string; title: string; dayKey: string };
 // startMinutes/endMinutes are minutes since that day's midnight - directly
@@ -20,6 +21,8 @@ export type DayColumnEvent = {
   startMinutes: number;
   endMinutes: number;
   color?: string;
+  // Dark text on a light block - only starred Discover events set it.
+  textColor?: string;
   stackIndex: number;
 };
 
@@ -84,16 +87,17 @@ export function buildDayColumns(
   rangeStart: Date,
   rangeEnd: Date,
   pings: PingEvent[],
-  external: ExternalEvent[]
+  external: ExternalEvent[],
+  interested: InterestedActivity[] = []
 ): Record<string, DayColumnEvent[]> {
   const rawColumns: Record<string, RawDayEvent[]> = {};
   const pingTimedEntries: { title: string; start: Date }[] = [];
 
-  const pushSegment = (seg: { start: Date; end: Date }, id: string, title: string, color: string) => {
+  const pushSegment = (seg: { start: Date; end: Date }, id: string, title: string, color: string, textColor?: string) => {
     const dayKey = toDayKey(seg.start);
     const startMinutes = seg.start.getHours() * 60 + seg.start.getMinutes();
     const endMinutes = startMinutes + (seg.end.getTime() - seg.start.getTime()) / 60000;
-    (rawColumns[dayKey] ||= []).push({ id, title, startMinutes, endMinutes, color });
+    (rawColumns[dayKey] ||= []).push({ id, title, startMinutes, endMinutes, color, textColor });
   };
 
   for (const p of pings) {
@@ -120,6 +124,19 @@ export function buildDayColumns(
     for (const seg of splitByDay(e.startDate, e.endDate)) {
       if (!inRange(seg.start, rangeStart, rangeEnd)) continue;
       pushSegment(seg, `ext-${hiddenKeyFor(e)}`, e.title, colors.textMuted);
+    }
+  }
+
+  // Starred Discover events, as a reminder of what's on even when nothing is
+  // planned - pale yellow like their Upcoming cards. Snapshots with no end
+  // get the same one-hour default as a Ping.
+  for (const a of interested) {
+    const start = new Date(a.startsAt);
+    const rawEnd = a.endsAt ? new Date(a.endsAt) : null;
+    const end = rawEnd && rawEnd > start ? rawEnd : new Date(start.getTime() + 60 * 60000);
+    for (const seg of splitByDay(start, end)) {
+      if (!inRange(seg.start, rangeStart, rangeEnd)) continue;
+      pushSegment(seg, `int-${a.activityKey}`, `★ ${a.title}`, colors.warningPale, colors.textPrimary);
     }
   }
 
@@ -160,7 +177,7 @@ const pushAllDayAcrossSpan = (
 // style) - id/title/color only, no minute positioning, since a Month cell
 // stacks bars in a plain list rather than laying them out on an hourly
 // axis the way WeekGrid's DayColumnEvent does.
-export type MonthDayBar = { id: string; title: string; color: string };
+export type MonthDayBar = { id: string; title: string; color: string; textColor?: string };
 
 // Merges buildAllDayColumns + buildDayColumns into one ordered per-day list
 // - all-day/multi-day items first, then timed events by start time,
@@ -173,10 +190,11 @@ export function buildMonthDayBars(
   rangeStart: Date,
   rangeEnd: Date,
   pings: PingEvent[],
-  external: ExternalEvent[]
+  external: ExternalEvent[],
+  interested: InterestedActivity[] = []
 ): Record<string, MonthDayBar[]> {
   const allDay = buildAllDayColumns(rangeStart, rangeEnd, pings, external);
-  const timed = buildDayColumns(rangeStart, rangeEnd, pings, external);
+  const timed = buildDayColumns(rangeStart, rangeEnd, pings, external, interested);
   const result: Record<string, MonthDayBar[]> = {};
   for (const key of new Set([...Object.keys(allDay), ...Object.keys(timed)])) {
     const allDayBars = (allDay[key] || []).map((item) => ({
@@ -186,7 +204,7 @@ export function buildMonthDayBars(
     }));
     const timedBars = [...(timed[key] || [])]
       .sort((a, b) => a.startMinutes - b.startMinutes)
-      .map((item) => ({ id: item.id, title: item.title, color: item.color || colors.primary }));
+      .map((item) => ({ id: item.id, title: item.title, color: item.color || colors.primary, textColor: item.textColor }));
     result[key] = [...allDayBars, ...timedBars];
   }
   return result;

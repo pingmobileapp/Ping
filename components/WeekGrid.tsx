@@ -557,7 +557,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                           onPress={() => (isFocused ? onEventPress(ev.id) : handleDayTap(key, dayIndex))}
                           onLongPress={isFocused && onEventLongPress ? () => onEventLongPress(ev.id) : undefined}
                         >
-                          <Text style={styles.eventBlockText} numberOfLines={2}>
+                          <Text style={[styles.eventBlockText, ev.textColor ? { color: ev.textColor } : null]} numberOfLines={2}>
                             {ev.title}
                           </Text>
                         </TouchableOpacity>

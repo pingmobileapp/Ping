@@ -89,11 +89,17 @@ export type SeriesInvite = {
   event: { id: string; title: string; event_date: string; end_date: string | null; is_all_day: boolean; location: string };
 };
 
+// Every date of the series from now on (plus this one, if it's already
+// started) - not just this date and later ones. The invite popup can open on
+// any date of a series (a tapped notification), and "all upcoming dates"
+// should never leave the earlier ones unanswered.
 export async function findMySeriesInvites(
   recurrenceId: string,
-  fromEventDate: string,
+  thisEventDate: string,
   userId: string
 ): Promise<SeriesInvite[]> {
+  const now = new Date().toISOString();
+  const fromEventDate = thisEventDate < now ? thisEventDate : now;
   const { data, error } = await supabase
     .from('invitees')
     .select('id, events!inner(id, title, event_date, end_date, is_all_day, location, recurrence_id)')
