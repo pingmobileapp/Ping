@@ -15,14 +15,21 @@ import { colors } from '../lib/theme';
 // per screen - the same pattern many iPad apps use for a single-pane view.
 const MAX_CONTENT_WIDTH = 700;
 
+// Phone width (or a narrowed-down iPad window) is left alone. A phone turned
+// sideways (Week view's landscape mode) is also wider than the cap but should
+// use its full width, so only tablet-sized screens - short side 600pt+ - get
+// capped.
+const isCapped = (width: number, height: number) => width > MAX_CONTENT_WIDTH && Math.min(width, height) >= 600;
+
+// The width screens inside this container actually get - lets a screen size
+// itself correctly on its very first render, before any onLayout measurement.
+export const contentWidthFor = (width: number, height: number) =>
+  isCapped(width, height) ? MAX_CONTENT_WIDTH : width;
+
 export default function ResponsiveContainer({ children }: { children: React.ReactNode }) {
   const { width, height } = useWindowDimensions();
 
-  // Phone width (or a narrowed-down iPad window) - unchanged from before.
-  // A phone turned sideways (Week view's landscape mode) is also wider than
-  // the cap but should use its full width, so only tablet-sized screens -
-  // short side 600pt+ - get capped.
-  if (width <= MAX_CONTENT_WIDTH || Math.min(width, height) < 600) {
+  if (!isCapped(width, height)) {
     return <>{children}</>;
   }
 

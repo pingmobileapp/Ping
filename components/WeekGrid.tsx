@@ -16,6 +16,7 @@ import { HOUR_BLOCK_HEIGHT } from 'react-native-calendars/src/timeline/Packer';
 import { colors } from '../lib/theme';
 import { DayColumnEvent, AllDayItem } from '../lib/weekTimeline';
 import { notePreview } from '../lib/dayNotes';
+import { contentWidthFor } from './ResponsiveContainer';
 
 const TIMELINE_LEFT_INSET = 50;
 const DAY_LABEL_ROW_HEIGHT = 36;
@@ -148,7 +149,13 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     // Measured from the grid's own frame (see the root View's onLayout), not
     // the window - on iPad the content is capped narrower than the window
     // (ResponsiveContainer), and turning a phone sideways changes it.
-    const [gridWidth, setGridWidth] = useState(() => Dimensions.get('window').width);
+    // Starts at the width ResponsiveContainer will actually give it - on iPad,
+    // starting from the full window width and then shrinking to the capped
+    // width threw the initial scroll off by weeks.
+    const [gridWidth, setGridWidth] = useState(() => {
+      const { width, height } = Dimensions.get('window');
+      return contentWidthFor(width, height);
+    });
     const columnWidth = gridWidth - TIMELINE_LEFT_INSET;
     // Tapping a day's header widens just that one column - the others stay
     // their normal size and simply don't all fit on screen together

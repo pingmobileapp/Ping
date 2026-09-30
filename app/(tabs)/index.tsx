@@ -186,7 +186,7 @@ export default function HomeScreen() {
   const navigation = useNavigation();
   useFocusEffect(
     useCallback(() => {
-      const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
       if (viewMode === "week") ScreenOrientation.unlockAsync().catch(() => {});
       else portrait();
       return portrait;
@@ -264,7 +264,7 @@ export default function HomeScreen() {
   // nothing to do with how many hours of a day is a sane default to show.
   const [totalHeight, setTotalHeight] = useState<number | null>(null);
   const [liveContentHeight, setLiveContentHeight] = useState<number | null>(null);
-  const totalMeasuredRef = useRef(false);
+  const totalMeasuredRef = useRef<string | null>(null);
 
   const dragY = useSharedValue(0);
   const dragStart = useSharedValue(0);
@@ -1188,10 +1188,14 @@ export default function HomeScreen() {
   const gridBottomLimit = viewMode === "week" ? weekBottomLimit : monthBottomLimit;
   const topLimit = ready ? -gridBaseHeight : 0;
 
+  // Measured once per screen size - not on every layout change, but again
+  // after a rotation (an iPad turned sideways), or the calendar and Upcoming
+  // sheet stay sized for the old, taller screen.
   const handleContentLayout = (e: LayoutChangeEvent) => {
     setLiveContentHeight(e.nativeEvent.layout.height);
-    if (totalMeasuredRef.current) return;
-    totalMeasuredRef.current = true;
+    const windowKey = `${windowWidth}x${windowHeight}`;
+    if (totalMeasuredRef.current === windowKey) return;
+    totalMeasuredRef.current = windowKey;
     setTotalHeight(e.nativeEvent.layout.height);
   };
 
