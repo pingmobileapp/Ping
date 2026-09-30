@@ -84,15 +84,18 @@ export default function EventCard({
           </View>
         )}
 
-        {!!rsvpDotColor && <View style={[styles.rsvpDot, { backgroundColor: rsvpDotColor }]} />}
-
         {!!event.image_url && (
           <Image source={{ uri: event.image_url }} style={styles.image} resizeMode="cover" />
         )}
 
-        <Text style={styles.title} numberOfLines={1}>
-          {event.title}
-        </Text>
+        {/* RSVP dot sits at the end of the title row, above the chat bubble -
+            in the card's corner it landed on top of the photo. */}
+        <View style={styles.titleRow}>
+          <Text style={styles.title} numberOfLines={1}>
+            {event.title}
+          </Text>
+          {!!rsvpDotColor && <View style={[styles.rsvpDot, { backgroundColor: rsvpDotColor }]} />}
+        </View>
 
         <View style={styles.statBar}>
           <View style={styles.statTopRow}>
@@ -159,10 +162,6 @@ const styles = StyleSheet.create({
   },
   draftBadgeText: { color: '#eee', fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },
   rsvpDot: {
-    position: 'absolute',
-    top: 14,
-    right: 14,
-    zIndex: 2,
     width: 12,
     height: 12,
     borderRadius: 6,
@@ -170,7 +169,8 @@ const styles = StyleSheet.create({
     borderColor: colors.surfaceLight,
   },
   image: { width: '100%', aspectRatio: EVENT_IMAGE_ASPECT_RATIO, borderRadius: 12, marginBottom: 10 },
-  title: { color: colors.textPrimary, fontSize: 18, fontWeight: '800', marginBottom: 6 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  title: { flex: 1, color: colors.textPrimary, fontSize: 18, fontWeight: '800' },
   statBar: { borderTopWidth: 1, borderTopColor: colors.divider, paddingTop: 6, gap: 2 },
   statTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   statText: { color: colors.textSecondary, fontSize: 13, flexShrink: 1 },

@@ -19,10 +19,16 @@ type Props = {
   // GroupMessageThread.tsx.
   showSenderName?: boolean;
   avatarUrl?: string | null;
+  // Last message in a run from the same sender - gets the bubble tail and
+  // (for incoming) the avatar, like iMessage. Earlier ones in the run
+  // stack tightly with neither.
+  isLastInRun?: boolean;
+  // Centered time shown above this message when it starts a new stretch of
+  // conversation (see timeHeaderFor).
+  timeHeader?: string | null;
   body: string;
   // Guest names to highlight as @mentions in the body (MessageThread only).
   mentionLabels?: string[];
-  timestamp: string;
   reactions: ReactionCount[];
   isActive: boolean;
   onToggleReaction: (emoji: string) => void;
@@ -34,9 +40,10 @@ export default function MessageBubble({
   senderLabel,
   showSenderName = true,
   avatarUrl,
+  isLastInRun = true,
+  timeHeader,
   body,
   mentionLabels,
-  timestamp,
   reactions,
   isActive,
   onToggleReaction,
@@ -69,10 +76,24 @@ export default function MessageBubble({
   };
 
   return (
-    <View style={[styles.bubbleRow, isMine && styles.bubbleRowMine]}>
+    <View>
+      {!!timeHeader && <Text style={styles.timeHeader}>{timeHeader}</Text>}
+      {!isMine && showSenderName && senderLabel && (
+        <Text style={styles.senderName} numberOfLines={1}>
+          {senderLabel}
+        </Text>
+      )}
+    <View
+      style={[
+        styles.bubbleRow,
+        isMine && styles.bubbleRowMine,
+        isLastInRun ? styles.bubbleRowRunEnd : null,
+        reactions.length > 0 && styles.bubbleRowWithReaction,
+      ]}
+    >
       {!isMine && (
         <View style={styles.avatarSlot}>
-          <Avatar url={avatarUrl} name={senderLabel || '?'} size={26} />
+          {isLastInRun && <Avatar url={avatarUrl} name={senderLabel || '?'} size={28} />}
         </View>
       )}
       <View style={isMine ? styles.bubbleColumnMine : styles.bubbleColumn}>
@@ -82,15 +103,21 @@ export default function MessageBubble({
             collapsable={false}
             style={[{ transform: [{ scale }] }, isActive && styles.raised]}
           >
+            {/* iMessage's tail: a bubble-colored curve at the bottom corner,
+                trimmed by a background-colored curve. Both chat sheets are
+                colors.background, which is what makes the trim invisible. */}
+            {isLastInRun && (
+              <>
+                <View style={[styles.tail, isMine ? styles.tailMine : styles.tailTheirs]} />
+                <View style={[styles.tailCut, isMine ? styles.tailCutMine : styles.tailCutTheirs]} />
+              </>
+            )}
             <TouchableOpacity
-              style={[styles.bubble, isMine && styles.bubbleMine, isActive && styles.bubbleActive]}
+              style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleTheirs]}
               activeOpacity={0.85}
               onLongPress={handleLongPress}
               delayLongPress={280}
             >
-              {!isMine && showSenderName && senderLabel && (
-                <Text style={styles.senderName} numberOfLines={1}>{senderLabel}</Text>
-              )}
               <Text style={[styles.bubbleText, isMine && styles.bubbleTextMine]}>
                 {mentionLabels?.length
                   ? splitMentions(body, mentionLabels).map((part, i) =>
@@ -103,9 +130,6 @@ export default function MessageBubble({
                       )
                     )
                   : body}
-              </Text>
-              <Text style={[styles.timestamp, isMine && styles.timestampMine]} numberOfLines={1}>
-                {timestamp}
               </Text>
             </TouchableOpacity>
           </Animated.View>
@@ -134,46 +158,60 @@ export default function MessageBubble({
         </View>
       </View>
     </View>
+    </View>
   );
 }
 
+// iMessage-style centered time: "Today 1:14 PM", "Yesterday 3:02 PM",
+// "Mon 1:14 PM" within the week, else "Sep 20, 1:14 PM". Shown above a
+// message that starts the thread or comes 15+ minutes after the one before.
+export function timeHeaderFor(iso: string, previousIso: string | null): string | null {
+  const at = new Date(iso);
+  if (previousIso && at.getTime() - new Date(previousIso).getTime() < 15 * 60000) return null;
+  const time = at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const dayMs = 24 * 60 * 60000;
+  const diffDays = Math.floor((startOfToday.getTime() - new Date(at).setHours(0, 0, 0, 0)) / dayMs);
+  if (diffDays <= 0) return `Today ${time}`;
+  if (diffDays === 1) return `Yesterday ${time}`;
+  if (diffDays < 7) return `${at.toLocaleDateString(undefined, { weekday: 'short' })} ${time}`;
+  return `${at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${time}`;
+}
+
+// iMessage's own colors - system blue for sent, light gray for received.
+const IMESSAGE_BLUE = '#0B84FE';
+const IMESSAGE_GRAY = '#E9E9EB';
+const BUBBLE_RADIUS = 18;
+
 const styles = StyleSheet.create({
-  // 20, not a plainer 10 - the reaction badge below pokes 14px above its
-  // own bubble's top edge (see reactionBadgeRow), so anything tighter lets
-  // a reacted message's badge collide with whichever bubble sits above it.
-  bubbleRow: { flexDirection: 'row', width: '100%', marginBottom: 20, alignItems: 'flex-end' },
-  bubbleRowMine: { justifyContent: 'flex-end' },
-  avatarSlot: { marginRight: 6, marginBottom: 2 },
-  // Explicit on this inner wrapper too, redundant with bubbleRow's
-  // justifyContent - the bubble and its reaction row both need to anchor
-  // to the same edge independently of each other's width, not just be
-  // pushed as a shrink-wrapped unit that could end up misaligned.
-  // maxWidth lives here, not on `bubble` three levels down - a percentage
-  // width resolved through several shrink-wrapped (no explicit width)
-  // ancestors is a real Flexbox trap: Yoga can't always resolve it
-  // unambiguously, and it showed up exactly as "fine for short text,
-  // overlapping/misaligned once a message got long enough to wrap." This
-  // node is a direct child of bubbleRow, which does have a definite width
-  // (100%), so the percentage here has something concrete to resolve
-  // against.
-  bubbleColumn: { alignItems: 'flex-start', maxWidth: '85%' },
-  bubbleColumnMine: { alignItems: 'flex-end', maxWidth: '85%' },
+  // Tight within a run from one sender, a bigger gap between runs.
+  bubbleRow: { flexDirection: 'row', width: '100%', marginBottom: 2, alignItems: 'flex-end' },
+  bubbleRowRunEnd: { marginBottom: 10 },
+  // Room above for the reaction badge, which pokes out of the top corner.
+  bubbleRowWithReaction: { marginTop: 14 },
+  // Room at the right edge so the outgoing tail isn't clipped by the list.
+  bubbleRowMine: { justifyContent: 'flex-end', paddingRight: 8 },
+  // Above the tail's white trim piece, which reaches back under the avatar.
+  avatarSlot: { width: 28, marginRight: 10, zIndex: 3 },
+  // maxWidth lives on this column, a direct child of the full-width row -
+  // a percentage resolved through shrink-wrapped ancestors (Yoga) is what
+  // used to misalign long, wrapping messages.
+  bubbleColumn: { alignItems: 'flex-start', maxWidth: '75%' },
+  bubbleColumnMine: { alignItems: 'flex-end', maxWidth: '75%' },
   bubble: {
-    // Without this, the bubble sizes itself to fit only its shortest line
-    // (the message body, for something like "Yes") and then squeezes the
-    // name/timestamp lines to fit that same narrow width instead of the
-    // other way around - hence the truncated "Hy…" / "2:2…" - rather than
-    // the bubble growing to fit its widest line like it visually should.
-    minWidth: 110,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 14,
+    borderRadius: BUBBLE_RADIUS,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 7,
   },
-  bubbleMine: { backgroundColor: colors.primary, borderColor: colors.primary },
-  bubbleActive: { borderColor: colors.primaryDark },
+  bubbleMine: { backgroundColor: IMESSAGE_BLUE },
+  bubbleTheirs: { backgroundColor: IMESSAGE_GRAY },
+  tail: { position: 'absolute', bottom: 0, width: 20, height: 22 },
+  tailMine: { right: -7, backgroundColor: IMESSAGE_BLUE, borderBottomLeftRadius: 16 },
+  tailTheirs: { left: -7, backgroundColor: IMESSAGE_GRAY, borderBottomRightRadius: 16 },
+  tailCut: { position: 'absolute', bottom: 0, width: 26, height: 24, backgroundColor: colors.background },
+  tailCutMine: { right: -26, borderBottomLeftRadius: 10 },
+  tailCutTheirs: { left: -26, borderBottomRightRadius: 10 },
   raised: {
     shadowColor: colors.textPrimary,
     shadowOffset: { width: 0, height: 6 },
@@ -181,34 +219,33 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 8,
   },
-  senderName: { color: colors.textSecondary, fontSize: 11, fontWeight: '700', marginBottom: 4 },
-  bubbleText: { color: colors.textPrimary, fontSize: 15 },
-  bubbleTextMine: { color: colors.textOnPrimary },
+  timeHeader: {
+    textAlign: 'center',
+    color: '#8E8E93',
+    fontSize: 12,
+    fontWeight: '500',
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  // Above the bubble, outside it, lined up with the bubble's text.
+  senderName: { color: '#8E8E93', fontSize: 12, marginLeft: 36 + 12, marginBottom: 2 },
+  bubbleText: { color: '#000000', fontSize: 17, lineHeight: 22 },
+  bubbleTextMine: { color: '#FFFFFF' },
   mention: { fontWeight: '700' },
-  timestamp: { color: colors.textMuted, fontSize: 10, marginTop: 6, textAlign: 'right' },
-  timestampMine: { color: 'rgba(255,255,255,0.75)' },
-  // Bubble's own positioning context for the absolutely-positioned
-  // reaction badge below - just establishes the anchor, doesn't affect
-  // alignment (bubbleColumn/bubbleColumnMine's alignItems already handles
-  // that via normal shrink-wrap).
   bubbleWrapper: { position: 'relative' },
-  reactionBadgeRow: { position: 'absolute', top: -14, flexDirection: 'row', gap: 2 },
-  reactionBadgeRowMine: { left: -4 },
-  reactionBadgeRowTheirs: { right: -4 },
+  reactionBadgeRow: { position: 'absolute', top: -16, flexDirection: 'row', gap: 2, zIndex: 2 },
+  reactionBadgeRowMine: { left: -10 },
+  reactionBadgeRowTheirs: { right: -10 },
+  // Tapback bubble: gray on your own message, blue when it's your reaction.
   reactionBadge: {
     flexDirection: 'row',
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 12,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    shadowColor: colors.textPrimary,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.15,
-    shadowRadius: 2,
-    elevation: 3,
+    backgroundColor: IMESSAGE_GRAY,
+    borderWidth: 2,
+    borderColor: colors.background,
+    borderRadius: 16,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
   },
-  reactionBadgeMine: { borderColor: colors.primary },
-  reactionBadgeText: { fontSize: 13, color: colors.textPrimary },
+  reactionBadgeMine: { backgroundColor: IMESSAGE_BLUE },
+  reactionBadgeText: { fontSize: 14, color: '#000000' },
 });

@@ -975,8 +975,11 @@ export default function HomeScreen() {
     // normal list - showing what's hidden alongside what isn't would just
     // recreate the clutter hiding is meant to remove.
     if (showHiddenOnly) {
+      // Today forward only - past hidden items aren't worth reviewing.
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
       return externalEvents
-        .filter((e) => isHidden(e, hiddenEventIds))
+        .filter((e) => isHidden(e, hiddenEventIds) && (e.endDate ?? e.startDate) >= startOfToday)
         .map((e) => ({
           kind: "external" as const,
           key: `ext-${hiddenKeyFor(e)}`,

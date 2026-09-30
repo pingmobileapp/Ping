@@ -21,8 +21,8 @@ import { displayName } from '../lib/displayName';
 import { useMessageReactions } from '../lib/useMessageReactions';
 import { reportContent, blockUser } from '../lib/moderation';
 import { containsObjectionableContent } from '../lib/contentFilter';
-import ReactionPicker from './ReactionPicker';
-import MessageBubble, { BubbleAnchor } from './MessageBubble';
+import ReactionPicker, { PickerAction } from './ReactionPicker';
+import MessageBubble, { BubbleAnchor, timeHeaderFor } from './MessageBubble';
 import { MentionGuest, activeMentionQuery, findMentionedUserIds, routeMessageAlerts, withMentionLabels } from '../lib/mentions';
 
 const PAGE_SIZE = 30;
@@ -66,6 +66,7 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
   const listRef = useRef<FlatList>(null);
   const [reactingToId, setReactingToId] = useState<string | null>(null);
   const [pickerAnchor, setPickerAnchor] = useState<BubbleAnchor | null>(null);
+  const [pickerActions, setPickerActions] = useState<PickerAction[] | undefined>(undefined);
   const { reactionsByMessage, fetchForIds, toggleReaction } = useMessageReactions(
     'message_id',
     session?.user?.id
@@ -358,14 +359,19 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
   // Long-pressing someone else's message offers Report/Block alongside
   // reacting, instead of jumping straight to the reaction picker the way
   // it does for your own messages - see lib/moderation.ts.
+  // Long-pressing someone else's message opens the same emoji bar as your
+  // own, with Report/Block in a small menu under it - Report/Block must stay
+  // reachable (App Store UGC rule, see lib/moderation.ts) without a menu in
+  // the way of reacting.
   const handleLongPressOther = (message: Message, anchor: BubbleAnchor) => {
     if (!session?.user?.id) return;
     const reporterId = session.user.id;
     const senderName = displayName(message.profiles);
-    Alert.alert(senderName, undefined, [
-      { text: 'React', onPress: () => { setReactingToId(message.id); setPickerAnchor(anchor); } },
+    setReactingToId(message.id);
+    setPickerAnchor(anchor);
+    setPickerActions([
       {
-        text: 'Report Message',
+        label: 'Report Message',
         onPress: () =>
           reportContent({
             reporterId,
@@ -377,8 +383,8 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
           }),
       },
       {
-        text: `Block ${senderName}`,
-        style: 'destructive',
+        label: `Block ${senderName}`,
+        destructive: true,
         onPress: () => {
           Alert.alert('Block this person?', `You won't see messages from ${senderName} anymore.`, [
             { text: 'Cancel', style: 'cancel' },
@@ -393,7 +399,6 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
           ]);
         },
       },
-      { text: 'Cancel', style: 'cancel' },
     ]);
   };
 
@@ -448,7 +453,9 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
             // most of what was making the thread look cramped.
             const showSenderLabel =
               !isMine &&
-              (index === messages.length - 1 || messages[index + 1]?.sender_id !== item.sender_id);
+              (index === messages.length - 1 ||
+                messages[index + 1]?.sender_id !== item.sender_id ||
+                !!timeHeaderFor(item.created_at, messages[index + 1].created_at));
             return (
               <MessageBubble
                 isMine={isMine}
@@ -457,10 +464,14 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
                 avatarUrl={!isMine ? item.profiles?.avatar_url : undefined}
                 body={item.body}
                 mentionLabels={guests.map((g) => g.label)}
-                timestamp={new Date(item.created_at).toLocaleTimeString(undefined, {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
+                // The list is inverted (newest first): index + 1 is the message
+                // before this one, index - 1 the one after.
+                isLastInRun={
+                  index === 0 ||
+                  messages[index - 1].sender_id !== item.sender_id ||
+                  !!timeHeaderFor(messages[index - 1].created_at, item.created_at)
+                }
+                timeHeader={timeHeaderFor(item.created_at, messages[index + 1]?.created_at ?? null)}
                 reactions={reactionsByMessage[item.id] || []}
                 isActive={reactingToId === item.id}
                 onToggleReaction={(emoji) => toggleReaction(item.id, emoji)}
@@ -468,6 +479,7 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
                   if (isMine) {
                     setReactingToId(item.id);
                     setPickerAnchor(anchor);
+                    setPickerActions(undefined);
                   } else {
                     handleLongPressOther(item, anchor);
                   }
@@ -527,9 +539,11 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
       <ReactionPicker
         visible={!!reactingToId}
         anchor={pickerAnchor}
+        actions={pickerActions}
         onClose={() => {
           setReactingToId(null);
           setPickerAnchor(null);
+          setPickerActions(undefined);
         }}
         onSelect={(emoji) => {
           if (reactingToId) toggleReaction(reactingToId, emoji);

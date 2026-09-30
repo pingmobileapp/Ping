@@ -116,11 +116,13 @@ export default function NotificationsScreen() {
             <View style={styles.section}>
               <View style={styles.sectionHeaderRow}>
                 <Text style={styles.sectionTitle}>Recent</Text>
-                {hasUnread && (
-                  <TouchableOpacity onPress={markAllRead}>
-                    <Text style={styles.markAllText}>Mark all read</Text>
-                  </TouchableOpacity>
-                )}
+                {/* Always shown so it doesn't seem to vanish - grayed out once
+                    everything's already read. */}
+                <TouchableOpacity onPress={markAllRead} disabled={!hasUnread}>
+                  <Text style={[styles.markAllText, !hasUnread && styles.markAllTextDisabled]}>
+                    {hasUnread ? 'Mark all read' : 'All read ✓'}
+                  </Text>
+                </TouchableOpacity>
               </View>
               {notifications.map((n) => (
                 <Swipeable
@@ -168,6 +170,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   markAllText: { color: colors.primary, fontSize: 13, fontWeight: '600' },
+  markAllTextDisabled: { color: colors.textMuted },
   deleteAction: {
     width: 80,
     backgroundColor: colors.danger,

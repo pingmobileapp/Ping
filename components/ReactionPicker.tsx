@@ -13,14 +13,21 @@ const PICKER_GAP = 10;
 const SCREEN_MARGIN = 12;
 const CUSTOM_PICKER_WIDTH = 220;
 
+export type PickerAction = { label: string; destructive?: boolean; onPress: () => void };
+
 type Props = {
   visible: boolean;
   anchor: BubbleAnchor | null;
   onSelect: (emoji: string) => void;
   onClose: () => void;
+  // Extra actions shown in a menu under the message, iMessage-style - used
+  // for Report/Block on someone else's message.
+  actions?: PickerAction[];
 };
 
-export default function ReactionPicker({ visible, anchor, onSelect, onClose }: Props) {
+const ACTION_ROW_HEIGHT = 44;
+
+export default function ReactionPicker({ visible, anchor, onSelect, onClose, actions }: Props) {
   const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
   const [customMode, setCustomMode] = useState(false);
   const [customEmoji, setCustomEmoji] = useState('');
@@ -41,6 +48,7 @@ export default function ReactionPicker({ visible, anchor, onSelect, onClose }: P
   };
 
   let pickerStyle: ViewStyle | null = null;
+  let menuStyle: ViewStyle | null = null;
   if (anchor) {
     const pickerWidth = customMode
       ? CUSTOM_PICKER_WIDTH
@@ -59,6 +67,20 @@ export default function ReactionPicker({ visible, anchor, onSelect, onClose }: P
       : Math.min(anchor.y + anchor.height + PICKER_GAP, screenHeight - PICKER_HEIGHT - SCREEN_MARGIN);
 
     pickerStyle = { position: 'absolute', left, top, width: pickerWidth };
+
+    if (actions?.length) {
+      const menuHeight = actions.length * ACTION_ROW_HEIGHT + 8;
+      const menuWidth = 200;
+      const menuLeft = Math.max(
+        SCREEN_MARGIN,
+        Math.min(anchor.x + anchor.width / 2 - menuWidth / 2, screenWidth - menuWidth - SCREEN_MARGIN)
+      );
+      // Under the message when there's room; otherwise just above the emoji bar.
+      const below = anchor.y + anchor.height + PICKER_GAP;
+      const menuTop =
+        below + menuHeight < screenHeight - SCREEN_MARGIN ? below : Math.max(SCREEN_MARGIN, top - menuHeight - PICKER_GAP);
+      menuStyle = { position: 'absolute', left: menuLeft, top: menuTop, width: menuWidth };
+    }
   }
 
   return (
@@ -87,6 +109,22 @@ export default function ReactionPicker({ visible, anchor, onSelect, onClose }: P
             >
               <Text style={styles.plusText}>+</Text>
             </TouchableOpacity>
+          </View>
+        )}
+        {menuStyle && !customMode && (
+          <View style={[styles.menu, menuStyle]}>
+            {actions!.map((a, i) => (
+              <TouchableOpacity
+                key={a.label}
+                style={[styles.menuRow, i > 0 && styles.menuRowDivider]}
+                onPress={() => {
+                  onClose();
+                  a.onPress();
+                }}
+              >
+                <Text style={[styles.menuText, a.destructive && styles.menuTextDestructive]}>{a.label}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
         )}
         {pickerStyle && customMode && (
@@ -140,6 +178,20 @@ const styles = StyleSheet.create({
   },
   emojiText: { fontSize: 24 },
   plusText: { fontSize: 24, color: colors.primary, fontWeight: '700' },
+  menu: {
+    backgroundColor: colors.background,
+    borderRadius: 14,
+    paddingVertical: 4,
+    shadowColor: colors.textPrimary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  menuRow: { height: ACTION_ROW_HEIGHT, justifyContent: 'center', paddingHorizontal: 16 },
+  menuRowDivider: { borderTopWidth: 1, borderTopColor: colors.divider },
+  menuText: { fontSize: 16, color: colors.textPrimary },
+  menuTextDestructive: { color: colors.danger },
   customPicker: { alignItems: 'center', paddingHorizontal: 10 },
   customInput: {
     flex: 1,
