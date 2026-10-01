@@ -55,25 +55,66 @@ serve(async (req) => {
       return new Response(JSON.stringify({ healedInvites: 0 }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
 
-    const { data: healedContacts, error: contactsError } = await admin
+    const { error: contactsError } = await admin
       .from('contacts')
       .update({ linked_user_id: user.id })
       .eq('phone', profile.phone)
-      .is('linked_user_id', null)
-      .select('id');
+      .is('linked_user_id', null);
     if (contactsError) throw new Error(`heal contacts: ${contactsError.message}`);
 
-    const contactIds = (healedContacts || []).map((c) => c.id);
+    // Every contact with this number that now points at this account - not
+    // just the ones linked a moment ago. A contact can already have been
+    // linked by a later invite (lib/phone.ts heals it at invite time), which
+    // fixes that new invite but leaves any earlier one still waiting.
+    const { data: linkedContacts, error: linkedError } = await admin
+      .from('contacts')
+      .select('id')
+      .eq('phone', profile.phone)
+      .eq('linked_user_id', user.id);
+    if (linkedError) throw new Error(`look up linked contacts: ${linkedError.message}`);
+
+    const contactIds = (linkedContacts || []).map((c) => c.id);
     if (contactIds.length === 0) {
       return new Response(JSON.stringify({ healedInvites: 0 }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
 
-    const { data: healedInvitees, error: inviteesError } = await admin
+    const { data: waiting, error: waitingError } = await admin
       .from('invitees')
-      .update({ user_id: user.id })
+      .select('id, event_id')
       .in('contact_id', contactIds)
-      .is('user_id', null)
-      .select('event_id, events(title)');
+      .is('user_id', null);
+    if (waitingError) throw new Error(`look up waiting invites: ${waitingError.message}`);
+
+    // invitees has UNIQUE (event_id, user_id), and one bulk update that would
+    // break it fails as a whole - linking none of this person's invites. A
+    // waiting row is redundant when they're already on that event (the host
+    // re-added them another way) or a second waiting row for the same event
+    // (two saved contacts with this number), so those are dropped and only
+    // one row per event is linked.
+    const waitingEventIds = Array.from(new Set((waiting || []).map((w) => w.event_id)));
+    const { data: existing, error: existingError } = waitingEventIds.length
+      ? await admin.from('invitees').select('event_id').eq('user_id', user.id).in('event_id', waitingEventIds)
+      : { data: [], error: null };
+    if (existingError) throw new Error(`look up existing invites: ${existingError.message}`);
+    const coveredEvents = new Set((existing || []).map((e) => e.event_id));
+    const toLink: string[] = [];
+    const redundant: string[] = [];
+    for (const w of waiting || []) {
+      if (coveredEvents.has(w.event_id)) redundant.push(w.id);
+      else {
+        coveredEvents.add(w.event_id);
+        toLink.push(w.id);
+      }
+    }
+
+    if (redundant.length > 0) {
+      const { error: deleteError } = await admin.from('invitees').delete().in('id', redundant);
+      if (deleteError) throw new Error(`drop redundant invites: ${deleteError.message}`);
+    }
+
+    const { data: healedInvitees, error: inviteesError } = toLink.length
+      ? await admin.from('invitees').update({ user_id: user.id }).in('id', toLink).select('event_id, events(title)')
+      : { data: [], error: null };
     if (inviteesError) throw new Error(`heal invitees: ${inviteesError.message}`);
 
     const rows = healedInvitees || [];

@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, useRouter } from 'expo-router';
 import { AuthProvider, useAuth } from '../lib/AuthContext';
 import { NotificationsProvider, useNotificationsContext } from '../lib/NotificationsContext';
 import { useAccountGate } from '../lib/useAccountGate';
+import { healInviteLinks } from '../lib/healInvites';
 import LoginScreen from './(auth)/login';
 import InvitePopup from '../components/InvitePopup';
 import TermsGateScreen from '../components/TermsGateScreen';
@@ -42,6 +43,16 @@ function InvitePopupHost() {
 function RootNavigation() {
   const { session, loading, signOut } = useAuth();
   const { state: gateState, refresh: refreshGate } = useAccountGate(session?.user?.id);
+
+  // Once per signed-in account per launch, pick up any invites sent to this
+  // person's phone number before they joined - see lib/healInvites.ts.
+  const userId = session?.user?.id;
+  const healedForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!userId || gateState !== 'clear' || healedForRef.current === userId) return;
+    healedForRef.current = userId;
+    healInviteLinks();
+  }, [userId, gateState]);
 
   if (loading || (session && gateState === 'loading')) {
     return (

@@ -264,11 +264,38 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     const verticalScrollRef = useRef<Animated.ScrollView>(null);
     const scrollX = useSharedValue(0);
 
+    // The day the user last settled on - recorded where a scroll comes to
+    // rest (or where the grid itself scrolls to), never read back from the
+    // live offset mid-rotation: while the columns resize, the ScrollView
+    // reports clamped, in-between offsets that would land days off.
+    const leadingIndexRef = useRef(initialDayIndex);
+    // True while a width change is being re-aligned - the grid is hidden
+    // and scroll reports are ignored until it's back on the right day.
+    const realigningRef = useRef(false);
+    const [realigning, setRealigning] = useState(false);
+    const dayOffsetsRef = useRef<number[]>([]);
+    dayOffsetsRef.current = dayOffsets;
+    const noteSettledOffset = (x: number) => {
+      if (realigningRef.current) return;
+      const offsets = dayOffsetsRef.current;
+      let best = 0;
+      for (let i = 1; i < offsets.length; i++) {
+        if (Math.abs(offsets[i] - x) < Math.abs(offsets[best] - x)) best = i;
+      }
+      leadingIndexRef.current = best;
+    };
+
     const horizontalScrollHandler = useAnimatedScrollHandler({
       onScroll: (event) => {
         scrollX.value = event.contentOffset.x;
         scrollTo(dayHeaderRef, event.contentOffset.x, 0, false);
         scrollTo(allDayRef, event.contentOffset.x, 0, false);
+      },
+      onEndDrag: (event) => {
+        runOnJS(noteSettledOffset)(event.contentOffset.x);
+      },
+      onMomentumEnd: (event) => {
+        runOnJS(noteSettledOffset)(event.contentOffset.x);
       },
     });
 
@@ -284,6 +311,12 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
         scrollX.value = event.contentOffset.x;
         scrollTo(mainScrollRef, event.contentOffset.x, 0, false);
         scrollTo(allDayRef, event.contentOffset.x, 0, false);
+      },
+      onEndDrag: (event) => {
+        runOnJS(noteSettledOffset)(event.contentOffset.x);
+      },
+      onMomentumEnd: (event) => {
+        runOnJS(noteSettledOffset)(event.contentOffset.x);
       },
     });
 
@@ -309,13 +342,19 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     // Keeps the same leading day in view when the column width changes
     // (rotation, or the first real measurement replacing the window-based
     // guess) - a scroll offset in points would otherwise land on a
-    // different day once every column is a new width.
+    // different day once every column is a new width. The grid stays hidden
+    // from the first render at the new width until it's scrolled back onto
+    // that day; otherwise the old offset shows a stretch of much earlier
+    // days for a frame (reported as flashing back to early September).
     const prevDayWidthRef = useRef(NORMAL_DAY_WIDTH);
+    const widthChanging = prevDayWidthRef.current !== NORMAL_DAY_WIDTH;
     useEffect(() => {
       const prev = prevDayWidthRef.current;
       prevDayWidthRef.current = NORMAL_DAY_WIDTH;
       if (prev === NORMAL_DAY_WIDTH) return;
-      const idx = Math.round(scrollX.value / prev);
+      const idx = leadingIndexRef.current;
+      realigningRef.current = true;
+      setRealigning(true);
       setFocusedDayKey(null);
       requestAnimationFrame(() => {
         const x = idx * NORMAL_DAY_WIDTH;
@@ -323,6 +362,11 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
         mainScrollRef.current?.scrollTo({ x, y: 0, animated: false });
         dayHeaderRef.current?.scrollTo({ x, y: 0, animated: false });
         allDayRef.current?.scrollTo({ x, y: 0, animated: false });
+        requestAnimationFrame(() => {
+          realigningRef.current = false;
+          setRealigning(false);
+          reportVisibleWeek(idx);
+        });
       });
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [NORMAL_DAY_WIDTH]);
@@ -336,6 +380,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       if (pendingFocusIndexRef.current === null) return;
       const idx = pendingFocusIndexRef.current;
       pendingFocusIndexRef.current = null;
+      leadingIndexRef.current = idx;
       const x = dayOffsets[idx] ?? 0;
       scrollX.value = x;
       mainScrollRef.current?.scrollTo({ x, y: 0, animated: true });
@@ -362,6 +407,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     // isn't worth threading the real offsets into a UI-thread reaction for.
     const lastReportedWeekKey = useRef<string | null>(null);
     const reportVisibleWeek = (dayIndex: number) => {
+      if (realigningRef.current) return;
       const clamped = Math.max(0, Math.min(dayCount - 1, dayIndex));
       const day = new Date(rangeStart);
       day.setDate(day.getDate() + clamped);
@@ -390,6 +436,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
         const currentIndex = indexForOffset(scrollX.value);
         const targetIndex = Math.max(0, Math.min(dayCount - 1, currentIndex + delta));
         const target = dayOffsets[targetIndex] ?? 0;
+        leadingIndexRef.current = targetIndex;
         mainScrollRef.current?.scrollTo({ x: target, y: 0, animated: true });
       },
     }));
@@ -399,7 +446,10 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     const nowTop = ((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_BLOCK_HEIGHT;
 
     return (
-      <View style={{ height }} onLayout={(e) => setGridWidth(e.nativeEvent.layout.width)}>
+      <View
+        style={{ height, opacity: widthChanging || realigning ? 0 : 1 }}
+        onLayout={(e) => setGridWidth(e.nativeEvent.layout.width)}
+      >
         <View style={styles.headerRow}>
           <View style={{ width: TIMELINE_LEFT_INSET }} />
           <Animated.ScrollView
@@ -510,10 +560,11 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                 const key = toDayKey(d);
                 const dayEvents = eventsByDay[key] || [];
                 const isFocused = focusedDayKey === key;
+                const hasAllDay = (allDayByDay[key] || []).length > 0;
                 return (
                   <Pressable
                     key={key}
-                    style={[styles.dayColumn, { width: dayWidths[dayIndex] }]}
+                    style={[styles.dayColumn, hasAllDay && styles.dayColumnAllDay, { width: dayWidths[dayIndex] }]}
                     delayLongPress={450}
                     // A collapsed (unfocused) day is easiest to just widen
                     // and read, not tap into something on it by accident -
@@ -655,6 +706,9 @@ const styles = StyleSheet.create({
   allDayChipText: { color: colors.textPrimary, fontSize: 10, fontWeight: '600' },
   hourLabel: { position: 'absolute', left: 0, right: 8, textAlign: 'right', fontSize: 11, color: colors.textSecondary },
   dayColumn: { height: GRID_HEIGHT },
+  // A day with an all-day item is shaded top to bottom, so the whole day
+  // reads as taken - a lighter wash of the all-day chip's blue.
+  dayColumnAllDay: { backgroundColor: 'rgba(174, 225, 249, 0.45)' },
   hourLine: { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: colors.divider },
   nowLine: { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: colors.danger, flexDirection: 'row', alignItems: 'center' },
   nowDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.danger, marginLeft: -4 },

@@ -264,7 +264,6 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   // nothing to do with how many hours of a day is a sane default to show.
   const [totalHeight, setTotalHeight] = useState<number | null>(null);
   const [liveContentHeight, setLiveContentHeight] = useState<number | null>(null);
-  const totalMeasuredRef = useRef<string | null>(null);
 
   const dragY = useSharedValue(0);
   const dragStart = useSharedValue(0);
@@ -1188,14 +1187,14 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   const gridBottomLimit = viewMode === "week" ? weekBottomLimit : monthBottomLimit;
   const topLimit = ready ? -gridBaseHeight : 0;
 
-  // Measured once per screen size - not on every layout change, but again
-  // after a rotation (an iPad turned sideways), or the calendar and Upcoming
-  // sheet stay sized for the old, taller screen.
+  // Follows every layout, so the calendar and Upcoming sheet are re-sized
+  // after any rotation. This used to skip layouts it thought it had already
+  // measured, keyed off useWindowDimensions - but during a rotation the
+  // layout event can arrive before the new window size does, and that
+  // stale key once kept the landscape height as the portrait one, leaving
+  // the drag handle with no room to move after turning the phone back.
   const handleContentLayout = (e: LayoutChangeEvent) => {
     setLiveContentHeight(e.nativeEvent.layout.height);
-    const windowKey = `${windowWidth}x${windowHeight}`;
-    if (totalMeasuredRef.current === windowKey) return;
-    totalMeasuredRef.current = windowKey;
     setTotalHeight(e.nativeEvent.layout.height);
   };
 
@@ -1403,12 +1402,25 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
           </TouchableOpacity>
         )}
       {shouldPromptPhone && !phoneBannerDismissed && !showDraftsOnly && !showDeclinedOnly && !showHiddenOnly && (
-        <View style={styles.calendarPromptRow}>
-          <TouchableOpacity style={{ flex: 1 }} onPress={() => router.push("/settings")}>
-            <Text style={styles.calendarPromptText}>📱 Add your phone number so people can find and invite you</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleDismissPhoneBanner} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Text style={styles.phonePromptDismiss}>✕</Text>
+        // A full card rather than a one-line link - as a small line of text
+        // it was easy to scroll past, and without a phone number, invites
+        // people send to this person never reach them.
+        <View style={styles.phonePromptCard}>
+          <View style={styles.phonePromptHeader}>
+            <Text style={styles.phonePromptTitle}>📱 Add your phone number</Text>
+            <TouchableOpacity
+              onPress={handleDismissPhoneBanner}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityLabel="Dismiss"
+            >
+              <Text style={styles.phonePromptDismiss}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.phonePromptBody}>
+            It's how friends and family find you on Ping. Without it, invites sent to your number won't show up here.
+          </Text>
+          <TouchableOpacity style={styles.phonePromptButton} onPress={() => router.push("/settings")}>
+            <Text style={styles.phonePromptButtonText}>Add phone number</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -1734,7 +1746,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   calendarPromptText: { color: colors.primaryDark, fontSize: 13 },
-  phonePromptDismiss: { color: colors.textMuted, fontSize: 13, paddingLeft: 12 },
+  phonePromptCard: {
+    marginHorizontal: 20,
+    marginTop: 10,
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: "rgba(174, 225, 249, 0.35)",
+  },
+  phonePromptHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  phonePromptTitle: { color: colors.textPrimary, fontSize: 18, fontWeight: "700", flexShrink: 1 },
+  phonePromptBody: { color: colors.textSecondary, fontSize: 15, lineHeight: 21, marginTop: 6 },
+  phonePromptButton: {
+    marginTop: 12,
+    backgroundColor: colors.primary,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  phonePromptButtonText: { color: colors.textOnPrimary, fontSize: 16, fontWeight: "700" },
+  phonePromptDismiss: { color: colors.textMuted, fontSize: 18, paddingLeft: 12 },
   errorPromptRow: {
     marginHorizontal: 20,
     marginTop: 8,

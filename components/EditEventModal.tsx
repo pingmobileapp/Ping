@@ -696,14 +696,18 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   const confirmNotifyAndSave = (sendNow: boolean, applyToFuture: boolean) => {
     if (!event) return;
     const resolvedEnd = resolveEndDate(eventDate, endDate, isMultiDay, isAllDay);
-    const nextEndDate = resolvedEnd ? resolvedEnd.toISOString() : null;
+    // Compared as timestamps, not strings - the database hands dates back as
+    // "...+00:00" while toISOString() writes "...Z", so a string compare
+    // flagged every save (even just inviting more people) as a date change
+    // and prompted the host to alert the whole guest list.
+    const timeOf = (iso: string | null | undefined) => (iso ? new Date(iso).getTime() : null);
     const changedDetails =
       !isDraft &&
       (title !== event.title ||
         description.trim() !== (event.description || '') ||
         location !== (event.location || '') ||
-        eventDate.toISOString() !== event.event_date ||
-        nextEndDate !== (event.end_date || null) ||
+        eventDate.getTime() !== timeOf(event.event_date) ||
+        (resolvedEnd ? resolvedEnd.getTime() : null) !== timeOf(event.end_date) ||
         isAllDay !== !!event.is_all_day);
 
     if (!changedDetails) {
@@ -954,11 +958,14 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
     }
 
     if (notifyExisting) {
+      // Guests who already declined aren't alerted - same as event messages,
+      // they've said they're not coming and a change notice is just noise.
       const { data: allInvitees } = await supabase
         .from('invitees')
-        .select('user_id')
+        .select('user_id, rsvp_status')
         .eq('event_id', event.id);
       const recipientIds = (allInvitees || [])
+        .filter((i) => i.rsvp_status !== 'declined')
         .map((i) => i.user_id)
         .filter((id): id is string => !!id && id !== session.user.id);
       if (recipientIds.length > 0) {

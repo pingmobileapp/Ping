@@ -18,6 +18,7 @@ import { useAuth } from '../lib/AuthContext';
 import { pickProfileImage } from '../lib/imagePicker';
 import { uploadAvatarImage } from '../lib/imageUpload';
 import { normalizePhone } from '../lib/phone';
+import { healInviteLinks } from '../lib/healInvites';
 import { colors } from '../lib/theme';
 import { fetchConnectStatus, startConnectOnboarding, ConnectAccountState } from '../lib/stripeConnect';
 
@@ -120,6 +121,9 @@ export default function SettingsScreen() {
       }
       return;
     }
+
+    // A newly saved number may match invites sent before it was on file.
+    if (normalizePhone(phone)) healInviteLinks();
 
     const trimmedEmail = email.trim();
     if (trimmedEmail && trimmedEmail !== session.user.email) {
