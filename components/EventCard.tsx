@@ -45,6 +45,7 @@ type Props = {
   // the normal detail face - see EventDetailModal's startOnMessages.
   onPressChat?: (event: PingEvent) => void;
   hasUnreadMessages?: boolean;
+  onLongPress?: (event: PingEvent) => void;
 };
 
 export default function EventCard({
@@ -55,6 +56,7 @@ export default function EventCard({
   weather,
   onPressChat,
   hasUnreadMessages,
+  onLongPress,
 }: Props) {
   const rsvpDotColor = rsvpStatus && rsvpStatus !== 'pending' ? RSVP_DOT_COLOR[rsvpStatus] : null;
   const dateLabel = formatEventDate(event.event_date, event.end_date, 'short');
@@ -76,6 +78,7 @@ export default function EventCard({
       style={[styles.wrapper, highlight && styles.wrapperHighlight]}
       activeOpacity={0.85}
       onPress={() => onPress?.(event)}
+      onLongPress={onLongPress ? () => onLongPress(event) : undefined}
     >
       <View style={styles.inner}>
         {event.status === 'draft' && (

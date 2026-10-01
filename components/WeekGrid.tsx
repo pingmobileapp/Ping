@@ -290,10 +290,21 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     // animation can move a scroll view's offset itself after the grid has
     // already scrolled to the right day - it put the old, pre-rotation offset
     // back, stranding landscape weeks early (reported on 1.1.1, never seen in
-    // the simulator). Any scroll that isn't the user's own gets snapped back
-    // here until the rotation has settled; touching the grid ends the guard.
+    // the simulator). Any scroll that isn't the user's own gets corrected
+    // until the rotation has settled; touching the grid ends the guard.
+    //
+    // The correction is queued to the JS thread (runOnJS), never done with a
+    // scrollTo right inside onScroll: that runs synchronously within UIKit's
+    // own scroll callback, and fighting the rotation animation from there
+    // re-entered itself until the app crashed (build 102, on device).
     const guardX = useSharedValue(-1);
+    const correctionQueued = useSharedValue(false);
     const realignTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+    const realignApplyRef = useRef<(() => void) | null>(null);
+    const reapplyRealign = () => {
+      correctionQueued.value = false;
+      if (guardX.value >= 0) realignApplyRef.current?.();
+    };
     const endRealign = () => {
       realignTimersRef.current.forEach(clearTimeout);
       realignTimersRef.current = [];
@@ -307,9 +318,10 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     const horizontalScrollHandler = useAnimatedScrollHandler({
       onScroll: (event) => {
         if (guardX.value >= 0) {
-          if (Math.abs(event.contentOffset.x - guardX.value) > 0.5) scrollTo(mainScrollRef, guardX.value, 0, false);
-          scrollTo(dayHeaderRef, guardX.value, 0, false);
-          scrollTo(allDayRef, guardX.value, 0, false);
+          if (Math.abs(event.contentOffset.x - guardX.value) > 0.5 && !correctionQueued.value) {
+            correctionQueued.value = true;
+            runOnJS(reapplyRealign)();
+          }
           return;
         }
         scrollX.value = event.contentOffset.x;
@@ -340,9 +352,10 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     const dayHeaderScrollHandler = useAnimatedScrollHandler({
       onScroll: (event) => {
         if (guardX.value >= 0) {
-          if (Math.abs(event.contentOffset.x - guardX.value) > 0.5) scrollTo(dayHeaderRef, guardX.value, 0, false);
-          scrollTo(mainScrollRef, guardX.value, 0, false);
-          scrollTo(allDayRef, guardX.value, 0, false);
+          if (Math.abs(event.contentOffset.x - guardX.value) > 0.5 && !correctionQueued.value) {
+            correctionQueued.value = true;
+            runOnJS(reapplyRealign)();
+          }
           return;
         }
         scrollX.value = event.contentOffset.x;
@@ -408,13 +421,19 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
         dayHeaderRef.current?.scrollTo({ x, y: 0, animated: false });
         allDayRef.current?.scrollTo({ x, y: 0, animated: false });
       };
+      realignApplyRef.current = apply;
       requestAnimationFrame(() => {
         apply();
         // Shown again as soon as it's on the right day; the guard (and the
         // re-applies below, after the rotation animation) keep it there.
         requestAnimationFrame(() => setRealigning(false));
       });
-      realignTimersRef.current = [setTimeout(apply, 350), setTimeout(apply, 800), setTimeout(endRealign, 1200)];
+      realignTimersRef.current = [
+        setTimeout(apply, 350),
+        setTimeout(apply, 600),
+        setTimeout(apply, 900),
+        setTimeout(endRealign, 1200),
+      ];
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [NORMAL_DAY_WIDTH]);
     useEffect(() => () => realignTimersRef.current.forEach(clearTimeout), []);

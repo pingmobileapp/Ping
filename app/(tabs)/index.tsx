@@ -58,7 +58,7 @@ import {
   getUpcomingExternalEvents,
   requestCalendarAccess,
 } from "../../lib/calendarConflicts";
-import { getHiddenEventIds, hideEvent, hiddenKeyFor, isHidden, unhideEvent } from "../../lib/hiddenEvents";
+import { getHiddenEventIds, hideEvent, hiddenKeyFor, hiddenPingKey, isHidden, unhideEvent } from "../../lib/hiddenEvents";
 import { getAllImportantItemIds } from "../../lib/eventReminders";
 import { fetchDayNotes, saveDayNote } from "../../lib/dayNotes";
 import { DailyWeather, fetchWeatherForEvents } from "../../lib/eventWeather";
@@ -563,6 +563,28 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     ]);
   };
 
+  // Hiding a Ping is a personal display choice like hiding a calendar item -
+  // it comes off this person's Week/Month calendar and Upcoming list, but
+  // their RSVP and the event itself are untouched, and it can be brought
+  // back from the Hidden filter. Asked for on 1.1.1 after a long-press on
+  // a Ping in Week view did nothing.
+  const showPingHideOption = (event: PingEvent) => {
+    Alert.alert(
+      "Hide this Ping?",
+      "It comes off your calendar and Upcoming list. Your RSVP doesn't change, and you can bring it back from the Hidden filter.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Hide", onPress: async () => setHiddenEventIds(await hideEvent(hiddenPingKey(event.id))) },
+      ],
+    );
+  };
+
+  const handleUnhidePing = async (event: PingEvent) => {
+    const next = await unhideEvent(hiddenPingKey(event.id));
+    setHiddenEventIds(next);
+    if (next.size === 0) setActiveFilter((f) => (f === 'hidden' ? 'pingsOnly' : f));
+  };
+
   const handleGroupChatClose = useCallback(() => {
     setGroupChatVisible(false);
   }, []);
@@ -709,10 +731,13 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   };
 
   // Week view's long-press equivalent of the Upcoming list's hide icon -
-  // a Ping isn't something Week view can hide (it's a real event you're
-  // hosting or attending, not a calendar-sync display preference), so
-  // only an external item does anything here.
+  // offers to hide a phone-calendar item or a Ping.
   const handleWeekItemLongPress = (id: string) => {
+    if (id.startsWith("ping-")) {
+      const p = declinedFilteredEvents.find((e) => e.id === id.slice(5));
+      if (p) showPingHideOption(p);
+      return;
+    }
     if (!id.startsWith("ext-")) return;
     const ext = externalEvents.find((e) => hiddenKeyFor(e) === id.slice(4));
     if (ext) showHideOptions(ext);
@@ -743,12 +768,16 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   // to act on there anymore) but never actually removed - toggling
   // showDeclinedOnly swaps to showing just those, so changing your mind is
   // still a normal RSVP change away, not a dead end.
+  // Hidden Pings (see showPingHideOption) are left out here too, which
+  // takes them off Week, Month, and Upcoming in one place - the Hidden
+  // filter lists them separately (see upcomingListItems).
   const declinedFilteredEvents = useMemo(() => {
     return events.filter((e) => {
+      if (hiddenEventIds.has(hiddenPingKey(e.id))) return false;
       const isDeclined = myRsvpByEvent[e.id] === "declined";
       return showDeclinedOnly ? isDeclined : !isDeclined;
     });
-  }, [events, myRsvpByEvent, showDeclinedOnly]);
+  }, [events, myRsvpByEvent, showDeclinedOnly, hiddenEventIds]);
 
   // Same event set the month grid marks (declined-filtered Pings, non-
   // hidden external items) - Week view is another way of looking at the
@@ -969,23 +998,30 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     // the occurrence's own startDate is the same fix isHidden already
     // relies on for hiding one occurrence without touching its siblings.
     //
-    // Hidden is its own standalone view (phone-calendar events only, same
-    // as hiding itself) rather than another filter layered on top of the
+    // Hidden is its own standalone view (hidden Pings and calendar items)
+    // rather than another filter layered on top of the
     // normal list - showing what's hidden alongside what isn't would just
     // recreate the clutter hiding is meant to remove.
     if (showHiddenOnly) {
       // Today forward only - past hidden items aren't worth reviewing.
       const startOfToday = new Date();
       startOfToday.setHours(0, 0, 0, 0);
-      return externalEvents
+      const hiddenPings: UpcomingListItem[] = events
+        .filter(
+          (e) =>
+            hiddenEventIds.has(hiddenPingKey(e.id)) &&
+            new Date(e.end_date || e.event_date) >= startOfToday,
+        )
+        .map((e) => ({ kind: "ping" as const, key: `ping-${e.id}`, date: new Date(e.event_date), event: e }));
+      const hiddenExternal: UpcomingListItem[] = externalEvents
         .filter((e) => isHidden(e, hiddenEventIds) && (e.endDate ?? e.startDate) >= startOfToday)
         .map((e) => ({
           kind: "external" as const,
           key: `ext-${hiddenKeyFor(e)}`,
           date: e.startDate,
           event: e,
-        }))
-        .sort((a, b) => a.date.getTime() - b.date.getTime());
+        }));
+      return [...hiddenPings, ...hiddenExternal].sort((a, b) => a.date.getTime() - b.date.getTime());
     }
 
     // Same standalone-view idea as Hidden - "important date" only ever
@@ -1079,6 +1115,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
       (a, b) => a.date.getTime() - b.date.getTime(),
     );
   }, [
+    events,
     visibleEvents,
     showHiddenOnly,
     hiddenEventIds,
@@ -1353,11 +1390,24 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   // inside it is identical either way.
   type UpcomingItem = (typeof upcomingListItems)[number];
   const renderUpcomingItem = ({ item }: { item: UpcomingItem }) =>
-    item.kind === "ping" ? (
+    item.kind === "ping" && showHiddenOnly ? (
+      <View>
+        <EventCard
+          event={item.event}
+          onPress={openEvent}
+          rsvpStatus={myRsvpByEvent[item.event.id] as any}
+          weather={weatherByEventId[item.event.id]}
+        />
+        <TouchableOpacity style={styles.unhidePingButton} onPress={() => handleUnhidePing(item.event)}>
+          <Text style={styles.unhidePingText}>Unhide</Text>
+        </TouchableOpacity>
+      </View>
+    ) : item.kind === "ping" ? (
       <EventCard
         event={item.event}
         highlight={item.event.id === justCreatedId}
         onPress={openEvent}
+        onLongPress={showPingHideOption}
         rsvpStatus={myRsvpByEvent[item.event.id] as any}
         weather={weatherByEventId[item.event.id]}
         onPressChat={(e) => openEvent(e, { startOnMessages: true })}
@@ -1746,6 +1796,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   calendarPromptText: { color: colors.primaryDark, fontSize: 13 },
+  unhidePingButton: { alignSelf: "flex-start", marginLeft: 28, marginTop: -2, marginBottom: 6, paddingVertical: 4 },
+  unhidePingText: { color: colors.primary, fontSize: 15, fontWeight: "600" },
   phonePromptCard: {
     marginHorizontal: 20,
     marginTop: 10,

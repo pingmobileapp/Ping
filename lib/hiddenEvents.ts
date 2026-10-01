@@ -39,6 +39,12 @@ export async function unhideEvent(eventId: string): Promise<Set<string>> {
   return ids;
 }
 
+// Pings share the same on-device hidden set, under their own prefix so a
+// Ping id can never collide with a phone-calendar event id. Hiding a Ping
+// only takes it off this person's calendar views - their RSVP, the event's
+// messages, and what everyone else sees are untouched.
+export const hiddenPingKey = (eventId: string) => `ping:${eventId}`;
+
 // A recurring calendar event's occurrences aren't guaranteed to be unique
 // by e.id alone across every calendar/OS combination expo-calendar runs
 // on - hiding by a bare id risked either silently hiding every occurrence
