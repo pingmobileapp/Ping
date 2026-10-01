@@ -285,11 +285,42 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       leadingIndexRef.current = best;
     };
 
+    // While re-aligning after a width change, the offset the grid must hold
+    // (-1 when not guarding). On a real iPhone the system's rotation
+    // animation can move a scroll view's offset itself after the grid has
+    // already scrolled to the right day - it put the old, pre-rotation offset
+    // back, stranding landscape weeks early (reported on 1.1.1, never seen in
+    // the simulator). Any scroll that isn't the user's own gets snapped back
+    // here until the rotation has settled; touching the grid ends the guard.
+    const guardX = useSharedValue(-1);
+    const realignTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+    const endRealign = () => {
+      realignTimersRef.current.forEach(clearTimeout);
+      realignTimersRef.current = [];
+      guardX.value = -1;
+      if (!realigningRef.current) return;
+      realigningRef.current = false;
+      setRealigning(false);
+      reportVisibleWeek(leadingIndexRef.current);
+    };
+
     const horizontalScrollHandler = useAnimatedScrollHandler({
       onScroll: (event) => {
+        if (guardX.value >= 0) {
+          if (Math.abs(event.contentOffset.x - guardX.value) > 0.5) scrollTo(mainScrollRef, guardX.value, 0, false);
+          scrollTo(dayHeaderRef, guardX.value, 0, false);
+          scrollTo(allDayRef, guardX.value, 0, false);
+          return;
+        }
         scrollX.value = event.contentOffset.x;
         scrollTo(dayHeaderRef, event.contentOffset.x, 0, false);
         scrollTo(allDayRef, event.contentOffset.x, 0, false);
+      },
+      onBeginDrag: () => {
+        if (guardX.value >= 0) {
+          guardX.value = -1;
+          runOnJS(endRealign)();
+        }
       },
       onEndDrag: (event) => {
         runOnJS(noteSettledOffset)(event.contentOffset.x);
@@ -308,9 +339,21 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     // the handler above.
     const dayHeaderScrollHandler = useAnimatedScrollHandler({
       onScroll: (event) => {
+        if (guardX.value >= 0) {
+          if (Math.abs(event.contentOffset.x - guardX.value) > 0.5) scrollTo(dayHeaderRef, guardX.value, 0, false);
+          scrollTo(mainScrollRef, guardX.value, 0, false);
+          scrollTo(allDayRef, guardX.value, 0, false);
+          return;
+        }
         scrollX.value = event.contentOffset.x;
         scrollTo(mainScrollRef, event.contentOffset.x, 0, false);
         scrollTo(allDayRef, event.contentOffset.x, 0, false);
+      },
+      onBeginDrag: () => {
+        if (guardX.value >= 0) {
+          guardX.value = -1;
+          runOnJS(endRealign)();
+        }
       },
       onEndDrag: (event) => {
         runOnJS(noteSettledOffset)(event.contentOffset.x);
@@ -353,23 +396,28 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       prevDayWidthRef.current = NORMAL_DAY_WIDTH;
       if (prev === NORMAL_DAY_WIDTH) return;
       const idx = leadingIndexRef.current;
+      const x = idx * NORMAL_DAY_WIDTH;
+      realignTimersRef.current.forEach(clearTimeout);
       realigningRef.current = true;
       setRealigning(true);
       setFocusedDayKey(null);
-      requestAnimationFrame(() => {
-        const x = idx * NORMAL_DAY_WIDTH;
-        scrollX.value = x;
+      scrollX.value = x;
+      guardX.value = x;
+      const apply = () => {
         mainScrollRef.current?.scrollTo({ x, y: 0, animated: false });
         dayHeaderRef.current?.scrollTo({ x, y: 0, animated: false });
         allDayRef.current?.scrollTo({ x, y: 0, animated: false });
-        requestAnimationFrame(() => {
-          realigningRef.current = false;
-          setRealigning(false);
-          reportVisibleWeek(idx);
-        });
+      };
+      requestAnimationFrame(() => {
+        apply();
+        // Shown again as soon as it's on the right day; the guard (and the
+        // re-applies below, after the rotation animation) keep it there.
+        requestAnimationFrame(() => setRealigning(false));
       });
+      realignTimersRef.current = [setTimeout(apply, 350), setTimeout(apply, 800), setTimeout(endRealign, 1200)];
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [NORMAL_DAY_WIDTH]);
+    useEffect(() => () => realignTimersRef.current.forEach(clearTimeout), []);
 
     // Re-centers on the tapped day once dayOffsets has actually recomputed
     // to reflect its new (focused/unfocused) width - doing this inside the
