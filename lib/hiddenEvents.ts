@@ -17,12 +17,24 @@ export async function getHiddenEventIds(): Promise<Set<string>> {
   }
 }
 
+// Hiding can happen from more than one screen (Home's long-press, the
+// event screen's ••• menu), so whoever shows the calendar subscribes here
+// to pick up a change made anywhere else.
+const listeners = new Set<(ids: Set<string>) => void>();
+export function onHiddenEventsChange(listener: (ids: Set<string>) => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
 async function saveHiddenEventIds(ids: Set<string>): Promise<void> {
   try {
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(Array.from(ids)));
   } catch (err) {
     console.error('Error saving hidden events:', err);
   }
+  listeners.forEach((listener) => listener(new Set(ids)));
 }
 
 export async function hideEvent(eventId: string): Promise<Set<string>> {

@@ -60,6 +60,14 @@
     font-size: 15px;
   }
   .error { color: #6B6B6B; padding: 40px 0; }
+  .steps { text-align: left; margin: 0 0 28px; padding: 0; list-style: none; }
+  .steps li { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 14px; font-size: 16px; }
+  .steps .num {
+    flex: 0 0 28px; height: 28px; border-radius: 14px; background: #5DADE2; color: #FFFFFF;
+    font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; margin-top: 1px;
+  }
+  .steps-title { font-size: 18px; font-weight: 700; margin: 0 0 14px; text-align: left; }
+  .small { color: #6B6B6B; font-size: 14px; margin-top: 22px; }
 </style>
 </head>
 <body>
@@ -99,20 +107,29 @@
         .then((info) => {
           const date = new Date(info.eventDate);
           const dateLabel = date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-          const timeLabel = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+          const whenLabel = info.isAllDay
+            ? dateLabel
+            : `${dateLabel} · ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
           const label = statusLabel(info.rsvpStatus);
+          const host = escapeHtml(info.hostName);
 
           content.innerHTML = `
             <h1>${escapeHtml(info.hostName)} invited you</h1>
             <div class="card">
               ${info.imageUrl ? `<img class="card-image" src="${escapeHtml(info.imageUrl)}" alt="" />` : ''}
               <div class="row"><strong>${escapeHtml(info.eventTitle)}</strong></div>
-              <div class="row">${escapeHtml(dateLabel)} · ${escapeHtml(timeLabel)}</div>
+              <div class="row">${escapeHtml(whenLabel)}</div>
               ${info.location ? `<div class="row">${escapeHtml(info.location)}</div>` : ''}
               ${label ? `<div class="status">${label}</div>` : ''}
             </div>
-            <p class="hint">Reply to the text you received to RSVP, or get the app to see full details and chat with the group.</p>
+            <p class="steps-title">How to RSVP</p>
+            <ol class="steps">
+              <li><span class="num">1</span><span>Get the free Ping app.</span></li>
+              <li><span class="num">2</span><span>Sign up and add <strong>this phone number</strong>, the one ${host} texted.</span></li>
+              <li><span class="num">3</span><span>Your invite will be waiting. Tap it to RSVP and chat with everyone going.</span></li>
+            </ol>
             <a class="button" href="${APP_STORE_URL}">Get the Ping App</a>
+            <p class="small">Already have Ping? Open the app and check that your phone number is saved in Settings.</p>
           `;
         })
         .catch(() => {

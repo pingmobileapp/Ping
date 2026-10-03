@@ -33,6 +33,7 @@ type Props = {
   eventTitle?: string;
   eventDate?: string;
   location?: string;
+  isAllDay?: boolean;
   onClose: () => void;
   onInvited: () => void;
 };
@@ -43,6 +44,7 @@ export default function ShareInviteModal({
   eventTitle,
   eventDate,
   location,
+  isAllDay,
   onClose,
   onInvited,
 }: Props) {
@@ -241,10 +243,19 @@ export default function ShareInviteModal({
                   </Text>
                 </TouchableOpacity>
               ))}
-              <TouchableOpacity style={styles.addChip} onPress={() => setAddingContact(true)}>
-                <Text style={styles.addChipText}>+ New</Text>
-              </TouchableOpacity>
             </View>
+
+            {/* Typing in someone new used to be a dashed "+ New" chip at the end
+                of the People row - it looked like the way to invite people, and got
+                tapped by mistake (reported 2026-10-03). Now a plain link below the
+                list. It stays, though: it's the only way to invite someone who isn't
+                in your phone's contacts, including for anyone who declined contacts
+                access. */}
+            {!addingContact && (
+              <TouchableOpacity onPress={() => setAddingContact(true)} hitSlop={{ top: 8, bottom: 8 }}>
+                <Text style={styles.addSomeoneText}>Invite someone not in your contacts</Text>
+              </TouchableOpacity>
+            )}
 
             {addingContact && (
               <View style={styles.addContactRow}>
@@ -271,7 +282,7 @@ export default function ShareInviteModal({
             )}
 
             {contacts.length === 0 && !addingContact && (
-              <Text style={styles.helperText}>No contacts yet — tap "+ New" or import from your phone.</Text>
+              <Text style={styles.helperText}>No contacts yet. Import them from your phone above.</Text>
             )}
           </ScrollView>
 
@@ -305,6 +316,7 @@ export default function ShareInviteModal({
         eventTitle={eventTitle || 'An event'}
         eventDate={new Date(eventDate || Date.now())}
         location={location || ''}
+        isAllDay={isAllDay}
         onDone={() => setQueueVisible(false)}
         onClosed={onInvited}
       />
@@ -341,6 +353,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   addChipText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
+  addSomeoneText: { color: colors.textSecondary, fontSize: 14, fontWeight: '500', marginTop: 12, textDecorationLine: 'underline' },
   helperText: { color: colors.textMuted, fontSize: 13, marginTop: 12, fontStyle: 'italic' },
   addContactRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
   input: {

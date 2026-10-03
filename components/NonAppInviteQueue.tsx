@@ -12,6 +12,7 @@ type Props = {
   eventTitle: string;
   eventDate: Date;
   location: string;
+  isAllDay?: boolean;
   onDone: () => void;
   // Fires once this modal has actually finished its own close animation
   // (native Modal `onDismiss`, iOS-only). The parent's own close/finish
@@ -39,6 +40,7 @@ export default function NonAppInviteQueue({
   eventTitle,
   eventDate,
   location,
+  isAllDay,
   onDone,
   onClosed,
 }: Props) {
@@ -65,7 +67,7 @@ export default function NonAppInviteQueue({
 
   const handleText = async () => {
     if (!current) return;
-    const body = buildInviteMessage(eventTitle, eventDate, location, current.inviteeId);
+    const body = buildInviteMessage(eventTitle, eventDate, location, current.inviteeId, isAllDay);
     awaitingReturnRef.current = true;
     const opened = await openSmsComposer(current.phone, body);
     if (!opened) awaitingReturnRef.current = false;

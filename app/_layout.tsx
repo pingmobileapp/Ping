@@ -9,6 +9,8 @@ import { healInviteLinks } from '../lib/healInvites';
 import LoginScreen from './(auth)/login';
 import InvitePopup from '../components/InvitePopup';
 import TermsGateScreen from '../components/TermsGateScreen';
+import FindInvitesScreen from '../components/FindInvitesScreen';
+import { useFindInvitesStep } from '../lib/useFindInvitesStep';
 import { colors } from '../lib/theme';
 
 function InvitePopupHost() {
@@ -54,7 +56,9 @@ function RootNavigation() {
     healInviteLinks();
   }, [userId, gateState]);
 
-  if (loading || (session && gateState === 'loading')) {
+  const findInvites = useFindInvitesStep(userId, gateState === 'clear');
+
+  if (loading || (session && (gateState === 'loading' || (gateState === 'clear' && findInvites.state === 'loading')))) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' }}>
         <ActivityIndicator color={colors.primary} />
@@ -74,10 +78,14 @@ function RootNavigation() {
     return <TermsGateScreen userId={session.user.id} mode={gateState} onAccepted={refreshGate} onSignOut={signOut} />;
   }
 
-  // Phone number and name are collected on-demand from a dismissible
-  // Home-screen banner instead of gating entry here - Apple rejected an
-  // earlier build (guideline 5.1.1(v)) for requiring phone number just to
-  // use the app at all. See lib/useProfilePhone.ts / app/(tabs)/index.tsx.
+  // Phone number and name are asked for once, on a skippable step (see
+  // components/FindInvitesScreen) - never required: Apple rejected an
+  // earlier build (guideline 5.1.1(v)) for requiring a phone number just
+  // to use the app. Skipping leaves the Home-screen card as a reminder.
+  if (findInvites.state === 'show') {
+    return <FindInvitesScreen userId={session.user.id} onDone={findInvites.finish} />;
+  }
+
   return (
     <NotificationsProvider>
       <Stack screenOptions={{ headerShown: false }} />

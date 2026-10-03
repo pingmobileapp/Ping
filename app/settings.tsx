@@ -21,6 +21,7 @@ import { normalizePhone } from '../lib/phone';
 import { healInviteLinks } from '../lib/healInvites';
 import { colors } from '../lib/theme';
 import { fetchConnectStatus, startConnectOnboarding, ConnectAccountState } from '../lib/stripeConnect';
+import { DISCOVER_LISTINGS_ENABLED } from '../lib/features';
 
 const CONNECT_STATUS_LABEL: Record<ConnectAccountState['status'], string> = {
   not_started: 'Not set up',
@@ -250,29 +251,33 @@ export default function SettingsScreen() {
             Changing your email requires confirming it from a link sent to your new address.
           </Text>
 
-          <View style={styles.payoutsSection}>
-            <Text style={styles.label}>Payouts</Text>
-            <View style={styles.payoutsRow}>
-              <Text style={styles.payoutsStatusText}>
-                {connectState ? CONNECT_STATUS_LABEL[connectState.status] : 'Loading…'}
-              </Text>
-              <TouchableOpacity onPress={handleSetUpPayouts} disabled={connectLoading}>
-                <Text style={styles.saveText}>
-                  {connectLoading
-                    ? 'Opening…'
-                    : connectState?.status === 'ready'
-                      ? 'Manage'
-                      : connectState?.status === 'not_started'
-                        ? 'Set up'
-                        : 'Continue'}
+          {/* Paused with Discover hosting (lib/features.ts) - still shown to
+              anyone who already started a Stripe account, so they can manage it. */}
+          {(DISCOVER_LISTINGS_ENABLED || (connectState && connectState.status !== 'not_started')) && (
+            <View style={styles.payoutsSection}>
+              <Text style={styles.label}>Payouts</Text>
+              <View style={styles.payoutsRow}>
+                <Text style={styles.payoutsStatusText}>
+                  {connectState ? CONNECT_STATUS_LABEL[connectState.status] : 'Loading…'}
                 </Text>
-              </TouchableOpacity>
+                <TouchableOpacity onPress={handleSetUpPayouts} disabled={connectLoading}>
+                  <Text style={styles.saveText}>
+                    {connectLoading
+                      ? 'Opening…'
+                      : connectState?.status === 'ready'
+                        ? 'Manage'
+                        : connectState?.status === 'not_started'
+                          ? 'Set up'
+                          : 'Continue'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.helperText}>
+                Connect a Stripe account to charge for events you host on Discover. Stripe handles your payout
+                details directly - Ping never sees your bank info.
+              </Text>
             </View>
-            <Text style={styles.helperText}>
-              Connect a Stripe account to charge for events you host on Discover. Stripe handles your payout
-              details directly - Ping never sees your bank info.
-            </Text>
-          </View>
+          )}
 
           {isAdmin && (
             <View style={styles.payoutsSection}>

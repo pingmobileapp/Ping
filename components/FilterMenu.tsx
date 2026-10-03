@@ -24,14 +24,17 @@ const FILTER_LABELS: Record<Exclude<HomeFilter, null>, string> = {
 type Props = {
   active: HomeFilter;
   onSelect: (filter: HomeFilter) => void;
-  // Hidden/Important Dates only show up as options once there's something
-  // they'd actually filter to - same gating the old inline "Hidden" toggle
-  // used (hiddenEventIds.size > 0).
+  // Drafts/Declined/Hidden/Important Dates only show up as options once
+  // there's something they'd actually filter to - a menu of mostly-empty
+  // views was part of what made Home feel busy. The active one always
+  // stays listed so it can be seen (and switched away from).
+  hasDrafts: boolean;
+  hasDeclined: boolean;
   hasHidden: boolean;
   hasImportant: boolean;
 };
 
-export default function FilterMenu({ active, onSelect, hasHidden, hasImportant }: Props) {
+export default function FilterMenu({ active, onSelect, hasDrafts, hasDeclined, hasHidden, hasImportant }: Props) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState({ top: 0, left: 0 });
   const buttonRef = useRef<View>(null);
@@ -48,13 +51,16 @@ export default function FilterMenu({ active, onSelect, hasHidden, hasImportant }
     onSelect(filter);
   };
 
-  const options: HomeFilter[] = [
-    'pingsOnly',
-    'drafts',
-    'declined',
-    ...(hasHidden ? (['hidden'] as HomeFilter[]) : []),
-    ...(hasImportant ? (['important'] as HomeFilter[]) : []),
-  ];
+  const available: Record<Exclude<HomeFilter, null>, boolean> = {
+    pingsOnly: true,
+    drafts: hasDrafts,
+    declined: hasDeclined,
+    hidden: hasHidden,
+    important: hasImportant,
+  };
+  const options = (Object.keys(available) as Exclude<HomeFilter, null>[]).filter(
+    (opt) => available[opt] || active === opt,
+  );
 
   return (
     <>

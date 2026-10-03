@@ -182,9 +182,28 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       return () => clearTimeout(timeout);
     }, [emptySlotPrompt]);
 
+    // The day-notes row only shows when it has something to show: a day
+    // that has a note, or the day tapped to widen (which gets the "+" for
+    // adding one). It used to be a "+" on every day, all the time - a
+    // row of clutter for the many people who never write a note (3 of 46
+    // accounts as of 2026-10-03).
+    const hasAnyNote = useMemo(
+      () => Object.values(notesByDay).some((body) => notePreview(body ?? '') !== ''),
+      [notesByDay],
+    );
+    const showNotesRow = hasAnyNote || focusedDayKey !== null || !!expandedNoteDayKey;
+    const notesRowHeight = showNotesRow ? NOTES_BAR_HEIGHT : 0;
+    // Same idea for the all-day strip: no empty band when there's nothing
+    // all-day anywhere in the grid's range.
+    const hasAnyAllDay = useMemo(
+      () => Object.values(allDayByDay).some((items) => (items?.length ?? 0) > 0),
+      [allDayByDay],
+    );
+    const allDayRowHeight = hasAnyAllDay ? ALL_DAY_ROW_HEIGHT : 0;
+
     // The header row and all-day strip above the scroll area are fixed
     // height - only the remainder is this ScrollView's own frame.
-    const scrollAreaBaseHeight = Math.max(0, visibleHeight - DAY_LABEL_ROW_HEIGHT - ALL_DAY_ROW_HEIGHT - NOTES_BAR_HEIGHT);
+    const scrollAreaBaseHeight = Math.max(0, visibleHeight - DAY_LABEL_ROW_HEIGHT - allDayRowHeight - notesRowHeight);
     const animatedScrollAreaStyle = useAnimatedStyle(() => {
       if (maxExtraHeight <= 0) {
         return { height: scrollAreaBaseHeight };
@@ -315,6 +334,15 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       reportVisibleWeek(leadingIndexRef.current);
     };
 
+    // True while one scroll view is pushing its offset onto the other two.
+    // A scrollTo fires the target's own onScroll synchronously, inside the
+    // same call - without this, the target would push straight back, and if
+    // UIKit lands any of them on a slightly different offset (as it can
+    // mid-rotation) the views bounce offsets back and forth recursively
+    // until the JS stack overflows and the app aborts - the same crash
+    // signature as build 102. The nested handler just records the offset.
+    const syncing = useSharedValue(false);
+
     const horizontalScrollHandler = useAnimatedScrollHandler({
       onScroll: (event) => {
         if (guardX.value >= 0) {
@@ -325,8 +353,11 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
           return;
         }
         scrollX.value = event.contentOffset.x;
+        if (syncing.value) return;
+        syncing.value = true;
         scrollTo(dayHeaderRef, event.contentOffset.x, 0, false);
         scrollTo(allDayRef, event.contentOffset.x, 0, false);
+        syncing.value = false;
       },
       onBeginDrag: () => {
         if (guardX.value >= 0) {
@@ -346,9 +377,8 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     // (scrollEnabled={false}, moved by the handler above) - dragging it
     // directly did nothing. This mirrors the same sync the other direction,
     // so swiping the dates themselves now scrolls the grid and all-day
-    // strip too. Calling scrollTo with a position a ScrollView is already
-    // at doesn't re-fire its own onScroll, so this doesn't ping-pong with
-    // the handler above.
+    // strip too. The syncing flag above keeps the two handlers from
+    // ping-ponging offsets back and forth.
     const dayHeaderScrollHandler = useAnimatedScrollHandler({
       onScroll: (event) => {
         if (guardX.value >= 0) {
@@ -359,8 +389,11 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
           return;
         }
         scrollX.value = event.contentOffset.x;
+        if (syncing.value) return;
+        syncing.value = true;
         scrollTo(mainScrollRef, event.contentOffset.x, 0, false);
         scrollTo(allDayRef, event.contentOffset.x, 0, false);
+        syncing.value = false;
       },
       onBeginDrag: () => {
         if (guardX.value >= 0) {
@@ -547,7 +580,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
           </Animated.ScrollView>
         </View>
 
-        <View style={styles.allDayRow}>
+        <View style={[styles.allDayRow, { height: allDayRowHeight + notesRowHeight }]}>
           <View style={{ width: TIMELINE_LEFT_INSET }} />
           <Animated.ScrollView
             ref={allDayRef}
@@ -562,17 +595,23 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
               const first = dayItems[0];
               const note = notePreview(notesByDay[key] ?? '');
               const expanded = key === expandedNoteDayKey;
+              const showNoteBar = !!note || expanded || key === focusedDayKey;
               return (
                 <View key={key} style={[styles.allDayCell, { width: dayWidths[i] }]}>
-                  <TouchableOpacity
-                    style={[styles.noteBar, note ? styles.noteBarFilled : styles.noteBarEmpty, expanded && styles.noteBarExpanded]}
-                    onPress={() => onNotePress(key)}
-                    accessibilityLabel={note ? `Note: ${note}` : 'Add a note for this day'}
-                  >
-                    <Text style={note ? styles.noteBarText : styles.noteBarPlus} numberOfLines={1}>
-                      {note || '+'}
-                    </Text>
-                  </TouchableOpacity>
+                  {showNoteBar ? (
+                    <TouchableOpacity
+                      style={[styles.noteBar, note ? styles.noteBarFilled : styles.noteBarEmpty, expanded && styles.noteBarExpanded]}
+                      onPress={() => onNotePress(key)}
+                      accessibilityLabel={note ? `Note: ${note}` : 'Add a note for this day'}
+                    >
+                      <Text style={note ? styles.noteBarText : styles.noteBarPlus} numberOfLines={1}>
+                        {note || '+ Note'}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : showNotesRow ? (
+                    <View style={styles.noteBarSpacer} />
+                  ) : null}
+                  {hasAnyAllDay && (
                   <View style={styles.allDayChipSlot}>
                     {first && (
                       <TouchableOpacity
@@ -597,6 +636,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                       </TouchableOpacity>
                     )}
                   </View>
+                  )}
                 </View>
               );
             })}
@@ -626,20 +666,16 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
               {dayKeys.map((d, dayIndex) => {
                 const key = toDayKey(d);
                 const dayEvents = eventsByDay[key] || [];
-                const isFocused = focusedDayKey === key;
                 const hasAllDay = (allDayByDay[key] || []).length > 0;
                 return (
                   <Pressable
                     key={key}
                     style={[styles.dayColumn, hasAllDay && styles.dayColumnAllDay, { width: dayWidths[dayIndex] }]}
                     delayLongPress={450}
-                    // A collapsed (unfocused) day is easiest to just widen
-                    // and read, not tap into something on it by accident -
-                    // any tap on the day, background or event alike, first
-                    // opens it wide. Once it's already focused, tapping the
-                    // (now-readable) background just toggles it back
-                    // closed - only an event tap inside a focused day opens
-                    // that event (see the event TouchableOpacity below).
+                    // Tapping a day's empty space widens it to read (and
+                    // tapping again narrows it back). Tapping an event opens
+                    // it straight away - see the event TouchableOpacity
+                    // below.
                     onPress={() => handleDayTap(key, dayIndex)}
                     onLongPress={(e) => handleColumnLongPress(key, dayEvents, e.nativeEvent.locationY)}
                   >
@@ -676,11 +712,13 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                               zIndex: ev.stackIndex,
                             },
                           ]}
-                          // Same "open the day first" rule as the column
-                          // background - only opens the event card once
-                          // this day is already the focused, widened one.
-                          onPress={() => (isFocused ? onEventPress(ev.id) : handleDayTap(key, dayIndex))}
-                          onLongPress={isFocused && onEventLongPress ? () => onEventLongPress(ev.id) : undefined}
+                          // One tap opens the event, widened day or not. It
+                          // used to take two (the first only widened the
+                          // day), which made opening an event feel broken -
+                          // hiding and reporting are on the event screen's
+                          // ••• menu; holding an event here is a shortcut.
+                          onPress={() => onEventPress(ev.id)}
+                          onLongPress={onEventLongPress ? () => onEventLongPress(ev.id) : undefined}
                         >
                           <Text style={[styles.eventBlockText, ev.textColor ? { color: ev.textColor } : null]} numberOfLines={2}>
                             {ev.title}
@@ -752,11 +790,12 @@ const styles = StyleSheet.create({
   dayLabelDow: { color: colors.textSecondary, fontSize: 11, fontWeight: '600' },
   dayLabelNum: { color: colors.textPrimary, fontSize: 13, fontWeight: '700' },
   dayLabelNumToday: { color: colors.primary },
-  allDayRow: { height: ALL_DAY_ROW_HEIGHT + NOTES_BAR_HEIGHT, flexDirection: 'row' },
+  allDayRow: { flexDirection: 'row' },
   allDayCell: { paddingHorizontal: 2 },
   allDayChipSlot: { height: ALL_DAY_ROW_HEIGHT, justifyContent: 'center' },
   noteBar: { height: NOTES_BAR_HEIGHT - 4, marginTop: 4, borderRadius: 5, justifyContent: 'center', paddingHorizontal: 5 },
   noteBarFilled: { backgroundColor: colors.warningPale },
+  noteBarSpacer: { height: NOTES_BAR_HEIGHT },
   noteBarEmpty: { backgroundColor: colors.surface, alignItems: 'center' },
   noteBarExpanded: { borderWidth: 1.5, borderColor: colors.warning },
   notePanelWrap: {

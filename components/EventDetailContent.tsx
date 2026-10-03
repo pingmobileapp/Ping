@@ -13,6 +13,7 @@ import {
   Alert,
   Image,
   Linking,
+  ActionSheetIOS,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '../supabase';
@@ -33,6 +34,7 @@ import { DailyWeather, fetchWeatherForEvents } from '../lib/eventWeather';
 import { formatPrice } from '../lib/pricing';
 import { startEventCheckout } from '../lib/discoverCheckout';
 import { reportContent, blockUser } from '../lib/moderation';
+import { getHiddenEventIds, hiddenPingKey, hideEvent, unhideEvent } from '../lib/hiddenEvents';
 import { toListingActivity, activityKey, fetchInterestedKeys, toggleInterest } from '../lib/discoverActivities';
 import TicketModal from './TicketModal';
 
@@ -146,6 +148,13 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
   const myInvitee = invitees.find((inv) => inv.user_id === session?.user?.id) || null;
   const coHostIds = coHosts.map((c) => c.user_id);
   const isHost = event?.host_id === session?.user?.id || coHostIds.includes(session?.user?.id || '');
+
+  // Whether this person has hidden this Ping from their own calendar - see
+  // the ••• menu below (handleMoreMenu).
+  const [hiddenForMe, setHiddenForMe] = useState(false);
+  useEffect(() => {
+    getHiddenEventIds().then((ids) => setHiddenForMe(ids.has(hiddenPingKey(eventId))));
+  }, [eventId]);
   const isAtCapacity =
     !!event && event.capacity != null && (event.accepted_count ?? 0) >= event.capacity;
   // Accept/Decline as a plain RSVP choice doesn't make sense once money is
@@ -383,6 +392,45 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
       await fetchData();
     }
     setUpdating(false);
+  };
+
+  // Everything that isn't the event's main action lives behind one visible
+  // ••• button, instead of a long-press nobody knows about: hiding it from
+  // your own calendar (previously long-press only, and only in some views),
+  // and, for guests, reporting it.
+  const handleMoreMenu = () => {
+    if (!event) return;
+    const toggleHidden = async () => {
+      const key = hiddenPingKey(event.id);
+      if (hiddenForMe) {
+        await unhideEvent(key);
+        setHiddenForMe(false);
+        return;
+      }
+      await hideEvent(key);
+      setHiddenForMe(true);
+      Alert.alert('Hidden from your calendar', 'Bring it back anytime from the Hidden filter on Home. Your RSVP is unchanged.');
+    };
+    const options: { label: string; destructive?: boolean; run: () => void }[] = [
+      { label: hiddenForMe ? 'Unhide' : 'Hide from my calendar', run: toggleHidden },
+    ];
+    if (!isHost) options.push({ label: 'Report', destructive: true, run: handleReportEvent });
+
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: [...options.map((o) => o.label), 'Cancel'],
+          cancelButtonIndex: options.length,
+          destructiveButtonIndex: options.findIndex((o) => o.destructive),
+        },
+        (index) => options[index]?.run(),
+      );
+      return;
+    }
+    Alert.alert(event.title, undefined, [
+      ...options.map((o) => ({ text: o.label, style: o.destructive ? ('destructive' as const) : undefined, onPress: o.run })),
+      { text: 'Cancel', style: 'cancel' as const },
+    ]);
   };
 
   // Apple's Guideline 1.2 review requires a way to flag/report content and
@@ -834,16 +882,20 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
           <TouchableOpacity onPress={onClose} style={styles.backButton}>
             <Text style={styles.backText}>{variant === 'modal' ? '✕ Close' : '‹ Back'}</Text>
           </TouchableOpacity>
-          {isHost && (
-            <TouchableOpacity onPress={() => setEditModalVisible(true)}>
-              <Text style={styles.editText}>Edit</Text>
+          <View style={styles.topActions}>
+            {isHost && (
+              <TouchableOpacity onPress={() => setEditModalVisible(true)}>
+                <Text style={styles.editText}>Edit</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              onPress={handleMoreMenu}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityLabel={isHost ? 'More options' : 'More options, including Report'}
+            >
+              <Text style={styles.moreText}>•••</Text>
             </TouchableOpacity>
-          )}
-          {!isHost && (
-            <TouchableOpacity onPress={handleReportEvent}>
-              <Text style={styles.editText}>Report</Text>
-            </TouchableOpacity>
-          )}
+          </View>
         </View>
 
         {event.status === 'draft' && (
@@ -1293,6 +1345,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
         eventTitle={event.title}
         eventDate={new Date(event.event_date)}
         location={event.location}
+        isAllDay={!!event.is_all_day}
         onDone={() => setSmsQueueVisible(false)}
       />
 
@@ -1302,6 +1355,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
         eventTitle={event.title}
         eventDate={event.event_date}
         location={event.location}
+        isAllDay={!!event.is_all_day}
         onClose={() => setShareModalVisible(false)}
         onInvited={async () => {
           setShareModalVisible(false);
@@ -1395,6 +1449,8 @@ const styles = StyleSheet.create({
   backText: { color: colors.primary, fontSize: 16, fontWeight: '600' },
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   editText: { color: colors.primary, fontSize: 16, fontWeight: '600' },
+  topActions: { flexDirection: 'row', alignItems: 'center', gap: 22 },
+  moreText: { color: colors.primary, fontSize: 20, fontWeight: '800', letterSpacing: 1 },
   draftBanner: { backgroundColor: colors.surfaceAlt, borderRadius: 10, padding: 12, marginBottom: 14 },
   draftBannerText: { color: colors.textSecondary, fontSize: 13 },
   imageFrame: { borderRadius: 18, padding: 3, marginBottom: 14 },

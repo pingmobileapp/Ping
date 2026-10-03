@@ -33,7 +33,7 @@ serve(async (req) => {
 
     const { data: invitee, error } = await supabase
       .from('invitees')
-      .select('rsvp_status, events(title, location, event_date, host_id, image_url)')
+      .select('rsvp_status, events(title, location, event_date, is_all_day, host_id, image_url)')
       .eq('id', inviteeId)
       .maybeSingle();
 
@@ -60,6 +60,7 @@ serve(async (req) => {
         eventTitle: event.title,
         location: event.location,
         eventDate: event.event_date,
+        isAllDay: !!event.is_all_day,
         hostName,
         rsvpStatus: invitee.rsvp_status,
         imageUrl: event.image_url || null,

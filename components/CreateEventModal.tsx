@@ -32,6 +32,7 @@ import { RecurrenceConfig, generateOccurrences } from '../lib/recurrence';
 import { suggestItems } from '../lib/itemSuggestions';
 import { ActivityCategory, CATEGORY_LABELS } from '../lib/discoverActivities';
 import { fetchConnectStatus, ConnectAccountState } from '../lib/stripeConnect';
+import { DISCOVER_LISTINGS_ENABLED } from '../lib/features';
 import { dollarsToCents } from '../lib/pricing';
 import { containsObjectionableContent } from '../lib/contentFilter';
 import { reportContent } from '../lib/moderation';
@@ -86,6 +87,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
   const [isMultiDay, setIsMultiDay] = useState(false);
   const [isAllDay, setIsAllDay] = useState(false);
   const [recurrence, setRecurrence] = useState<RecurrenceConfig | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
   const [pickerTarget, setPickerTarget] = useState<'start' | 'end'>('start');
@@ -145,6 +147,17 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
   const [newItemAllowCustom, setNewItemAllowCustom] = useState(false);
   const [suggestedItems, setSuggestedItems] = useState<string[]>([]);
   const [suggestingItems, setSuggestingItems] = useState(false);
+  // Anything filled in behind "More options" keeps that section open, so a
+  // value is never tucked away out of sight.
+  const hasExtras =
+    description.trim() !== '' ||
+    isMultiDay ||
+    !!recurrence ||
+    isPublic ||
+    discoverable ||
+    selectedCoHostIds.length > 0 ||
+    items.length > 0;
+  const showMore = moreOpen || hasExtras;
 
   const dragY = useRef(new Animated.Value(0)).current;
   const [keyboardVisible, setKeyboardVisible] = useState(false);
@@ -198,7 +211,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
   useEffect(() => {
     if (visible && session?.user?.id) {
       loadContactsAndGroups();
-      fetchConnectStatus().then(setConnectStatus);
+      if (DISCOVER_LISTINGS_ENABLED) fetchConnectStatus().then(setConnectStatus);
     }
   }, [visible, session?.user?.id]);
 
@@ -440,6 +453,8 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
       setIsAllDay(false);
     }
     setRecurrence(null);
+    setMoreOpen(false);
+    setAddingContact(false);
     setSuggestedItems([]);
     setSelectedContactIds([]);
     setSelectedCoHostIds([]);
@@ -872,16 +887,6 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
               onChangeText={setTitle}
             />
 
-            <Text style={styles.label}>Description</Text>
-            <TextInput
-              style={[styles.input, styles.descriptionInput]}
-              placeholder="Any extra details guests should know"
-              placeholderTextColor={colors.textMuted}
-              value={description}
-              onChangeText={setDescription}
-              multiline
-            />
-
             <Text style={styles.label}>Date & Time</Text>
             <View style={styles.row}>
               <TouchableOpacity
@@ -959,16 +964,6 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity style={styles.publicRow} onPress={toggleMultiDay}>
-              <View style={[styles.checkbox, isMultiDay && styles.checkboxChecked]}>
-                {isMultiDay && <Text style={styles.checkmark}>✓</Text>}
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.publicRowTitle}>Multi-day event</Text>
-                <Text style={styles.publicRowSubtitle}>Spans more than one day, like a trip</Text>
-              </View>
-            </TouchableOpacity>
-
             <TouchableOpacity style={styles.publicRow} onPress={() => setIsAllDay((v) => !v)}>
               <View style={[styles.checkbox, isAllDay && styles.checkboxChecked]}>
                 {isAllDay && <Text style={styles.checkmark}>✓</Text>}
@@ -979,7 +974,6 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
               </View>
             </TouchableOpacity>
 
-            <RecurrencePicker value={recurrence} onChange={setRecurrence} />
 
             <Text style={styles.label}>Location</Text>
             <TextInput
@@ -989,73 +983,6 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
               value={location}
               onChangeText={setLocation}
             />
-
-            <TouchableOpacity style={styles.publicRow} onPress={() => setIsPublic(!isPublic)}>
-              <View style={[styles.checkbox, isPublic && styles.checkboxChecked]}>
-                {isPublic && <Text style={styles.checkmark}>✓</Text>}
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.publicRowTitle}>Make this event shareable</Text>
-                <Text style={styles.publicRowSubtitle}>Those you invite can invite others</Text>
-              </View>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.publicRow} onPress={() => setDiscoverable((v) => !v)}>
-              <View style={[styles.checkbox, discoverable && styles.checkboxChecked]}>
-                {discoverable && <Text style={styles.checkmark}>✓</Text>}
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.publicRowTitle}>List on Discover</Text>
-                <Text style={styles.publicRowSubtitle}>
-                  Any nearby Ping user can find this and say they're going — also makes it shareable
-                </Text>
-              </View>
-            </TouchableOpacity>
-
-            {discoverable && (
-              <>
-                <Text style={styles.sublabel}>Category</Text>
-                <View style={styles.chipRow}>
-                  {(Object.keys(CATEGORY_LABELS) as ActivityCategory[]).map((cat) => (
-                    <TouchableOpacity
-                      key={cat}
-                      style={[styles.chip, discoverCategory === cat && styles.chipSelected]}
-                      onPress={() => setDiscoverCategory(cat)}
-                    >
-                      <Text style={[styles.chipText, discoverCategory === cat && styles.chipTextSelected]}>
-                        {CATEGORY_LABELS[cat]}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <Text style={styles.sublabel}>Limit how many can join (optional)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="No limit"
-                  placeholderTextColor={colors.textMuted}
-                  value={capacity}
-                  onChangeText={(text) => setCapacity(text.replace(/[^0-9]/g, ''))}
-                  keyboardType="number-pad"
-                />
-
-                <Text style={styles.sublabel}>Price (optional)</Text>
-                {connectStatus?.status === 'ready' ? (
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Free"
-                    placeholderTextColor={colors.textMuted}
-                    value={price}
-                    onChangeText={(text) => setPrice(text.replace(/[^0-9.]/g, ''))}
-                    keyboardType="decimal-pad"
-                  />
-                ) : (
-                  <Text style={styles.publicRowSubtitle}>
-                    Connect a Stripe account in Settings → Payouts to charge for this event.
-                  </Text>
-                )}
-              </>
-            )}
 
             <Text style={styles.label}>Invite</Text>
 
@@ -1133,13 +1060,21 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
                   </Text>
                 </TouchableOpacity>
               ))}
-              <TouchableOpacity style={styles.addChip} onPress={() => setAddingContact(true)}>
-                <Text style={styles.addChipText}>+ New</Text>
-              </TouchableOpacity>
             </View>
             {!showAllContacts && favoriteContactIds.length > 0 && contacts.length > favoriteContactIds.length && (
               <TouchableOpacity onPress={() => setShowAllContacts(true)}>
                 <Text style={styles.seeAllText}>See all ({contacts.length})</Text>
+              </TouchableOpacity>
+            )}
+            {/* Typing in someone new used to be a dashed "+ New" chip at the end
+                of the People row - it looked like the way to invite people, and got
+                tapped by mistake (reported 2026-10-03). Now a plain link below the
+                list. It stays, though: it's the only way to invite someone who isn't
+                in your phone's contacts, including for anyone who declined contacts
+                access. */}
+            {!addingContact && (
+              <TouchableOpacity onPress={() => setAddingContact(true)} hitSlop={{ top: 8, bottom: 8 }}>
+                <Text style={styles.addSomeoneText}>Invite someone not in your contacts</Text>
               </TouchableOpacity>
             )}
 
@@ -1168,97 +1103,209 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
             )}
 
             {contacts.length === 0 && groups.length === 0 && !addingContact && (
-              <Text style={styles.helperText}>No contacts yet — tap "+ New" or import from your phone.</Text>
+              <Text style={styles.helperText}>No contacts yet. Import them from your phone above.</Text>
             )}
 
-            {contacts.some((c) => c.linked_user_id) && (
-              <>
-                <Text style={styles.label}>Co-hosts</Text>
-                <Text style={styles.helperText}>
-                  Full permissions to edit, delete, invite, and manage items - same as you.
-                </Text>
-                <View style={styles.chipRow}>
-                  {contacts
-                    .filter((c) => c.linked_user_id)
-                    .map((c) => (
-                      <TouchableOpacity
-                        key={c.id}
-                        style={[styles.chip, selectedCoHostIds.includes(c.id) && styles.chipSelected]}
-                        onPress={() => toggleCoHost(c.id)}
-                      >
-                        <Text style={[styles.chipText, selectedCoHostIds.includes(c.id) && styles.chipTextSelected]}>
-                          {c.name}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                </View>
-              </>
-            )}
 
-            <View style={styles.whatToBringHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>What to bring</Text>
-                <Text style={styles.helperText}>Guests can claim these once they get the invite.</Text>
-              </View>
-              <TouchableOpacity style={styles.suggestButton} onPress={handleSuggestItems} disabled={suggestingItems}>
-                <Text style={styles.suggestButtonText}>{suggestingItems ? 'Thinking…' : '✨ Suggest'}</Text>
+            {/* Only the essentials - what, when, where, who - show up front.
+                Everything else is one tap away, and opens on its own when
+                any of it is already filled in (a converted calendar item, a
+                prefill). Asked for 2026-10-03: the full form was long enough
+                that a simple invite felt like work. */}
+            {!hasExtras && (
+              <TouchableOpacity style={styles.moreOptionsButton} onPress={() => setMoreOpen((v) => !v)}>
+                <Text style={styles.moreOptionsTitle}>{moreOpen ? 'Fewer options ▴' : 'More options ▾'}</Text>
+                {!moreOpen && (
+                  <Text style={styles.moreOptionsHint}>Description, what to bring, repeat, co-hosts, multi-day</Text>
+                )}
               </TouchableOpacity>
-            </View>
-
-            {suggestedItems.length > 0 && (
-              <View style={styles.chipRow}>
-                {suggestedItems.map((name) => (
-                  <TouchableOpacity key={name} style={styles.chip} onPress={() => addSuggestedItem(name)}>
-                    <Text style={styles.chipText}>+ {name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
             )}
 
-            {items.map((it, idx) => (
-              <View key={idx} style={styles.itemRow}>
-                <Text style={styles.itemRowText}>
-                  {it.name}
-                  {it.allowCustom ? ' — guests describe' : parseInt(it.qty, 10) > 1 ? ` (x${it.qty})` : ''}
-                </Text>
-                <TouchableOpacity onPress={() => removeItem(idx)}>
-                  <Text style={styles.itemRemoveText}>Remove</Text>
+            {showMore && (
+              <>
+              <Text style={styles.label}>Description</Text>
+              <TextInput
+                style={[styles.input, styles.descriptionInput]}
+                placeholder="Any extra details guests should know"
+                placeholderTextColor={colors.textMuted}
+                value={description}
+                onChangeText={setDescription}
+                multiline
+              />
+
+              <TouchableOpacity style={styles.publicRow} onPress={toggleMultiDay}>
+                <View style={[styles.checkbox, isMultiDay && styles.checkboxChecked]}>
+                  {isMultiDay && <Text style={styles.checkmark}>✓</Text>}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.publicRowTitle}>Multi-day event</Text>
+                  <Text style={styles.publicRowSubtitle}>Spans more than one day, like a trip</Text>
+                </View>
+              </TouchableOpacity>
+
+              <RecurrencePicker value={recurrence} onChange={setRecurrence} />
+
+              <TouchableOpacity style={styles.publicRow} onPress={() => setIsPublic(!isPublic)}>
+                <View style={[styles.checkbox, isPublic && styles.checkboxChecked]}>
+                  {isPublic && <Text style={styles.checkmark}>✓</Text>}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.publicRowTitle}>Make this event shareable</Text>
+                  <Text style={styles.publicRowSubtitle}>Those you invite can invite others</Text>
+                </View>
+              </TouchableOpacity>
+
+              {DISCOVER_LISTINGS_ENABLED && (
+                <>
+                  <TouchableOpacity style={styles.publicRow} onPress={() => setDiscoverable((v) => !v)}>
+                    <View style={[styles.checkbox, discoverable && styles.checkboxChecked]}>
+                      {discoverable && <Text style={styles.checkmark}>✓</Text>}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.publicRowTitle}>List on Discover</Text>
+                      <Text style={styles.publicRowSubtitle}>
+                        Any nearby Ping user can find this and say they're going — also makes it shareable
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  {discoverable && (
+                    <>
+                      <Text style={styles.sublabel}>Category</Text>
+                      <View style={styles.chipRow}>
+                        {(Object.keys(CATEGORY_LABELS) as ActivityCategory[]).map((cat) => (
+                          <TouchableOpacity
+                            key={cat}
+                            style={[styles.chip, discoverCategory === cat && styles.chipSelected]}
+                            onPress={() => setDiscoverCategory(cat)}
+                          >
+                            <Text style={[styles.chipText, discoverCategory === cat && styles.chipTextSelected]}>
+                              {CATEGORY_LABELS[cat]}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+
+                      <Text style={styles.sublabel}>Limit how many can join (optional)</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="No limit"
+                        placeholderTextColor={colors.textMuted}
+                        value={capacity}
+                        onChangeText={(text) => setCapacity(text.replace(/[^0-9]/g, ''))}
+                        keyboardType="number-pad"
+                      />
+
+                      <Text style={styles.sublabel}>Price (optional)</Text>
+                      {connectStatus?.status === 'ready' ? (
+                        <TextInput
+                          style={styles.input}
+                          placeholder="Free"
+                          placeholderTextColor={colors.textMuted}
+                          value={price}
+                          onChangeText={(text) => setPrice(text.replace(/[^0-9.]/g, ''))}
+                          keyboardType="decimal-pad"
+                        />
+                      ) : (
+                        <Text style={styles.publicRowSubtitle}>
+                          Connect a Stripe account in Settings → Payouts to charge for this event.
+                        </Text>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+
+              {contacts.some((c) => c.linked_user_id) && (
+                <>
+                  <Text style={styles.label}>Co-hosts</Text>
+                  <Text style={styles.helperText}>
+                    Full permissions to edit, delete, invite, and manage items - same as you.
+                  </Text>
+                  <View style={styles.chipRow}>
+                    {contacts
+                      .filter((c) => c.linked_user_id)
+                      .map((c) => (
+                        <TouchableOpacity
+                          key={c.id}
+                          style={[styles.chip, selectedCoHostIds.includes(c.id) && styles.chipSelected]}
+                          onPress={() => toggleCoHost(c.id)}
+                        >
+                          <Text style={[styles.chipText, selectedCoHostIds.includes(c.id) && styles.chipTextSelected]}>
+                            {c.name}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                  </View>
+                </>
+              )}
+
+              <View style={styles.whatToBringHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.label}>What to bring</Text>
+                  <Text style={styles.helperText}>Guests can claim these once they get the invite.</Text>
+                </View>
+                <TouchableOpacity style={styles.suggestButton} onPress={handleSuggestItems} disabled={suggestingItems}>
+                  <Text style={styles.suggestButtonText}>{suggestingItems ? 'Thinking…' : '✨ Suggest'}</Text>
                 </TouchableOpacity>
               </View>
-            ))}
 
-            <TouchableOpacity
-              style={styles.customToggleRow}
-              onPress={() => setNewItemAllowCustom((v) => !v)}
-            >
-              <View style={[styles.checkbox, newItemAllowCustom && styles.checkboxChecked]}>
-                {newItemAllowCustom && <Text style={styles.checkmark}>✓</Text>}
-              </View>
-              <Text style={styles.customToggleText}>
-                {'Let each person write in what they’re bringing (e.g. "Side dish")'}
-              </Text>
-            </TouchableOpacity>
+              {suggestedItems.length > 0 && (
+                <View style={styles.chipRow}>
+                  {suggestedItems.map((name) => (
+                    <TouchableOpacity key={name} style={styles.chip} onPress={() => addSuggestedItem(name)}>
+                      <Text style={styles.chipText}>+ {name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
 
-            <View style={styles.addContactRow}>
-              <TextInput
-                style={[styles.input, { flex: 2 }]}
-                placeholder="Item (e.g. Chips)"
-                placeholderTextColor={colors.textMuted}
-                value={newItemName}
-                onChangeText={setNewItemName}
-              />
-              <TextInput
-                style={[styles.input, { flex: 1, textAlign: 'center' }]}
-                placeholder="Qty"
-                placeholderTextColor={colors.textMuted}
-                keyboardType="number-pad"
-                value={newItemQty}
-                onChangeText={setNewItemQty}
-              />
-              <TouchableOpacity style={styles.addContactButton} onPress={handleAddItem}>
-                <Text style={styles.addContactButtonText}>Add</Text>
+              {items.map((it, idx) => (
+                <View key={idx} style={styles.itemRow}>
+                  <Text style={styles.itemRowText}>
+                    {it.name}
+                    {it.allowCustom ? ' — guests describe' : parseInt(it.qty, 10) > 1 ? ` (x${it.qty})` : ''}
+                  </Text>
+                  <TouchableOpacity onPress={() => removeItem(idx)}>
+                    <Text style={styles.itemRemoveText}>Remove</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+
+              <TouchableOpacity
+                style={styles.customToggleRow}
+                onPress={() => setNewItemAllowCustom((v) => !v)}
+              >
+                <View style={[styles.checkbox, newItemAllowCustom && styles.checkboxChecked]}>
+                  {newItemAllowCustom && <Text style={styles.checkmark}>✓</Text>}
+                </View>
+                <Text style={styles.customToggleText}>
+                  {'Let each person write in what they’re bringing (e.g. "Side dish")'}
+                </Text>
               </TouchableOpacity>
-            </View>
+
+              <View style={styles.addContactRow}>
+                <TextInput
+                  style={[styles.input, { flex: 2 }]}
+                  placeholder="Item (e.g. Chips)"
+                  placeholderTextColor={colors.textMuted}
+                  value={newItemName}
+                  onChangeText={setNewItemName}
+                />
+                <TextInput
+                  style={[styles.input, { flex: 1, textAlign: 'center' }]}
+                  placeholder="Qty"
+                  placeholderTextColor={colors.textMuted}
+                  keyboardType="number-pad"
+                  value={newItemQty}
+                  onChangeText={setNewItemQty}
+                />
+                <TouchableOpacity style={styles.addContactButton} onPress={handleAddItem}>
+                  <Text style={styles.addContactButtonText}>Add</Text>
+                </TouchableOpacity>
+              </View>
+              </>
+            )}
           </ScrollView>
 
           {!showPicker && !keyboardVisible && (
@@ -1310,6 +1357,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
         eventTitle={title || 'An event'}
         eventDate={eventDate}
         location={location}
+        isAllDay={isAllDay}
         onDone={() => setQueueVisible(false)}
         onClosed={() => {
           resetForm();
@@ -1359,6 +1407,17 @@ const styles = StyleSheet.create({
   editPhotoBadgeIcon: { fontSize: 15 },
   label: { fontWeight: '600', marginTop: 14, marginBottom: 6, color: colors.textPrimary },
   whatToBringHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  moreOptionsButton: {
+    marginTop: 24,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  moreOptionsTitle: { color: colors.primary, fontSize: 16, fontWeight: '700' },
+  moreOptionsHint: { color: colors.textSecondary, fontSize: 13, marginTop: 3 },
   suggestButton: {
     marginTop: 14,
     backgroundColor: colors.surfaceAlt,
@@ -1368,6 +1427,7 @@ const styles = StyleSheet.create({
   },
   suggestButtonText: { color: colors.primary, fontSize: 13, fontWeight: '700' },
   sublabel: { color: colors.textSecondary, fontSize: 13, marginTop: 8, marginBottom: 6 },
+  addSomeoneText: { color: colors.textSecondary, fontSize: 14, fontWeight: '500', marginTop: 12, textDecorationLine: 'underline' },
   seeAllText: { color: colors.primary, fontSize: 13, fontWeight: '600', marginTop: 8 },
   helperText: { color: colors.textMuted, fontSize: 13, marginTop: 8, fontStyle: 'italic' },
   importRow: { backgroundColor: colors.surfaceAlt, borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginBottom: 10 },

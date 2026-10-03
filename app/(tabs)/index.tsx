@@ -58,7 +58,7 @@ import {
   getUpcomingExternalEvents,
   requestCalendarAccess,
 } from "../../lib/calendarConflicts";
-import { getHiddenEventIds, hideEvent, hiddenKeyFor, hiddenPingKey, isHidden, unhideEvent } from "../../lib/hiddenEvents";
+import { getHiddenEventIds, hideEvent, hiddenKeyFor, hiddenPingKey, isHidden, onHiddenEventsChange, unhideEvent } from "../../lib/hiddenEvents";
 import { getAllImportantItemIds } from "../../lib/eventReminders";
 import { fetchDayNotes, saveDayNote } from "../../lib/dayNotes";
 import { DailyWeather, fetchWeatherForEvents } from "../../lib/eventWeather";
@@ -515,6 +515,8 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     getHiddenEventIds().then(setHiddenEventIds);
     refreshImportantItemIds();
   }, []);
+  // Picks up a hide/unhide made from the event screen's ••• menu.
+  useEffect(() => onHiddenEventsChange(setHiddenEventIds), []);
 
   const refreshImportantItemIds = () => {
     getAllImportantItemIds().then(setImportantItemIds);
@@ -1366,6 +1368,8 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
             // no reason, undoing a drag the user had just done.
             if (dragY.value > 0) collapseCalendar();
           }}
+          hasDrafts={events.some((e) => e.status === "draft")}
+          hasDeclined={events.some((e) => myRsvpByEvent[e.id] === "declined")}
           hasHidden={hiddenEventIds.size > 0}
           hasImportant={importantItemIds.size > 0}
         />

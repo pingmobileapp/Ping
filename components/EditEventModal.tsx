@@ -32,6 +32,7 @@ import { notify } from '../lib/notify';
 import { RecurrenceConfig, generateOccurrences } from '../lib/recurrence';
 import { ActivityCategory, CATEGORY_LABELS } from '../lib/discoverActivities';
 import { fetchConnectStatus, ConnectAccountState } from '../lib/stripeConnect';
+import { DISCOVER_LISTINGS_ENABLED } from '../lib/features';
 import { dollarsToCents, centsToDollarsInput } from '../lib/pricing';
 import { containsObjectionableContent } from '../lib/contentFilter';
 import { reportContent } from '../lib/moderation';
@@ -251,7 +252,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
 
       if (session?.user?.id) {
         loadContactsAndGroups();
-        fetchConnectStatus().then(setConnectStatus);
+        if (DISCOVER_LISTINGS_ENABLED || event?.discoverable) fetchConnectStatus().then(setConnectStatus);
       }
 
       // Group tagging only happens at creation (see CreateEventModal) -
@@ -1411,59 +1412,65 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
               </View>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.publicRow} onPress={() => setDiscoverable((v) => !v)}>
-              <View style={[styles.checkbox, discoverable && styles.checkboxChecked]}>
-                {discoverable && <Text style={styles.checkmark}>✓</Text>}
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.publicRowTitle}>List on Discover</Text>
-                <Text style={styles.publicRowSubtitle}>
-                  Any nearby Ping user can find this and say they're going — also makes it shareable
-                </Text>
-              </View>
-            </TouchableOpacity>
-
-            {discoverable && (
+            {/* Still shown for an event that's already listed, so its host can
+                unlist it - see lib/features.ts. */}
+            {(DISCOVER_LISTINGS_ENABLED || event?.discoverable) && (
               <>
-                <Text style={styles.sublabel}>Category</Text>
-                <View style={styles.chipRow}>
-                  {(Object.keys(CATEGORY_LABELS) as ActivityCategory[]).map((cat) => (
-                    <TouchableOpacity
-                      key={cat}
-                      style={[styles.chip, discoverCategory === cat && styles.chipSelected]}
-                      onPress={() => setDiscoverCategory(cat)}
-                    >
-                      <Text style={[styles.chipText, discoverCategory === cat && styles.chipTextSelected]}>
-                        {CATEGORY_LABELS[cat]}
+                <TouchableOpacity style={styles.publicRow} onPress={() => setDiscoverable((v) => !v)}>
+                  <View style={[styles.checkbox, discoverable && styles.checkboxChecked]}>
+                    {discoverable && <Text style={styles.checkmark}>✓</Text>}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.publicRowTitle}>List on Discover</Text>
+                    <Text style={styles.publicRowSubtitle}>
+                      Any nearby Ping user can find this and say they're going — also makes it shareable
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                {discoverable && (
+                  <>
+                    <Text style={styles.sublabel}>Category</Text>
+                    <View style={styles.chipRow}>
+                      {(Object.keys(CATEGORY_LABELS) as ActivityCategory[]).map((cat) => (
+                        <TouchableOpacity
+                          key={cat}
+                          style={[styles.chip, discoverCategory === cat && styles.chipSelected]}
+                          onPress={() => setDiscoverCategory(cat)}
+                        >
+                          <Text style={[styles.chipText, discoverCategory === cat && styles.chipTextSelected]}>
+                            {CATEGORY_LABELS[cat]}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+
+                    <Text style={styles.sublabel}>Limit how many can join (optional)</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="No limit"
+                      placeholderTextColor={colors.textMuted}
+                      value={capacity}
+                      onChangeText={(text) => setCapacity(text.replace(/[^0-9]/g, ''))}
+                      keyboardType="number-pad"
+                    />
+
+                    <Text style={styles.sublabel}>Price (optional)</Text>
+                    {connectStatus?.status === 'ready' ? (
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Free"
+                        placeholderTextColor={colors.textMuted}
+                        value={price}
+                        onChangeText={(text) => setPrice(text.replace(/[^0-9.]/g, ''))}
+                        keyboardType="decimal-pad"
+                      />
+                    ) : (
+                      <Text style={styles.publicRowSubtitle}>
+                        Connect a Stripe account in Settings → Payouts to charge for this event.
                       </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <Text style={styles.sublabel}>Limit how many can join (optional)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="No limit"
-                  placeholderTextColor={colors.textMuted}
-                  value={capacity}
-                  onChangeText={(text) => setCapacity(text.replace(/[^0-9]/g, ''))}
-                  keyboardType="number-pad"
-                />
-
-                <Text style={styles.sublabel}>Price (optional)</Text>
-                {connectStatus?.status === 'ready' ? (
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Free"
-                    placeholderTextColor={colors.textMuted}
-                    value={price}
-                    onChangeText={(text) => setPrice(text.replace(/[^0-9.]/g, ''))}
-                    keyboardType="decimal-pad"
-                  />
-                ) : (
-                  <Text style={styles.publicRowSubtitle}>
-                    Connect a Stripe account in Settings → Payouts to charge for this event.
-                  </Text>
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -1545,13 +1552,21 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
                       </Text>
                     </TouchableOpacity>
                   ))}
-                  <TouchableOpacity style={styles.addChip} onPress={() => setAddingContact(true)}>
-                    <Text style={styles.addChipText}>+ New</Text>
-                  </TouchableOpacity>
                 </View>
                 {!showAllContacts && favoriteContactIds.length > 0 && contacts.length > favoriteContactIds.length && (
                   <TouchableOpacity onPress={() => setShowAllContacts(true)}>
                     <Text style={styles.seeAllText}>See all ({contacts.length})</Text>
+                  </TouchableOpacity>
+                )}
+                {/* Typing in someone new used to be a dashed "+ New" chip at the end
+                    of the People row - it looked like the way to invite people, and got
+                    tapped by mistake (reported 2026-10-03). Now a plain link below the
+                    list. It stays, though: it's the only way to invite someone who isn't
+                    in your phone's contacts, including for anyone who declined contacts
+                    access. */}
+                {!addingContact && (
+                  <TouchableOpacity onPress={() => setAddingContact(true)} hitSlop={{ top: 8, bottom: 8 }}>
+                    <Text style={styles.addSomeoneText}>Invite someone not in your contacts</Text>
                   </TouchableOpacity>
                 )}
 
@@ -1736,6 +1751,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
         eventTitle={title || event.title}
         eventDate={eventDate}
         location={location}
+        isAllDay={isAllDay}
         onDone={() => setQueueVisible(false)}
         onClosed={onSaved}
       />
@@ -1777,6 +1793,7 @@ const styles = StyleSheet.create({
   editPhotoBadgeIcon: { fontSize: 15 },
   label: { fontWeight: '600', marginTop: 14, marginBottom: 6, color: colors.textPrimary },
   sublabel: { color: colors.textSecondary, fontSize: 13, marginTop: 8, marginBottom: 6 },
+  addSomeoneText: { color: colors.textSecondary, fontSize: 14, fontWeight: '500', marginTop: 12, textDecorationLine: 'underline' },
   seeAllText: { color: colors.primary, fontSize: 13, fontWeight: '600', marginTop: 8 },
   helperText: { color: colors.textMuted, fontSize: 13, marginTop: 8, fontStyle: 'italic' },
   itemRow: {
