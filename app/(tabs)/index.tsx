@@ -41,7 +41,7 @@ import { CELL_HEIGHT } from "../../components/MonthDayCell";
 import MonthGrid, { MonthGridHandle, MONTH_LABEL_HEIGHT, WEEKDAY_HEADER_HEIGHT } from "../../components/MonthGrid";
 import PingLogoMenu from "../../components/PingLogoMenu";
 import ProfileMenu from "../../components/ProfileMenu";
-import FilterMenu, { HomeFilter } from "../../components/FilterMenu";
+import FilterMenu, { HomeView, ListFilter, VIEW_LABELS } from "../../components/FilterMenu";
 import ScheduleReviewModal from "../../components/ScheduleReviewModal";
 import WeekGrid, { WeekGridHandle } from "../../components/WeekGrid";
 import { useAuth } from "../../lib/AuthContext";
@@ -224,11 +224,13 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
         : visibleMonth;
     goToWeekFor(anchor);
   };
-  // Consolidates what used to be four independent (and only partially
-  // mutually-exclusive) booleans into one single-select filter - see
-  // components/FilterMenu.tsx for why that's the right model here.
-  // Pings Only by default - All (with phone-calendar items) is one tap away in Filter.
-  const [activeFilter, setActiveFilter] = useState<HomeFilter>('pingsOnly');
+  // Pings Only by default - All (with phone-calendar items) is one tap away
+  // in Filter. Drafts/Declined/Hidden/Important Dates are views opened from
+  // ProfileMenu that temporarily replace the list; leaving one returns to
+  // whichever list filter was on before (see components/FilterMenu.tsx).
+  const [listFilter, setListFilter] = useState<ListFilter>('pingsOnly');
+  const [activeView, setActiveView] = useState<HomeView | null>(null);
+  const activeFilter = activeView ?? listFilter;
   const showDraftsOnly = activeFilter === 'drafts';
   const showDeclinedOnly = activeFilter === 'declined';
   const showHiddenOnly = activeFilter === 'hidden';
@@ -237,6 +239,9 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   const [hiddenEventIds, setHiddenEventIds] = useState<Set<string>>(new Set());
   const [importantItemIds, setImportantItemIds] = useState<Set<string>>(new Set());
   const [myRsvpByEvent, setMyRsvpByEvent] = useState<Record<string, string>>({});
+  // What you've signed up to bring, per event, already formatted for the
+  // card ("Chips, Salsa ×2") - so you can see it without opening the event.
+  const [myBringingByEvent, setMyBringingByEvent] = useState<Record<string, string>>({});
   const [externalEvents, setExternalEvents] = useState<ExternalEvent[]>([]);
   const [calendarPermission, setCalendarPermission] = useState<CalendarPermissionStatus | null>(null);
   // Separate from calendarPermission on purpose - iOS grants calendar
@@ -339,8 +344,51 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     clearGroupChat();
   }, [pendingGroupChat, clearGroupChat]);
 
+  const fetchMyBringing = useCallback(async (myInviteeIds: string[]) => {
+    if (myInviteeIds.length === 0) {
+      setMyBringingByEvent({});
+      return;
+    }
+    const { data, error } = await supabase
+      .from("item_claims")
+      .select("quantity, note, items(name, event_id, allow_custom)")
+      .in("invitee_id", myInviteeIds);
+    if (error) {
+      console.error("Error fetching your claimed items:", error);
+      return;
+    }
+    const labelsByEvent: Record<string, string[]> = {};
+    (data || []).forEach((claim: any) => {
+      const item = Array.isArray(claim.items) ? claim.items[0] : claim.items;
+      if (!item?.event_id) return;
+      // Open-ended items ("Bring a side") store what you typed in note.
+      const label = item.allow_custom
+        ? claim.note || item.name
+        : claim.quantity > 1
+          ? `${item.name} ×${claim.quantity}`
+          : item.name;
+      (labelsByEvent[item.event_id] ||= []).push(label);
+    });
+    const next: Record<string, string> = {};
+    Object.entries(labelsByEvent).forEach(([eventId, labels]) => {
+      next[eventId] = labels.join(", ");
+    });
+    setMyBringingByEvent(next);
+  }, []);
+
   const fetchEvents = useCallback(async () => {
     if (!session?.user?.id) return;
+
+    // Never let an unauthenticated read wipe the calendar. If the token
+    // expired while backgrounded and the refresh on resume hasn't landed
+    // yet, getSession() comes back null. Any query sent in that state goes
+    // out as anon, RLS silently returns [] (200, not an error), and the code
+    // below would have replaced every event with nothing. Keep what's on
+    // screen instead. This callback is keyed on access_token, so once
+    // TOKEN_REFRESHED arrives it gets a new identity and the focus effect
+    // below re-runs it with a valid token.
+    const { data: { session: liveSession } } = await supabase.auth.getSession();
+    if (!liveSession?.access_token) return;
 
     // Visibility rule: you only see an event if you have an invitee row
     // for it. Hosting an event auto-creates that row (see
@@ -349,7 +397,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     // events can be filtered out of the default views below.
     const { data: myInvites, error: inviteError } = await supabase
       .from("invitees")
-      .select("event_id, rsvp_status")
+      .select("id, event_id, rsvp_status")
       .eq("user_id", session.user.id);
 
     if (inviteError) {
@@ -370,9 +418,14 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
 
     if (invitedEventIds.length === 0) {
       setEvents([]);
+      setMyBringingByEvent({});
       setEventsLoadError(false);
       return;
     }
+
+    // Not awaited - a failure here only loses the "You're bringing" line,
+    // never the events themselves.
+    fetchMyBringing((myInvites || []).map((i) => i.id));
 
     // Every invited event is fetched regardless of date - visibleEvents
     // below is what actually hides past events from the default Upcoming
@@ -392,7 +445,11 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     }
     setEvents(data as PingEvent[]);
     setEventsLoadError(false);
-  }, [session?.user?.id]);
+    // access_token on purpose: a token refresh changes it, which re-creates
+    // this callback and re-triggers the useFocusEffect below, so a fetch
+    // that was skipped above (or ran during a bad-token window) heals on its
+    // own with no app restart.
+  }, [session?.user?.id, session?.access_token]);
 
   // useFocusEffect (not a plain mount-only useEffect) so returning to Home
   // after anything that can change the signed-in user's own events -
@@ -543,7 +600,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     setHiddenEventIds(next);
     // Nothing left to review - drop back to the normal Upcoming view
     // instead of leaving the user stranded on an empty "Hidden" screen.
-    if (next.size === 0) setActiveFilter((f) => (f === 'hidden' ? 'pingsOnly' : f));
+    if (next.size === 0) setActiveView((v) => (v === 'hidden' ? null : v));
   };
 
   // Long-press entry point for hiding a calendar item, shared by Week
@@ -584,7 +641,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   const handleUnhidePing = async (event: PingEvent) => {
     const next = await unhideEvent(hiddenPingKey(event.id));
     setHiddenEventIds(next);
-    if (next.size === 0) setActiveFilter((f) => (f === 'hidden' ? 'pingsOnly' : f));
+    if (next.size === 0) setActiveView((v) => (v === 'hidden' ? null : v));
   };
 
   const handleGroupChatClose = useCallback(() => {
@@ -1333,6 +1390,26 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     };
   });
 
+  // Only back out of an EXPANDED calendar (dragY > 0), so the filtered
+  // list becomes visible instead of staying hidden behind it. Previously
+  // this collapsed unconditionally, including when the Upcoming list was
+  // already pulled all the way up (dragY <= 0, list already fully visible)
+  // - a real reported bug: picking a filter while the list was already at
+  // the top bounced it back down to the default rest position for no
+  // reason, undoing a drag the user had just done.
+  const revealFilteredList = () => {
+    if (dragY.value > 0) collapseCalendar();
+  };
+  const availableViews = (Object.keys(VIEW_LABELS) as HomeView[]).filter((view) =>
+    view === "drafts"
+      ? events.some((e) => e.status === "draft")
+      : view === "declined"
+        ? events.some((e) => myRsvpByEvent[e.id] === "declined")
+        : view === "hidden"
+          ? hiddenEventIds.size > 0
+          : importantItemIds.size > 0,
+  );
+
   const renderListHeader = (defaultTitle: string) => (
     <View style={styles.listHeaderRow}>
       <Text style={styles.pageTitle}>
@@ -1354,25 +1431,19 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
             <Text style={styles.clearFilterText}>Show all</Text>
           </TouchableOpacity>
         )}
-        <FilterMenu
-          active={activeFilter}
-          onSelect={(filter) => {
-            setActiveFilter(filter);
-            // Only back out of an EXPANDED calendar (dragY > 0), so the
-            // filtered list becomes visible instead of staying hidden
-            // behind it. Previously this collapsed unconditionally,
-            // including when the Upcoming list was already pulled all the
-            // way up (dragY <= 0, list already fully visible) - a real
-            // reported bug: picking a filter while the list was already at
-            // the top bounced it back down to the default rest position for
-            // no reason, undoing a drag the user had just done.
-            if (dragY.value > 0) collapseCalendar();
-          }}
-          hasDrafts={events.some((e) => e.status === "draft")}
-          hasDeclined={events.some((e) => myRsvpByEvent[e.id] === "declined")}
-          hasHidden={hiddenEventIds.size > 0}
-          hasImportant={importantItemIds.size > 0}
-        />
+        {activeView ? (
+          <TouchableOpacity onPress={() => setActiveView(null)}>
+            <Text style={styles.clearFilterText}>Done</Text>
+          </TouchableOpacity>
+        ) : (
+          <FilterMenu
+            active={listFilter}
+            onSelect={(filter) => {
+              setListFilter(filter);
+              revealFilteredList();
+            }}
+          />
+        )}
       </View>
     </View>
   );
@@ -1401,6 +1472,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
           onPress={openEvent}
           rsvpStatus={myRsvpByEvent[item.event.id] as any}
           weather={weatherByEventId[item.event.id]}
+          bringing={myBringingByEvent[item.event.id]}
         />
         <TouchableOpacity style={styles.unhidePingButton} onPress={() => handleUnhidePing(item.event)}>
           <Text style={styles.unhidePingText}>Unhide</Text>
@@ -1414,6 +1486,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
         onLongPress={showPingHideOption}
         rsvpStatus={myRsvpByEvent[item.event.id] as any}
         weather={weatherByEventId[item.event.id]}
+        bringing={myBringingByEvent[item.event.id]}
         onPressChat={(e) => openEvent(e, { startOnMessages: true })}
         hasUnreadMessages={unreadMessageEventIds.has(item.event.id)}
       />
@@ -1501,7 +1574,13 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
             <TouchableOpacity onPress={() => router.push("/groups")}>
               <Text style={styles.groupsText}>Groups</Text>
             </TouchableOpacity>
-            <ProfileMenu />
+            <ProfileMenu
+              availableViews={availableViews}
+              onSelectView={(view) => {
+                setActiveView(view);
+                revealFilteredList();
+              }}
+            />
           </View>
         </View>
       )}

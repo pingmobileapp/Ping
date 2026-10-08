@@ -1,9 +1,9 @@
 // Switches for features that are built but intentionally not shown.
 //
 // Hosting on Discover - listing your own Ping publicly, with a category,
-// head-count limit, and ticket price paid through Stripe - is paused. As of
-// 2026-10-03 nobody had ever listed an event or charged for one, and the
-// options made Create/Edit and Settings longer for everyone. The local
-// events feed on the Discover tab is separate and stays on. Flip this back
-// to true to bring the hosting side back; nothing else needs to change.
-export const DISCOVER_LISTINGS_ENABLED = false;
+// head-count limit, and ticket price paid through Stripe. Paused on
+// 2026-10-03 to shorten Create; back on 2026-10-08 now that Create tucks it
+// behind "More options" with the other extras, so it no longer lengthens the
+// form for people who don't use it. The local events feed on the Discover
+// tab is separate and always on. Set to false to hide the hosting side again.
+export const DISCOVER_LISTINGS_ENABLED = true;

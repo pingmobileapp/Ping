@@ -5,13 +5,19 @@ import { supabase } from '../supabase';
 import { useAuth } from '../lib/AuthContext';
 import { colors } from '../lib/theme';
 import CatchMeUpModal from './CatchMeUpModal';
+import { HomeView, VIEW_LABELS } from './FilterMenu';
 
 const MENU_WIDTH = 200;
 
-// Drafts/Declined moved to components/FilterMenu.tsx, consolidated there
-// with Pings Only/Hidden/Important Dates - this menu no longer needs to
-// know about any of that filter state.
-export default function ProfileMenu() {
+type Props = {
+  // Drafts/Declined/Hidden/Important Dates - each only listed once it has
+  // something in it. See FilterMenu.tsx for why these live here rather
+  // than in the Upcoming list's Filter menu.
+  availableViews?: HomeView[];
+  onSelectView?: (view: HomeView) => void;
+};
+
+export default function ProfileMenu({ availableViews = [], onSelectView }: Props) {
   const router = useRouter();
   const { session, signOut } = useAuth();
   const [open, setOpen] = useState(false);
@@ -70,6 +76,11 @@ export default function ProfileMenu() {
     setCatchMeUpVisible(true);
   };
 
+  const handleView = (view: HomeView) => {
+    setOpen(false);
+    onSelectView?.(view);
+  };
+
   return (
     <>
       <TouchableOpacity
@@ -92,6 +103,16 @@ export default function ProfileMenu() {
               <Text style={styles.menuItemText}>✨ Catch me up</Text>
             </TouchableOpacity>
             <View style={styles.menuDivider} />
+            {!!onSelectView && availableViews.length > 0 && (
+              <>
+                {availableViews.map((view) => (
+                  <TouchableOpacity key={view} style={styles.menuItem} onPress={() => handleView(view)}>
+                    <Text style={styles.menuItemText}>{VIEW_LABELS[view]}</Text>
+                  </TouchableOpacity>
+                ))}
+                <View style={styles.menuDivider} />
+              </>
+            )}
             <TouchableOpacity style={styles.menuItem} onPress={openSettings}>
               <Text style={styles.menuItemText}>Settings</Text>
             </TouchableOpacity>

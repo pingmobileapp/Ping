@@ -4,17 +4,16 @@ import { colors } from '../lib/theme';
 
 const MENU_WIDTH = 200;
 
-// Single-select on purpose - four of these five options already replace
-// the whole Upcoming list with a different subset (Drafts/Declined/Hidden/
-// Important Dates), so combining them doesn't mean anything ("Drafts +
-// Pings Only" is just Drafts, since drafts are always Ping-only already).
-// Consolidates what used to be ProfileMenu's Drafts/Declined items plus
-// the separate inline "Pings Only"/"Hidden" toggles into one menu, in the
-// same spot "Hidden" used to sit.
-export type HomeFilter = 'pingsOnly' | 'drafts' | 'declined' | 'hidden' | 'important' | null;
+// The Upcoming list's everyday filter is just All vs Pings Only. Drafts/
+// Declined/Hidden/Important Dates are separate views you visit and leave
+// (the list header shows a Done link while one is open), so they live in
+// ProfileMenu instead - having all five here made the menu feel busy even
+// after it only listed non-empty ones (TestFlight feedback, 1.1.2).
+export type ListFilter = 'pingsOnly' | null;
+export type HomeView = 'drafts' | 'declined' | 'hidden' | 'important';
+export type HomeFilter = ListFilter | HomeView;
 
-const FILTER_LABELS: Record<Exclude<HomeFilter, null>, string> = {
-  pingsOnly: 'Pings Only',
+export const VIEW_LABELS: Record<HomeView, string> = {
   drafts: 'Drafts',
   declined: 'Declined',
   hidden: 'Hidden',
@@ -22,19 +21,11 @@ const FILTER_LABELS: Record<Exclude<HomeFilter, null>, string> = {
 };
 
 type Props = {
-  active: HomeFilter;
-  onSelect: (filter: HomeFilter) => void;
-  // Drafts/Declined/Hidden/Important Dates only show up as options once
-  // there's something they'd actually filter to - a menu of mostly-empty
-  // views was part of what made Home feel busy. The active one always
-  // stays listed so it can be seen (and switched away from).
-  hasDrafts: boolean;
-  hasDeclined: boolean;
-  hasHidden: boolean;
-  hasImportant: boolean;
+  active: ListFilter;
+  onSelect: (filter: ListFilter) => void;
 };
 
-export default function FilterMenu({ active, onSelect, hasDrafts, hasDeclined, hasHidden, hasImportant }: Props) {
+export default function FilterMenu({ active, onSelect }: Props) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState({ top: 0, left: 0 });
   const buttonRef = useRef<View>(null);
@@ -46,27 +37,16 @@ export default function FilterMenu({ active, onSelect, hasDrafts, hasDeclined, h
     setOpen(true);
   };
 
-  const handleSelect = (filter: HomeFilter) => {
+  const handleSelect = (filter: ListFilter) => {
     setOpen(false);
     onSelect(filter);
   };
-
-  const available: Record<Exclude<HomeFilter, null>, boolean> = {
-    pingsOnly: true,
-    drafts: hasDrafts,
-    declined: hasDeclined,
-    hidden: hasHidden,
-    important: hasImportant,
-  };
-  const options = (Object.keys(available) as Exclude<HomeFilter, null>[]).filter(
-    (opt) => available[opt] || active === opt,
-  );
 
   return (
     <>
       <TouchableOpacity ref={buttonRef} onPress={openMenu}>
         <Text style={[styles.buttonText, !!active && styles.buttonTextActive]}>
-          {active ? `${FILTER_LABELS[active]} ✓` : 'Filter'}
+          {active ? 'Pings Only ✓' : 'Filter'}
         </Text>
       </TouchableOpacity>
 
@@ -79,13 +59,11 @@ export default function FilterMenu({ active, onSelect, hasDrafts, hasDeclined, h
               </Text>
             </TouchableOpacity>
             <View style={styles.menuDivider} />
-            {options.map((opt) => (
-              <TouchableOpacity key={opt} style={styles.menuItem} onPress={() => handleSelect(opt)}>
-                <Text style={[styles.menuItemText, active === opt && styles.menuItemTextActive]}>
-                  {active === opt ? `${FILTER_LABELS[opt as Exclude<HomeFilter, null>]} ✓` : FILTER_LABELS[opt as Exclude<HomeFilter, null>]}
-                </Text>
-              </TouchableOpacity>
-            ))}
+            <TouchableOpacity style={styles.menuItem} onPress={() => handleSelect('pingsOnly')}>
+              <Text style={[styles.menuItemText, !!active && styles.menuItemTextActive]}>
+                {active ? 'Pings Only ✓' : 'Pings Only'}
+              </Text>
+            </TouchableOpacity>
           </View>
         </Pressable>
       </Modal>

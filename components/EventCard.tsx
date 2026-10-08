@@ -46,6 +46,9 @@ type Props = {
   onPressChat?: (event: PingEvent) => void;
   hasUnreadMessages?: boolean;
   onLongPress?: (event: PingEvent) => void;
+  // What you've signed up to bring, already formatted - see index.tsx's
+  // fetchMyBringing. Omitted when you haven't claimed anything.
+  bringing?: string;
 };
 
 export default function EventCard({
@@ -57,6 +60,7 @@ export default function EventCard({
   onPressChat,
   hasUnreadMessages,
   onLongPress,
+  bringing,
 }: Props) {
   const rsvpDotColor = rsvpStatus && rsvpStatus !== 'pending' ? RSVP_DOT_COLOR[rsvpStatus] : null;
   const dateLabel = formatEventDate(event.event_date, event.end_date, 'short');
@@ -131,6 +135,11 @@ export default function EventCard({
               {event.location}
             </Text>
           )}
+          {!!bringing && (
+            <Text style={styles.bringingText} numberOfLines={2}>
+              🛒 You’re bringing: <Text style={styles.bringingItems}>{bringing}</Text>
+            </Text>
+          )}
         </View>
       </View>
     </TouchableOpacity>
@@ -178,6 +187,8 @@ const styles = StyleSheet.create({
   statTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   statText: { color: colors.textSecondary, fontSize: 13, flexShrink: 1 },
   rightStats: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  bringingText: { color: colors.primary, fontSize: 13, fontWeight: '600', marginTop: 4 },
+  bringingItems: { fontWeight: '800' },
   weatherText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
   chatButton: { position: 'relative' },
   chatIcon: { fontSize: 15 },

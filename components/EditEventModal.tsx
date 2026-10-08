@@ -1362,7 +1362,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
               // single Ping into occurrence #1 of a new one. Saving
               // generates the sibling occurrences (see handleSave), copying
               // today's items, co-hosts, and current guest list onto each.
-              <RecurrencePicker value={recurrence} onChange={setRecurrence} />
+              <RecurrencePicker value={recurrence} onChange={setRecurrence} checkboxSize={24} />
             )}
 
             {event.group_id ? (

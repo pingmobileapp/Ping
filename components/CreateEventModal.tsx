@@ -1116,7 +1116,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
               <TouchableOpacity style={styles.moreOptionsButton} onPress={() => setMoreOpen((v) => !v)}>
                 <Text style={styles.moreOptionsTitle}>{moreOpen ? 'Fewer options ▴' : 'More options ▾'}</Text>
                 {!moreOpen && (
-                  <Text style={styles.moreOptionsHint}>Description, what to bring, repeat, co-hosts, multi-day</Text>
+                  <Text style={styles.moreOptionsHint}>Description, what to bring, repeat, co-hosts, multi-day{DISCOVER_LISTINGS_ENABLED ? ', Discover' : ''}</Text>
                 )}
               </TouchableOpacity>
             )}
@@ -1143,7 +1143,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
                 </View>
               </TouchableOpacity>
 
-              <RecurrencePicker value={recurrence} onChange={setRecurrence} />
+              <RecurrencePicker value={recurrence} onChange={setRecurrence} checkboxSize={24} />
 
               <TouchableOpacity style={styles.publicRow} onPress={() => setIsPublic(!isPublic)}>
                 <View style={[styles.checkbox, isPublic && styles.checkboxChecked]}>

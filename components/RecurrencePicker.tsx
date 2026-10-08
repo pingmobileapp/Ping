@@ -12,6 +12,9 @@ type Props = {
   // occurrences exist; the caller offers its own "this event only / this
   // and following" choice instead), so this just shows a read-only summary.
   readOnlyExisting?: boolean;
+  // Matches the host form's other checkboxes so the row titles line up
+  // (Create/Edit use 24, AddPersonalItemModal 22).
+  checkboxSize?: number;
 };
 
 const FREQUENCY_LABELS: Record<RecurrenceFrequency, string> = {
@@ -37,7 +40,7 @@ const summarize = (config: RecurrenceConfig): string => {
   return base;
 };
 
-export default function RecurrencePicker({ value, onChange, readOnlyExisting }: Props) {
+export default function RecurrencePicker({ value, onChange, readOnlyExisting, checkboxSize = 22 }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
 
@@ -59,15 +62,22 @@ export default function RecurrencePicker({ value, onChange, readOnlyExisting }: 
         onPress={value ? () => setExpanded((v) => !v) : toggleRepeats}
         disabled={readOnlyExisting && !value}
       >
+        {/* Checkbox leads the row like every other checkbox on these forms.
+            Its own touch target turns repeating off - tapping the rest of
+            the row only shows/hides the frequency editor. */}
+        {!readOnlyExisting && (
+          <TouchableOpacity
+            onPress={toggleRepeats}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={[styles.checkbox, { width: checkboxSize, height: checkboxSize }, !!value && styles.checkboxChecked]}
+          >
+            {value && <Text style={styles.checkmark}>✓</Text>}
+          </TouchableOpacity>
+        )}
         <View style={{ flex: 1 }}>
           <Text style={styles.rowTitle}>Repeats</Text>
           <Text style={styles.rowSubtitle}>{value ? summarize(value) : 'Does not repeat'}</Text>
         </View>
-        {!readOnlyExisting && (
-          <View style={[styles.checkbox, !!value && styles.checkboxChecked]}>
-            {value && <Text style={styles.checkmark}>✓</Text>}
-          </View>
-        )}
       </TouchableOpacity>
 
       {value && !readOnlyExisting && expanded && (
@@ -194,7 +204,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 16, paddingVertical: 6 },
   rowTitle: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
   rowSubtitle: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
-  checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  checkbox: { borderRadius: 6, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
   checkboxChecked: { backgroundColor: colors.primary, borderColor: colors.primary },
   checkmark: { color: colors.textOnPrimary, fontSize: 13, fontWeight: '700' },
   editor: { marginTop: 8, paddingLeft: 2 },
