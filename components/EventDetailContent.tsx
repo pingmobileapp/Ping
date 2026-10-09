@@ -105,6 +105,11 @@ type ItemRow = {
   item_claims: ClaimRow[];
 };
 
+// Events whose "bring something" pop-up already showed since the app
+// launched - once per event per launch, so reopening the same event doesn't
+// nag, but it still comes back later if they never signed up.
+const itemPromptShownFor = new Set<string>();
+
 const RSVP_OPTIONS: { label: string; value: 'accepted' | 'declined' | 'interested' }[] = [
   { label: 'Accept', value: 'accepted' },
   { label: 'Interested', value: 'interested' },
@@ -181,6 +186,90 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
   );
   const scrollRef = useRef<ScrollView>(null);
   const itemsSectionY = useRef(0);
+  const scrollToItems = () => scrollRef.current?.scrollTo({ y: itemsSectionY.current - 12, animated: true });
+
+  // The "items still need someone" banner alone was too easy to miss
+  // (TestFlight feedback, build 105), so a guest who's going or interested,
+  // hasn't claimed anything, and is looking at an event that still needs
+  // things gets asked directly. Also fires right after tapping Accept or
+  // Interested, since that changes rsvp_status. Hosts and co-hosts never
+  // see it - they're the ones who made the list.
+  useEffect(() => {
+    if (loading || !event || !myInvitee || isHost) return;
+    if (myInvitee.rsvp_status !== 'accepted' && myInvitee.rsvp_status !== 'interested') return;
+    if (unclaimedCount === 0 || myClaimedAnything) return;
+    if (itemPromptShownFor.has(event.id)) return;
+    // Let the card finish sliding in and the items section lay out first,
+    // so "Show me" knows where to scroll. Marked as shown only when it
+    // actually shows - a refetch inside this delay re-runs the effect and
+    // cancels the timer, which would otherwise swallow the prompt.
+    const timer = setTimeout(() => {
+      itemPromptShownFor.add(event.id);
+      Alert.alert(
+        'Can you bring something?',
+        unclaimedCount === 1
+          ? `1 item for ${event.title} still needs someone.`
+          : `${unclaimedCount} items for ${event.title} still need someone.`,
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Show me', onPress: scrollToItems },
+        ]
+      );
+    }, 600);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, event?.id, myInvitee?.rsvp_status, unclaimedCount, myClaimedAnything, isHost]);
+  // The "What to bring" inputs sit at the very bottom of this scroll, and
+  // the modal variant had no keyboard handling at all, so the keyboard
+  // covered whatever you were typing (TestFlight feedback, build 105).
+  // KeyboardAvoidingView can't do it here: the modal's card is a
+  // bottom-anchored, drag-translated sheet, and KAV measures its own frame
+  // relative to that card rather than the screen, so it under-pads by the
+  // card's top offset (ScrollView's scrollResponderScrollNativeHandleTo-
+  // Keyboard has the same blind spot). Instead: pad the scroll content by
+  // the keyboard's height so there's room, then scroll the focused input to
+  // just above the keyboard. The target is computed from the input's
+  // position inside the content rather than a tracked scroll offset, which
+  // goes stale when the card is reopened (that overshot by a full scroll).
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const itemInputFocused = useRef(false);
+  const markItemInputFocused = () => {
+    itemInputFocused.current = true;
+  };
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const show = Keyboard.addListener(showEvent, (e) => setKeyboardHeight(e.endCoordinates.height));
+    const didShow = Keyboard.addListener('keyboardDidShow', (e) => {
+      // Only for this screen's own inputs - the message thread's input
+      // lives outside this ScrollView.
+      if (!itemInputFocused.current) return;
+      const input = TextInput.State.currentlyFocusedInput();
+      const scroll = scrollRef.current;
+      const scrollHost = scroll?.getNativeScrollRef();
+      // getInnerViewRef exists at runtime but is missing from RN's
+      // ScrollView typings; measureLayout needs this ref, not the numeric
+      // getInnerViewNode() handle (rejected under the New Architecture).
+      const content = (scroll as unknown as { getInnerViewRef(): View | null } | null)?.getInnerViewRef();
+      if (!input || !scroll || !scrollHost || !content) return;
+      const keyboardTop = e.endCoordinates.screenY;
+      scrollHost.measureInWindow((_sx, scrollTop) => {
+        input.measureLayout(content, (_x, inputY, _w, inputH) => {
+          const visibleHeight = keyboardTop - scrollTop;
+          const target = inputY + inputH + 24 - visibleHeight;
+          if (target > 0) scroll.scrollTo({ y: target, animated: true });
+        });
+      });
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardHeight(0);
+      itemInputFocused.current = false;
+    });
+    return () => {
+      show.remove();
+      didShow.remove();
+      hide.remove();
+    };
+  }, []);
 
   // Invitees texted via the host's own Messages app (see NonAppInviteQueue)
   // have no reliable "was it actually sent" signal - closing that flow with
@@ -874,7 +963,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
       <ScrollView
         ref={scrollRef}
         style={variant === 'modal' ? styles.containerModal : styles.containerPage}
-        contentContainerStyle={{ paddingBottom: 60 }}
+        contentContainerStyle={{ paddingBottom: 60 + (variant === 'modal' ? keyboardHeight : 0) }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
@@ -1139,7 +1228,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
         {myInvitee && myInvitee.rsvp_status !== 'declined' && items.length > 0 && !myClaimedAnything && (
           <TouchableOpacity
             style={styles.actionBanner}
-            onPress={() => scrollRef.current?.scrollTo({ y: itemsSectionY.current - 12, animated: true })}
+            onPress={scrollToItems}
           >
             <Text style={styles.actionBannerText}>
               {unclaimedCount > 0
@@ -1220,6 +1309,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
                   ) : (
                     <View style={styles.addItemRow}>
                       <TextInput
+                        onFocus={markItemInputFocused}
                         style={[styles.input, { flex: 1 }]}
                         placeholder="What are you bringing?"
                         placeholderTextColor={colors.textMuted}
@@ -1303,6 +1393,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
 
                 <View style={styles.addItemRow}>
                   <TextInput
+                    onFocus={markItemInputFocused}
                     style={[styles.input, { flex: 2 }]}
                     placeholder="Item (e.g. Chips)"
                     placeholderTextColor={colors.textMuted}
@@ -1310,6 +1401,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
                     onChangeText={setNewItemName}
                   />
                   <TextInput
+                    onFocus={markItemInputFocused}
                     style={[styles.input, { flex: 1, textAlign: 'center' }]}
                     placeholder="Qty"
                     placeholderTextColor={colors.textMuted}
