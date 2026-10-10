@@ -4,7 +4,7 @@ import { supabase } from '../supabase';
 import { useAuth } from '../lib/AuthContext';
 import { colors, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
 import { displayName } from '../lib/displayName';
-import { askRsvpScope, findMySeriesInvites, submitRsvp, submitSeriesRsvp } from '../lib/rsvp';
+import { askRsvpScope, findMySeriesInvites, showRsvpError, submitRsvp, submitSeriesRsvp } from '../lib/rsvp';
 import { startEventCheckout } from '../lib/discoverCheckout';
 import { toListingActivity, activityKey, fetchInterestedKeys, toggleInterest } from '../lib/discoverActivities';
 import { formatPrice } from '../lib/pricing';
@@ -237,7 +237,7 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
       }
     }
 
-    await submitRsvp({
+    const { error, errorKind } = await submitRsvp({
       eventId: event.id,
       hostIds,
       eventTitle: event.title,
@@ -248,6 +248,13 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
     });
 
     setResponding(false);
+    // Stay open on failure - closing used to look exactly like success, so
+    // a response lost to a weak signal just silently never happened.
+    if (error) {
+      setSelected(null);
+      showRsvpError(errorKind);
+      return;
+    }
     setTimeout(() => onClose(), 700);
   };
 

@@ -25,7 +25,7 @@ import PhotoViewerModal from './PhotoViewerModal';
 import Avatar from './Avatar';
 import { colors, cardFrameGradient, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
 import { notify } from '../lib/notify';
-import { submitRsvp, RsvpStatus, findMySeriesInvites, submitSeriesRsvp, askRsvpScope } from '../lib/rsvp';
+import { submitRsvp, RsvpStatus, findMySeriesInvites, submitSeriesRsvp, askRsvpScope, showRsvpError } from '../lib/rsvp';
 import { removeEventFromDeviceCalendar, syncAcceptedEventToDeviceCalendar } from '../lib/pingCalendarSync';
 import { scheduleEventReminder, cancelEventReminder, REMINDER_OPTIONS } from '../lib/eventReminders';
 import { displayName } from '../lib/displayName';
@@ -432,7 +432,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     // InvitePopup use - hand-rolling the insert here (as an earlier version
     // did) skipped its host-notification step entirely, so the host never
     // heard that anyone had joined.
-    const { error } = await submitRsvp({
+    const { error, errorKind } = await submitRsvp({
       eventId,
       hostIds: allHostIds,
       eventTitle: event.title,
@@ -446,10 +446,10 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
       invitedVia: 'discover',
     });
     if (error) {
-      // The only way an insert here fails is the RLS capacity check
-      // (discover_capacity.sql) - someone else filled the last spot between
-      // this screen loading and this tap landing.
-      Alert.alert('Event full', 'This event just reached its limit on going. You can still mark yourself interested.');
+      // Either the RLS capacity check (discover_capacity.sql) - someone else
+      // filled the last spot since this screen loaded - or the request never
+      // made it (no signal). showRsvpError tells the guest which.
+      showRsvpError(errorKind);
       await fetchData();
       setUpdating(false);
       return;
@@ -670,7 +670,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
       }
     }
 
-    const { error } = await submitRsvp({
+    const { error, errorKind } = await submitRsvp({
       eventId,
       hostIds: allHostIds,
       eventTitle: event.title,
@@ -681,10 +681,10 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     });
 
     if (error) {
-      // Only reachable for a self-update to 'accepted' on a capacity-limited
-      // event that filled up since this screen loaded - see
-      // invitees_update_self_or_host in discover_capacity.sql.
-      Alert.alert('Event full', 'This event just reached its limit on going. You can still mark yourself interested.');
+      // A capacity refusal (invitees_update_self_or_host in
+      // discover_capacity.sql) or a request that never arrived - this used
+      // to call both "Event full", even on events with no limit.
+      showRsvpError(errorKind);
       await fetchData();
       setUpdating(false);
       return;
@@ -819,6 +819,28 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     await fetchData();
   };
 
+  // Items with a claim write still in flight. A ref, not state, so a second
+  // tap in the same frame is already blocked - two quick taps on Claim used
+  // to insert two rows and list the same person twice (TestFlight, build
+  // 106). The database now also rejects duplicates and over-claims (see
+  // supabase/item_claims_limits.sql); this just keeps those from surfacing.
+  const claimsInFlight = useRef(new Set<string>());
+
+  // Turns the database's refusals into something a guest understands.
+  // Returns true when the write went through.
+  const handleClaimError = async (item: ItemRow, error: { code?: string; message?: string } | null) => {
+    if (!error) return true;
+    if (error.message?.includes('item_full')) {
+      Alert.alert('Already taken', `Someone else just claimed "${item.name}".`);
+    } else if (error.code !== '23505') {
+      // 23505 is the one-claim-per-person index: a repeat tap whose first
+      // write already landed, so the refetch below shows the right state.
+      console.error('Error saving claim:', error);
+    }
+    await fetchData();
+    return false;
+  };
+
   const handleAddCustomClaim = async (item: ItemRow) => {
     if (!myInvitee) {
       Alert.alert('RSVP first', "Respond to the event before saying what you'll bring.");
@@ -826,14 +848,14 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     }
     const text = (customDraftByItem[item.id] || '').trim();
     if (!text) return;
+    if (claimsInFlight.current.has(item.id)) return;
+    claimsInFlight.current.add(item.id);
 
     const { error } = await supabase
       .from('item_claims')
       .insert([{ item_id: item.id, invitee_id: myInvitee.id, quantity: 1, note: text }]);
-    if (error) {
-      console.error('Error adding claim:', error);
-      return;
-    }
+    claimsInFlight.current.delete(item.id);
+    if (!(await handleClaimError(item, error))) return;
 
     setCustomDraftByItem((prev) => ({ ...prev, [item.id]: '' }));
     Keyboard.dismiss();
@@ -864,23 +886,26 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     const nextQty = prevQty + delta;
 
     if (nextQty > remaining) return;
+    if (claimsInFlight.current.has(item.id)) return;
+    claimsInFlight.current.add(item.id);
+
+    let error: { code?: string; message?: string } | null = null;
     if (nextQty <= 0) {
       if (myClaim) {
-        const { error } = await supabase.from('item_claims').delete().eq('id', myClaim.id);
-        if (error) console.error('Error releasing claim:', error);
+        ({ error } = await supabase.from('item_claims').delete().eq('id', myClaim.id));
       }
     } else if (myClaim) {
-      const { error } = await supabase
+      ({ error } = await supabase
         .from('item_claims')
         .update({ quantity: nextQty })
-        .eq('id', myClaim.id);
-      if (error) console.error('Error updating claim:', error);
+        .eq('id', myClaim.id));
     } else {
-      const { error } = await supabase
+      ({ error } = await supabase
         .from('item_claims')
-        .insert([{ item_id: item.id, invitee_id: myInvitee.id, quantity: nextQty }]);
-      if (error) console.error('Error creating claim:', error);
+        .insert([{ item_id: item.id, invitee_id: myInvitee.id, quantity: nextQty }]));
     }
+    claimsInFlight.current.delete(item.id);
+    if (!(await handleClaimError(item, error))) return;
 
     if (nextQty > prevQty && !isHost && event && allHostIds.length > 0) {
       await notify(allHostIds, 'Item claimed', `${myName()} claimed "${item.name}" for ${event.title}`, {

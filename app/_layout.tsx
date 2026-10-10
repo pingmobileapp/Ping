@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from '../lib/AuthContext';
 import { NotificationsProvider, useNotificationsContext } from '../lib/NotificationsContext';
 import { useAccountGate } from '../lib/useAccountGate';
 import { healInviteLinks } from '../lib/healInvites';
+import { watchForAppUpdates } from '../lib/updatePrompt';
 import LoginScreen from './(auth)/login';
 import InvitePopup from '../components/InvitePopup';
 import TermsGateScreen from '../components/TermsGateScreen';
@@ -55,6 +56,15 @@ function RootNavigation() {
     healedForRef.current = userId;
     healInviteLinks();
   }, [userId, gateState]);
+
+  // Offer a newer App Store version (lib/updatePrompt.ts) - only once
+  // someone is past sign-in and the terms gate, so it never stacks on top
+  // of those screens.
+  const appReady = !!userId && gateState === 'clear';
+  useEffect(() => {
+    if (!appReady) return;
+    return watchForAppUpdates();
+  }, [appReady]);
 
   const findInvites = useFindInvitesStep(userId, gateState === 'clear');
 

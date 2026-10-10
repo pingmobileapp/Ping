@@ -23,13 +23,34 @@ type SubmitRsvpOptions = {
 
 // Shared by EventDetailContent's RSVP row and InvitePopup so both surfaces
 // mutate `invitees` the same way and never drift out of sync.
-export type SubmitRsvpResult = { inviteeId: string | null; error: boolean };
+// errorKind tells a capacity refusal apart from everything else. Every
+// failure used to be reported as "Event full", including an Accept that
+// never reached the server on a weak signal, on an event with no limit at
+// all (TestFlight feedback, build 106).
+export type RsvpErrorKind = 'full' | 'failed';
+export type SubmitRsvpResult = { inviteeId: string | null; error: boolean; errorKind?: RsvpErrorKind };
+
+// Postgres' row-level-security refusal. For your own RSVP the only policy
+// that can refuse it is the capacity check (invitees_*_self_or_host /
+// _member_public in discover_capacity.sql), so this code means "full".
+// Network failures come back with no code at all.
+function classifyRsvpError(error: { code?: string }): RsvpErrorKind {
+  return error.code === '42501' ? 'full' : 'failed';
+}
+
+export function showRsvpError(kind: RsvpErrorKind | undefined) {
+  if (kind === 'full') {
+    Alert.alert('Event full', 'This event just reached its limit on going. You can still mark yourself interested.');
+  } else {
+    Alert.alert("Couldn't save your response", 'Check your connection and try again.');
+  }
+}
 
 export async function submitRsvp(opts: SubmitRsvpOptions): Promise<SubmitRsvpResult> {
   const { eventId, hostIds, eventTitle, userId, myInviteeId, responderName, status, invitedVia = 'app' } = opts;
 
   let inviteeId = myInviteeId;
-  let hadError = false;
+  let errorKind: RsvpErrorKind | undefined;
 
   if (myInviteeId) {
     const { error } = await supabase
@@ -38,7 +59,7 @@ export async function submitRsvp(opts: SubmitRsvpOptions): Promise<SubmitRsvpRes
       .eq('id', myInviteeId);
     if (error) {
       console.error('Error updating RSVP:', error);
-      hadError = true;
+      errorKind = classifyRsvpError(error);
     }
   } else {
     const { data, error } = await supabase
@@ -56,12 +77,12 @@ export async function submitRsvp(opts: SubmitRsvpOptions): Promise<SubmitRsvpRes
       .single();
     if (error) {
       console.error('Error creating RSVP:', error);
-      hadError = true;
+      errorKind = classifyRsvpError(error);
     }
     inviteeId = data?.id || null;
   }
 
-  if (hadError) return { inviteeId, error: true };
+  if (errorKind) return { inviteeId, error: true, errorKind };
 
   if (status === 'declined' && inviteeId) {
     const { error: releaseError } = await supabase.from('item_claims').delete().eq('invitee_id', inviteeId);
