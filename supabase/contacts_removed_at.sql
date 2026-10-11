@@ -1,0 +1,12 @@
+-- Lets someone remove a contact from their Ping contacts (Settings ->
+-- Contacts, app/contacts.tsx). Run this in the Supabase SQL Editor
+-- (Dashboard -> SQL Editor -> New query).
+--
+-- Why a flag instead of deleting the row: invitees.contact_id points at the
+-- contact (no ON DELETE action), so a hard delete of anyone who was ever
+-- invited fails, and nulling that link instead would blank their name on
+-- every past event. A removed contact is hidden from the invite pickers,
+-- group pickers and the Contacts list; old events still show the name.
+-- Importing or adding the same phone number again clears removed_at
+-- (findOrCreateContact in lib/phone.ts).
+alter table public.contacts add column if not exists removed_at timestamptz;

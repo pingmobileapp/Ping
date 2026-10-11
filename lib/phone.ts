@@ -18,6 +18,7 @@ export type Contact = {
   phone: string | null;
   email: string | null;
   linked_user_id: string | null;
+  removed_at?: string | null;
 };
 
 type MinimalContact = { id: string; phone: string | null; linked_user_id: string | null };
@@ -58,9 +59,20 @@ export async function findOrCreateContact(
       .select('*')
       .eq('owner_id', ownerId)
       .eq('phone', phone)
+      // Active contact first if a removed one shares the number.
+      .order('removed_at', { ascending: true, nullsFirst: true })
+      .limit(1)
       .maybeSingle();
 
     if (existing) {
+      // Removed from Settings -> Contacts earlier and now added/imported
+      // again: bring it back rather than leaving it hidden (or creating a
+      // second row with the same number).
+      if ((existing as Contact).removed_at) {
+        await supabase.from('contacts').update({ removed_at: null, name }).eq('id', existing.id);
+        (existing as Contact).removed_at = null;
+        (existing as Contact).name = name;
+      }
       const healed = await healContactLink(supabase, existing as Contact);
       return { contact: healed, wasExisting: true };
     }

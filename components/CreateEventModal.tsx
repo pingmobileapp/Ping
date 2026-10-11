@@ -33,6 +33,7 @@ import { suggestItems } from '../lib/itemSuggestions';
 import { ActivityCategory, CATEGORY_LABELS } from '../lib/discoverActivities';
 import { fetchConnectStatus, ConnectAccountState } from '../lib/stripeConnect';
 import { DISCOVER_LISTINGS_ENABLED } from '../lib/features';
+import { confirmUnreachableInvitees } from '../lib/unreachableInvitees';
 import { dollarsToCents } from '../lib/pricing';
 import { containsObjectionableContent } from '../lib/contentFilter';
 import { reportContent } from '../lib/moderation';
@@ -221,6 +222,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
       .from('contacts')
       .select('id, name, phone, email, linked_user_id')
       .eq('owner_id', session!.user.id)
+      .is('removed_at', null)
       .order('name');
 
     if (contactsError) console.error('Error loading contacts:', contactsError);
@@ -751,6 +753,15 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
     if (!session?.user?.id) return;
 
     setSubmitting(true);
+
+    // Drafts don't invite anyone yet, so only a real send needs the check.
+    if (
+      status === 'sent' &&
+      !(await confirmUnreachableInvitees(resolveInviteeContactIds().map((cid) => contacts.find((c) => c.id === cid))))
+    ) {
+      setSubmitting(false);
+      return;
+    }
 
     let imageUrl: string | null = null;
     let imageUrlFull: string | null = null;

@@ -71,6 +71,7 @@ export default function ShareInviteModal({
       .from('contacts')
       .select('id, name, phone, email, linked_user_id')
       .eq('owner_id', session!.user.id)
+      .is('removed_at', null)
       .order('name');
 
     if (error) console.error('Error loading contacts:', error);

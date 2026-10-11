@@ -72,6 +72,7 @@ export default function GroupDetailScreen() {
         .from('contacts')
         .select('id, name, phone, linked_user_id')
         .eq('owner_id', session.user.id)
+        .is('removed_at', null)
         .order('name');
       if (contactsError) console.error('Error fetching contacts:', contactsError);
       setAllContacts(contactsData || []);

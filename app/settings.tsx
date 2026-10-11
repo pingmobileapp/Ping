@@ -279,6 +279,16 @@ export default function SettingsScreen() {
             </View>
           )}
 
+          <View style={styles.payoutsSection}>
+            <TouchableOpacity style={styles.payoutsRow} onPress={() => router.push('/contacts' as any)}>
+              <Text style={styles.payoutsStatusText}>Contacts</Text>
+              <Text style={styles.saveText}>Manage ›</Text>
+            </TouchableOpacity>
+            <Text style={styles.helperText}>
+              Fix names and numbers, find people listed twice, and remove contacts you don't need.
+            </Text>
+          </View>
+
           {isAdmin && (
             <View style={styles.payoutsSection}>
               {/* Expo Router's generated route types (.expo/types/router.d.ts)

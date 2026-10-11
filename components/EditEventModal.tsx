@@ -33,6 +33,7 @@ import { RecurrenceConfig, generateOccurrences } from '../lib/recurrence';
 import { ActivityCategory, CATEGORY_LABELS } from '../lib/discoverActivities';
 import { fetchConnectStatus, ConnectAccountState } from '../lib/stripeConnect';
 import { DISCOVER_LISTINGS_ENABLED } from '../lib/features';
+import { confirmUnreachableInvitees } from '../lib/unreachableInvitees';
 import { dollarsToCents, centsToDollarsInput } from '../lib/pricing';
 import { containsObjectionableContent } from '../lib/contentFilter';
 import { reportContent } from '../lib/moderation';
@@ -275,6 +276,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       .from('contacts')
       .select('id, name, phone, email, linked_user_id')
       .eq('owner_id', session!.user.id)
+      .is('removed_at', null)
       .order('name');
 
     if (contactsError) console.error('Error loading contacts:', contactsError);
@@ -849,6 +851,13 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
     }
 
     setSubmitting(true);
+
+    // Before anything is written, so "Go back" leaves the event untouched.
+    if (!(await confirmUnreachableInvitees(resolveInviteeContactIds().map((cid) => contacts.find((c) => c.id === cid))))) {
+      setSubmitting(false);
+      return;
+    }
+
     const finalEndDate = resolveEndDate(eventDate, endDate, isMultiDay, isAllDay);
 
     // Freshly minted only when the host just picked a recurrence on an
