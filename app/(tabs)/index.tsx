@@ -42,6 +42,7 @@ import MonthGrid, { MonthGridHandle, MONTH_LABEL_HEIGHT, WEEKDAY_HEADER_HEIGHT }
 import PingLogoMenu from "../../components/PingLogoMenu";
 import ProfileMenu from "../../components/ProfileMenu";
 import FilterMenu, { HomeView, ListFilter, VIEW_LABELS } from "../../components/FilterMenu";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import ScheduleReviewModal from "../../components/ScheduleReviewModal";
 import WeekGrid, { WeekGridHandle } from "../../components/WeekGrid";
 import { useAuth } from "../../lib/AuthContext";
@@ -229,6 +230,24 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   // ProfileMenu that temporarily replace the list; leaving one returns to
   // whichever list filter was on before (see components/FilterMenu.tsx).
   const [listFilter, setListFilter] = useState<ListFilter>('pingsOnly');
+  // Whatever someone last picked in Filter is their default from then on -
+  // someone who prefers All kept getting reset to Pings Only every time
+  // they reopened the app. Saved per account on this device; a missing or
+  // unreadable value just falls back to Pings Only.
+  const listFilterKey = session?.user?.id ? `home.listFilter.${session.user.id}` : null;
+  useEffect(() => {
+    if (!listFilterKey) return;
+    AsyncStorage.getItem(listFilterKey)
+      .then((saved) => {
+        if (saved === 'all') setListFilter(null);
+        else if (saved === 'pingsOnly') setListFilter('pingsOnly');
+      })
+      .catch(() => {});
+  }, [listFilterKey]);
+  const chooseListFilter = (filter: ListFilter) => {
+    setListFilter(filter);
+    if (listFilterKey) AsyncStorage.setItem(listFilterKey, filter ?? 'all').catch(() => {});
+  };
   const [activeView, setActiveView] = useState<HomeView | null>(null);
   const activeFilter = activeView ?? listFilter;
   const showDraftsOnly = activeFilter === 'drafts';
@@ -1439,7 +1458,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
           <FilterMenu
             active={listFilter}
             onSelect={(filter) => {
-              setListFilter(filter);
+              chooseListFilter(filter);
               revealFilteredList();
             }}
           />
