@@ -24,6 +24,9 @@ type Props = {
   visible: boolean;
   steps: TourStep[];
   onFinish: (completed: boolean) => void; // true = reached the end, false = skipped
+  // Wording for the first bubble's dismiss button - "No thanks" when the
+  // tour is being offered rather than started (see lib/appTour.ts).
+  firstSkipLabel?: string;
 };
 
 const PAD = 6; // breathing room around the highlighted target
@@ -31,7 +34,7 @@ const BUBBLE_MAX = 340;
 const GAP = 14; // space between target and bubble (the arrow sits in it)
 const MARGIN = 16;
 
-export default function AppTour({ visible, steps, onFinish }: Props) {
+export default function AppTour({ visible, steps, onFinish, firstSkipLabel }: Props) {
   const { width: winW, height: winH } = useWindowDimensions();
   const [index, setIndex] = useState(0);
   const [rect, setRect] = useState<Rect | null>(null);
@@ -140,7 +143,7 @@ export default function AppTour({ visible, steps, onFinish }: Props) {
               <View style={styles.buttons}>
                 {!isLast ? (
                   <TouchableOpacity onPress={() => onFinish(false)} hitSlop={8}>
-                    <Text style={styles.skip}>Skip tour</Text>
+                    <Text style={styles.skip}>{index === 0 && firstSkipLabel ? firstSkipLabel : 'Skip tour'}</Text>
                   </TouchableOpacity>
                 ) : (
                   <View />

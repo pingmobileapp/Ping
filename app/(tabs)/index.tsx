@@ -44,7 +44,7 @@ import ProfileMenu from "../../components/ProfileMenu";
 import FilterMenu, { HomeView, ListFilter, VIEW_LABELS } from "../../components/FilterMenu";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import AppTour, { Rect, TourStep } from "../../components/AppTour";
-import { markAppTourDone, shouldShowAppTour } from "../../lib/appTour";
+import { AppTourMode, getAppTourMode, markAppTourDone } from "../../lib/appTour";
 import ScheduleReviewModal from "../../components/ScheduleReviewModal";
 import WeekGrid, { WeekGridHandle } from "../../components/WeekGrid";
 import { useAuth } from "../../lib/AuthContext";
@@ -200,15 +200,21 @@ export default function HomeScreen() {
     fab: useRef<View>(null),
   };
   const [tourVisible, setTourVisible] = useState(false);
+  const [tourMode, setTourMode] = useState<AppTourMode>(null);
   const measureRef = (ref: React.RefObject<View | null>) => (done: (r: Rect | null) => void) => {
     if (!ref.current) return done(null);
     ref.current.measureInWindow((x, y, width, height) => done({ x, y, width, height }));
   };
   const tourSteps: TourStep[] = [
-    {
-      title: "Welcome to Ping 👋",
-      body: "Ping makes it easy to plan get-togethers with family and friends. Here's a quick look around - it takes about 30 seconds.",
-    },
+    tourMode === "offer"
+      ? {
+          title: "Want a quick tour? 👋",
+          body: "Here's a 30-second look at where everything is in Ping, so you can get the most out of it.",
+        }
+      : {
+          title: "Welcome to Ping 👋",
+          body: "Ping makes it easy to plan get-togethers with family and friends. Here's a quick look around - it takes about 30 seconds.",
+        },
     {
       title: "Your calendar",
       body: "Switch between Week and Month here, and use the arrows to move around. Tap any day to see what's happening.",
@@ -283,8 +289,9 @@ export default function HomeScreen() {
       if (!userId || loading || landscapeWeek || modalVisible || detailVisible) return;
       let cancelled = false;
       let timer: ReturnType<typeof setTimeout> | undefined;
-      shouldShowAppTour(userId, session?.user?.created_at).then((show) => {
-        if (!show || cancelled) return;
+      getAppTourMode(userId, session?.user?.created_at).then((mode) => {
+        if (!mode || cancelled) return;
+        setTourMode(mode);
         timer = setTimeout(() => !cancelled && setTourVisible(true), 900);
       });
       return () => {
@@ -1822,7 +1829,12 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
         )}
       </View>
 
-      <AppTour visible={tourVisible} steps={tourSteps} onFinish={finishTour} />
+      <AppTour
+        visible={tourVisible}
+        steps={tourSteps}
+        onFinish={finishTour}
+        firstSkipLabel={tourMode === "offer" ? "No thanks" : undefined}
+      />
 
       {fabMenuVisible && (
         <Pressable
