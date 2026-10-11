@@ -22,6 +22,7 @@ import { colors } from '../../lib/theme';
 import ImportContactsModal from '../../components/ImportContactsModal';
 import EventCard, { PingEvent } from '../../components/EventCard';
 import EventDetailModal from '../../components/EventDetailModal';
+import { confirmDeleteGroup, renameGroup } from '../../lib/groups';
 
 type Contact = { id: string; name: string; phone: string | null; linked_user_id: string | null };
 
@@ -45,6 +46,9 @@ export default function GroupDetailScreen() {
   const [newContactName, setNewContactName] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
   const [importVisible, setImportVisible] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [ownerName, setOwnerName] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!session?.user?.id) return;
@@ -60,6 +64,18 @@ export default function GroupDetailScreen() {
 
     setGroupName(groupData?.name || '');
     setIsOwner(owner);
+    // Two groups can share a name (his own "Willhite Family" and one shared
+    // with him) - saying whose a shared one is tells them apart.
+    if (!owner && groupData?.owner_id) {
+      const { data: ownerProfile } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('id', groupData.owner_id)
+        .maybeSingle();
+      setOwnerName(ownerProfile?.full_name || null);
+    } else {
+      setOwnerName(null);
+    }
     setIsShared(!!groupData?.is_shared);
     setMemberIds((groupData?.group_members || []).map((m: any) => m.contact_id));
     setMemberNames((groupData?.group_members || []).map((m: any) => m.contacts?.name || 'Someone'));
@@ -222,22 +238,14 @@ export default function GroupDetailScreen() {
     }
   };
 
-  const handleDeleteGroup = () => {
-    Alert.alert('Delete group?', `This removes "${groupName}" permanently.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          const { error } = await supabase.from('groups').delete().eq('id', id);
-          if (error) {
-            console.error('Error deleting group:', error);
-            return;
-          }
-          router.back();
-        },
-      },
-    ]);
+  const handleDeleteGroup = async () => {
+    if (await confirmDeleteGroup(id, groupName)) router.back();
+  };
+
+  const saveRename = async () => {
+    const next = renameDraft.trim();
+    if (next && next !== groupName && (await renameGroup(id, next))) setGroupName(next);
+    setRenaming(false);
   };
 
   if (loading) {
@@ -273,7 +281,35 @@ export default function GroupDetailScreen() {
       </View>
 
       <View style={styles.titleRow}>
-        <Text style={styles.title}>{groupName}</Text>
+        {renaming ? (
+          <TextInput
+            style={[styles.title, styles.titleInput]}
+            value={renameDraft}
+            onChangeText={setRenameDraft}
+            onSubmitEditing={saveRename}
+            onBlur={saveRename}
+            returnKeyType="done"
+            autoFocus
+            selectTextOnFocus
+          />
+        ) : isOwner ? (
+          <TouchableOpacity
+            style={{ flexShrink: 1 }}
+            onPress={() => {
+              setRenameDraft(groupName);
+              setRenaming(true);
+            }}
+          >
+            <Text style={styles.title}>
+              {groupName} <Text style={styles.renameHint}>✎</Text>
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={{ flexShrink: 1 }}>
+            <Text style={styles.title}>{groupName}</Text>
+            {!!ownerName && <Text style={styles.ownerText}>Shared by {ownerName}</Text>}
+          </View>
+        )}
         <TouchableOpacity
           style={styles.chatButton}
           onPress={() => {
@@ -388,9 +424,14 @@ export default function GroupDetailScreen() {
                 </TouchableOpacity>
               </View>
             ) : (
-              <TouchableOpacity style={styles.addNewRow} onPress={() => setAddingContact(true)}>
-                <Text style={styles.addNewText}>+ New contact</Text>
-              </TouchableOpacity>
+              <View>
+                <TouchableOpacity style={styles.addNewRow} onPress={() => setAddingContact(true)}>
+                  <Text style={styles.addNewText}>+ New contact</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.deleteGroupRow} onPress={handleDeleteGroup}>
+                  <Text style={styles.deleteGroupText}>Delete group</Text>
+                </TouchableOpacity>
+              </View>
             )
           }
         />
@@ -433,6 +474,11 @@ const styles = StyleSheet.create({
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 20 },
   doneText: { color: colors.primary, fontSize: 16, fontWeight: '700' },
   deleteText: { color: colors.danger, fontSize: 15 },
+  deleteGroupRow: { marginTop: 28, paddingVertical: 14, alignItems: 'center', borderTopWidth: 1, borderTopColor: colors.divider },
+  deleteGroupText: { color: colors.danger, fontSize: 16, fontWeight: '700' },
+  renameHint: { color: colors.textMuted, fontSize: 18, fontWeight: '400' },
+  titleInput: { flex: 1, borderBottomWidth: 2, borderBottomColor: colors.primary, paddingVertical: 0 },
+  ownerText: { color: colors.textSecondary, fontSize: 14, marginTop: 2 },
   title: { color: colors.textPrimary, fontSize: 26, fontWeight: '700' },
   titleRow: {
     flexDirection: 'row',

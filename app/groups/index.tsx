@@ -9,12 +9,14 @@ import {
   Platform,
   KeyboardAvoidingView,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { supabase } from '../../supabase';
 import { useAuth } from '../../lib/AuthContext';
 import { useNotificationsContext } from '../../lib/NotificationsContext';
 import { colors } from '../../lib/theme';
+import { canPromptRename, confirmDeleteGroup, promptRenameGroup } from '../../lib/groups';
 
 type Group = {
   id: string;
@@ -22,6 +24,7 @@ type Group = {
   is_shared: boolean;
   memberCount: number;
   isOwner: boolean;
+  ownerName?: string | null;
 };
 
 export default function GroupsScreen() {
@@ -50,6 +53,19 @@ export default function GroupsScreen() {
       return;
     }
 
+    // Whose each shared group is - two groups can have the same name (one
+    // of yours, one someone shared with you), and this tells them apart.
+    const otherOwnerIds = Array.from(
+      new Set((data || []).map((g: any) => g.owner_id).filter((oid: string) => oid !== session.user.id))
+    );
+    const ownerNames: Record<string, string> = {};
+    if (otherOwnerIds.length > 0) {
+      const { data: owners } = await supabase.from('profiles').select('id, full_name').in('id', otherOwnerIds);
+      (owners || []).forEach((o: any) => {
+        if (o.full_name) ownerNames[o.id] = o.full_name;
+      });
+    }
+
     setGroups(
       (data || []).map((g: any) => ({
         id: g.id,
@@ -57,6 +73,7 @@ export default function GroupsScreen() {
         is_shared: g.is_shared,
         memberCount: (g.group_members || []).length,
         isOwner: g.owner_id === session.user.id,
+        ownerName: ownerNames[g.owner_id] || null,
       }))
     );
   }, [session?.user?.id]);
@@ -88,6 +105,37 @@ export default function GroupsScreen() {
     router.push(`/groups/${data.id}`);
   };
 
+  // Press and hold one of your own groups to rename or delete it.
+  const showGroupActions = (group: Group) => {
+    if (!group.isOwner) {
+      Alert.alert(
+        group.name,
+        `${group.ownerName || 'Someone'} shared this group with you, so only they can rename or delete it.`
+      );
+      return;
+    }
+    Alert.alert(group.name, undefined, [
+      {
+        text: 'Rename',
+        onPress: async () => {
+          if (!canPromptRename) {
+            router.push(`/groups/${group.id}`);
+            return;
+          }
+          if (await promptRenameGroup(group.id, group.name)) fetchGroups();
+        },
+      },
+      {
+        text: 'Delete group',
+        style: 'destructive',
+        onPress: async () => {
+          if (await confirmDeleteGroup(group.id, group.name)) fetchGroups();
+        },
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
   const ownedGroups = groups.filter((g) => g.isOwner);
   const sharedGroups = groups.filter((g) => !g.isOwner);
   // Only bother splitting into sections (with headers) once there's
@@ -99,7 +147,12 @@ export default function GroupsScreen() {
           { title: 'Your groups', data: ownedGroups },
           { title: 'Shared with you', data: sharedGroups },
         ]
-      : [{ title: '', data: ownedGroups }];
+      : ownedGroups.length > 0
+        ? [{ title: '', data: ownedGroups }]
+        // No sections at all (not one empty one) - SectionList counts a
+        // section's header/footer as items, so it never showed
+        // ListEmptyComponent and the screen was blank.
+        : [];
 
   return (
     <KeyboardAvoidingView
@@ -148,10 +201,16 @@ export default function GroupsScreen() {
           }
           renderItem={({ item }) => (
             <View style={styles.groupCard}>
-              <TouchableOpacity style={{ flex: 1 }} onPress={() => router.push(`/groups/${item.id}`)}>
+              <TouchableOpacity
+                style={{ flex: 1 }}
+                onPress={() => router.push(`/groups/${item.id}`)}
+                onLongPress={() => showGroupActions(item)}
+                delayLongPress={400}
+              >
                 <Text style={styles.groupName}>{item.name}</Text>
                 <Text style={styles.groupMeta}>
                   {item.memberCount} {item.memberCount === 1 ? 'member' : 'members'}
+                  {!item.isOwner && item.ownerName ? ` · Shared by ${item.ownerName}` : ''}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -167,6 +226,11 @@ export default function GroupsScreen() {
           )}
           ListEmptyComponent={
             <Text style={styles.emptyText}>No groups yet — tap + New to create one.</Text>
+          }
+          ListFooterComponent={
+            ownedGroups.length > 0 ? (
+              <Text style={styles.hintText}>Press and hold one of your groups to rename or delete it.</Text>
+            ) : null
           }
         />
       )}
@@ -220,6 +284,7 @@ const styles = StyleSheet.create({
   },
   groupName: { color: colors.textPrimary, fontSize: 17, fontWeight: '700', marginBottom: 4 },
   groupMeta: { color: colors.textSecondary, fontSize: 13 },
+  hintText: { color: colors.textMuted, fontSize: 12, fontStyle: 'italic', textAlign: 'center', marginTop: 16 },
   chatButton: {
     width: 40,
     height: 40,

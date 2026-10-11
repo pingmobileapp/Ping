@@ -5,8 +5,11 @@ import { colors } from '../lib/theme';
 
 const MENU_WIDTH = 200;
 
-const logoBlue = require('../assets/images/ping-logo-blue.png');
-const logoRed = require('../assets/images/ping-logo-red.png');
+// The app-icon mark (blue = nothing new, red = something new), trimmed and
+// made transparent from assets/images/splash-icon.png and "icon red.png" so
+// it sits cleanly on the header instead of inside a pale square.
+const logoBlue = require('../assets/images/ping-mark-blue.png');
+const logoRed = require('../assets/images/ping-mark-red.png');
 
 type Props = {
   hasNotifications?: boolean;
@@ -52,7 +55,6 @@ export default function PingLogoMenu({ hasNotifications = false, onCreatePing }:
       <TouchableOpacity ref={buttonRef} onPress={openMenu} activeOpacity={0.8}>
         <View style={styles.logoWrap}>
           <Image source={hasNotifications ? logoRed : logoBlue} style={styles.logo} resizeMode="contain" />
-          {hasNotifications && <View style={styles.notificationDot} />}
         </View>
       </TouchableOpacity>
 
@@ -79,24 +81,10 @@ export default function PingLogoMenu({ hasNotifications = false, onCreatePing }:
 }
 
 const styles = StyleSheet.create({
-  // Fixed to the blue mark's natural aspect ratio (355x214) so swapping to
-  // the red notification variant doesn't nudge the header layout.
-  logo: { height: 30, aspectRatio: 355 / 214 },
+  // Both marks share one square size, so the blue/red swap never nudges the
+  // header layout.
+  logo: { width: 34, height: 34 },
   logoWrap: { position: 'relative' },
-  // A second, more obvious notification cue than the red/blue logo swap
-  // alone — sized a bit bigger than the small signal-dot already in the
-  // wordmark art itself, so it doesn't get mistaken for part of the logo.
-  notificationDot: {
-    position: 'absolute',
-    bottom: -2,
-    left: -2,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: colors.danger,
-    borderWidth: 1.5,
-    borderColor: colors.background,
-  },
   backdrop: { flex: 1 },
   menu: {
     position: 'absolute',

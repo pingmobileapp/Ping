@@ -20,7 +20,7 @@ import { colors } from '../../lib/theme';
 
 WebBrowser.maybeCompleteAuthSession();
 
-const logoBlue = require('../../assets/images/ping-logo-blue.png');
+const logoBlue = require('../../assets/images/ping-mark-blue.png');
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -165,6 +165,9 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
       >
       <Image source={logoBlue} style={styles.logo} resizeMode="contain" />
+      {/* The mark is icon-only (the old logo spelled out "Ping"), so the name
+          is set as text under it. */}
+      <Text style={styles.wordmark}>Ping</Text>
       <Text style={styles.subheader}>{isSignUp ? 'Create an account' : 'Welcome back'}</Text>
 
       {appleAvailable && (
@@ -231,7 +234,8 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   container: { flexGrow: 1, backgroundColor: colors.background, padding: 24, justifyContent: 'center' },
-  logo: { height: 64, aspectRatio: 355 / 214, alignSelf: 'center', marginBottom: 4 },
+  logo: { width: 72, height: 72, alignSelf: 'center', marginBottom: 8 },
+  wordmark: { color: colors.textPrimary, fontSize: 34, fontWeight: '800', textAlign: 'center', marginBottom: 4 },
   subheader: { color: colors.textSecondary, fontSize: 16, textAlign: 'center', marginBottom: 32 },
   appleButton: { height: 48, marginBottom: 12 },
   googleButton: {
