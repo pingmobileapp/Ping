@@ -19,6 +19,7 @@ import { pickProfileImage } from '../lib/imagePicker';
 import { uploadAvatarImage } from '../lib/imageUpload';
 import { normalizePhone } from '../lib/phone';
 import { healInviteLinks } from '../lib/healInvites';
+import { requestAppTourReplay } from '../lib/appTour';
 import { colors } from '../lib/theme';
 import { fetchConnectStatus, startConnectOnboarding, ConnectAccountState } from '../lib/stripeConnect';
 import { DISCOVER_LISTINGS_ENABLED } from '../lib/features';
@@ -287,6 +288,21 @@ export default function SettingsScreen() {
             <Text style={styles.helperText}>
               Fix names and numbers, find people listed twice, and remove contacts you don't need.
             </Text>
+          </View>
+
+          <View style={styles.payoutsSection}>
+            <TouchableOpacity
+              style={styles.payoutsRow}
+              onPress={async () => {
+                if (!session?.user?.id) return;
+                await requestAppTourReplay(session.user.id);
+                router.back();
+              }}
+            >
+              <Text style={styles.payoutsStatusText}>App tour</Text>
+              <Text style={styles.saveText}>Take the tour ›</Text>
+            </TouchableOpacity>
+            <Text style={styles.helperText}>A quick walk through where everything is on the Home screen.</Text>
           </View>
 
           {isAdmin && (

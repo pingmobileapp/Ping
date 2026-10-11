@@ -43,6 +43,8 @@ import PingLogoMenu from "../../components/PingLogoMenu";
 import ProfileMenu from "../../components/ProfileMenu";
 import FilterMenu, { HomeView, ListFilter, VIEW_LABELS } from "../../components/FilterMenu";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import AppTour, { Rect, TourStep } from "../../components/AppTour";
+import { markAppTourDone, shouldShowAppTour } from "../../lib/appTour";
 import ScheduleReviewModal from "../../components/ScheduleReviewModal";
 import WeekGrid, { WeekGridHandle } from "../../components/WeekGrid";
 import { useAuth } from "../../lib/AuthContext";
@@ -184,6 +186,117 @@ export default function HomeScreen() {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const landscapeWeek = viewMode === "week" && windowWidth > windowHeight && Math.min(windowWidth, windowHeight) < 600;
   const insets = useSafeAreaInsets();
+
+  // New-user tour (components/AppTour.tsx, lib/appTour.ts). Each ref marks
+  // something the tour points at; it's measured live when that step shows.
+  const tourRefs = {
+    root: useRef<View>(null),
+    logo: useRef<View>(null),
+    create: useRef<View>(null),
+    groups: useRef<View>(null),
+    profile: useRef<View>(null),
+    calendar: useRef<View>(null),
+    upcoming: useRef<View>(null),
+    fab: useRef<View>(null),
+  };
+  const [tourVisible, setTourVisible] = useState(false);
+  const measureRef = (ref: React.RefObject<View | null>) => (done: (r: Rect | null) => void) => {
+    if (!ref.current) return done(null);
+    ref.current.measureInWindow((x, y, width, height) => done({ x, y, width, height }));
+  };
+  const tourSteps: TourStep[] = [
+    {
+      title: "Welcome to Ping 👋",
+      body: "Ping makes it easy to plan get-togethers with family and friends. Here's a quick look around - it takes about 30 seconds.",
+    },
+    {
+      title: "Your calendar",
+      body: "Switch between Week and Month here, and use the arrows to move around. Tap any day to see what's happening.",
+      measure: measureRef(tourRefs.calendar),
+    },
+    {
+      title: "Notes & to-dos",
+      body:
+        viewMode === "week"
+          ? 'Tap any day here, then "+ Note" to jot down a note or a to-do list for that day. Check things off as you go.'
+          : 'In Week view, tap any day, then "+ Note" to jot down a note or a to-do list for that day. Check things off as you go.',
+      // Day notes live in Week view, in the strip of days right under the
+      // Week/Month bar (WeekGrid's day-label row, 36pt tall). In Month view
+      // there's nothing to point at, so the bubble just shows centered.
+      measure: (done) => {
+        if (viewMode !== "week" || !tourRefs.calendar.current) return done(null);
+        tourRefs.calendar.current.measureInWindow((x, y, width, height) =>
+          done({ x, y: y + height, width, height: 36 })
+        );
+      },
+    },
+    {
+      title: "Upcoming",
+      body: "Everything you're invited to or hosting shows up here. Filter switches between just your Pings and All, which adds your phone's calendar too.",
+      measure: measureRef(tourRefs.upcoming),
+    },
+    {
+      title: "Add anything",
+      body: "Tap + to create a Ping, add a personal item to your calendar, or scan a photo of a schedule.",
+      measure: measureRef(tourRefs.fab),
+    },
+    {
+      title: "Send a Ping",
+      body: "Create is the quickest way to invite people: add what, when, and who. Anyone who isn't on Ping yet gets a text invite.",
+      measure: measureRef(tourRefs.create),
+    },
+    {
+      title: "Groups",
+      body: "Save the people you invite often, like family or a team, and invite everyone in one tap.",
+      measure: measureRef(tourRefs.groups),
+    },
+    {
+      title: "Notifications & messages",
+      body: "Tap the Ping logo for your notifications and message boards. It turns red when something new comes in.",
+      measure: measureRef(tourRefs.logo),
+    },
+    {
+      title: "Your menu",
+      body: "Settings, your contacts, and views like Drafts and Declined live here. You can replay this tour from Settings any time.",
+      measure: measureRef(tourRefs.profile),
+    },
+    {
+      title: "Discover",
+      body: "Find local events happening near you, and save the ones you're interested in.",
+      // The tab bar isn't part of this screen, but it sits directly below
+      // it: the Discover tab is the right half of that strip.
+      measure: (done) => {
+        if (!tourRefs.root.current) return done(null);
+        tourRefs.root.current.measureInWindow((x, y, width, height) =>
+          done({ x: x + width / 2, y: y + height, width: width / 2, height: 49 })
+        );
+      },
+    },
+  ];
+
+  // Shown once to new accounts, or again after "Take the app tour" in
+  // Settings. Waits until Home has loaded and nothing else is open, then
+  // gives the layout a moment to settle so every target can be measured.
+  useFocusEffect(
+    useCallback(() => {
+      const userId = session?.user?.id;
+      if (!userId || loading || landscapeWeek || modalVisible || detailVisible) return;
+      let cancelled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      shouldShowAppTour(userId, session?.user?.created_at).then((show) => {
+        if (!show || cancelled) return;
+        timer = setTimeout(() => !cancelled && setTourVisible(true), 900);
+      });
+      return () => {
+        cancelled = true;
+        if (timer) clearTimeout(timer);
+      };
+    }, [session?.user?.id, session?.user?.created_at, loading, landscapeWeek, modalVisible, detailVisible]),
+  );
+  const finishTour = () => {
+    setTourVisible(false);
+    if (session?.user?.id) markAppTourDone(session.user.id);
+  };
   const navigation = useNavigation();
   useFocusEffect(
     useCallback(() => {
@@ -1430,7 +1543,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   );
 
   const renderListHeader = (defaultTitle: string) => (
-    <View style={styles.listHeaderRow}>
+    <View style={styles.listHeaderRow} ref={tourRefs.upcoming} collapsable={false}>
       <Text style={styles.pageTitle}>
         {showHiddenOnly
           ? "Hidden"
@@ -1575,6 +1688,8 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
 
   return (
     <View
+      ref={tourRefs.root}
+      collapsable={false}
       style={[
         styles.container,
         landscapeWeek && { paddingTop: 4, paddingLeft: insets.left, paddingRight: insets.right, paddingBottom: insets.bottom },
@@ -1582,31 +1697,35 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     >
       {!landscapeWeek && (
         <View style={styles.headerRow}>
-          <PingLogoMenu
-            hasNotifications={unreadCount > 0}
-            onCreatePing={() => setModalVisible(true)}
-          />
+          <View ref={tourRefs.logo} collapsable={false}>
+            <PingLogoMenu
+              hasNotifications={unreadCount > 0}
+              onCreatePing={() => setModalVisible(true)}
+            />
+          </View>
           <View style={styles.headerActions}>
-            <TouchableOpacity onPress={() => setModalVisible(true)}>
+            <TouchableOpacity ref={tourRefs.create} onPress={() => setModalVisible(true)}>
               <Text style={styles.createText}>Create</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => router.push("/groups")}>
+            <TouchableOpacity ref={tourRefs.groups} onPress={() => router.push("/groups")}>
               <Text style={styles.groupsText}>Groups</Text>
             </TouchableOpacity>
-            <ProfileMenu
-              availableViews={availableViews}
-              onSelectView={(view) => {
-                setActiveView(view);
-                revealFilteredList();
-              }}
-            />
+            <View ref={tourRefs.profile} collapsable={false}>
+              <ProfileMenu
+                availableViews={availableViews}
+                onSelectView={(view) => {
+                  setActiveView(view);
+                  revealFilteredList();
+                }}
+              />
+            </View>
           </View>
         </View>
       )}
 
       <View style={styles.contentArea} onLayout={handleContentLayout}>
         <View style={styles.calendarWrapper}>
-          <View style={styles.calendarHeaderRow}>
+          <View style={styles.calendarHeaderRow} ref={tourRefs.calendar} collapsable={false}>
             <CalendarHeaderRow
               title={viewMode === "month" ? monthLabel : formatWeekRangeLabel(visibleWeekStart)}
               onPrev={() => (viewMode === "month" ? changeMonth(-1) : weekGridRef.current?.scrollByDays(-7))}
@@ -1703,6 +1822,8 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
         )}
       </View>
 
+      <AppTour visible={tourVisible} steps={tourSteps} onFinish={finishTour} />
+
       {fabMenuVisible && (
         <Pressable
           style={styles.fabMenuBackdrop}
@@ -1712,6 +1833,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
 
       {!landscapeWeek && (
         <TouchableOpacity
+          ref={tourRefs.fab}
           style={styles.fab}
           onPress={() => setFabMenuVisible(true)}
           activeOpacity={0.85}
