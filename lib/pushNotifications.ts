@@ -40,15 +40,27 @@ Notifications.setNotificationCategoryAsync('invite', [
 // backgrounded quick-action tap can't do - no buttons at all here, so
 // tapping the notification just opens the app to InvitePopup (see
 // notify.ts/send-push's hasPrice handling) instead of wrongly accepting
-// for free.
-Notifications.setNotificationCategoryAsync('invite_priced', []).catch((err) =>
-  console.error('Error registering invite_priced notification category:', err)
-);
+// for free. iOS only: Android rejects a category with no actions, and an
+// Android notification with no category already shows no buttons.
+if (Platform.OS === 'ios') {
+  Notifications.setNotificationCategoryAsync('invite_priced', []).catch((err) =>
+    console.error('Error registering invite_priced notification category:', err)
+  );
+}
 
 export async function registerForPushNotifications(userId: string) {
   if (!Device.isDevice) {
     console.log('Push notifications require a physical device, not a simulator.');
     return;
+  }
+
+  // Android 13+ won't show the permission prompt until the app has at
+  // least one notification channel, so create it before asking.
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('default', {
+      name: 'default',
+      importance: Notifications.AndroidImportance.DEFAULT,
+    });
   }
 
   const { status: existingStatus } = await Notifications.getPermissionsAsync();
@@ -62,13 +74,6 @@ export async function registerForPushNotifications(userId: string) {
   if (finalStatus !== 'granted') {
     console.log('Push notification permission denied.');
     return;
-  }
-
-  if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('default', {
-      name: 'default',
-      importance: Notifications.AndroidImportance.DEFAULT,
-    });
   }
 
   const projectId = Constants.expoConfig?.extra?.eas?.projectId;

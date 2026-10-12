@@ -1,5 +1,5 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, Pressable, StyleSheet, Dimensions, Modal } from 'react-native';
+import { View, Text, TouchableOpacity, Pressable, StyleSheet, Dimensions, Modal, Platform } from 'react-native';
 import Animated, {
   Extrapolation,
   interpolate,
@@ -342,6 +342,14 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     // until the JS stack overflows and the app aborts - the same crash
     // signature as build 102. The nested handler just records the offset.
     const syncing = useSharedValue(false);
+    // Which scroll view the user's finger is on (1 = grid, 2 = date row);
+    // 0 = nothing being dragged, which the grid leads (arrow buttons,
+    // rotation realign). Only the leading view pushes its offset onto the
+    // others. On Android a scrollTo's onScroll arrives a frame later, not
+    // inside the same call, so the syncing flag alone can't stop the views
+    // echoing each other - the date row and grid drifted apart (reported on
+    // the Android emulator, 2026-10-04).
+    const driver = useSharedValue(0);
 
     const horizontalScrollHandler = useAnimatedScrollHandler({
       onScroll: (event) => {
@@ -352,6 +360,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
           }
           return;
         }
+        if (driver.value === 2) return;
         scrollX.value = event.contentOffset.x;
         if (syncing.value) return;
         syncing.value = true;
@@ -360,6 +369,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
         syncing.value = false;
       },
       onBeginDrag: () => {
+        driver.value = 1;
         if (guardX.value >= 0) {
           guardX.value = -1;
           runOnJS(endRealign)();
@@ -388,6 +398,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
           }
           return;
         }
+        if (driver.value !== 2) return;
         scrollX.value = event.contentOffset.x;
         if (syncing.value) return;
         syncing.value = true;
@@ -396,6 +407,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
         syncing.value = false;
       },
       onBeginDrag: () => {
+        driver.value = 2;
         if (guardX.value >= 0) {
           guardX.value = -1;
           runOnJS(endRealign)();
@@ -406,6 +418,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       },
       onMomentumEnd: (event) => {
         runOnJS(noteSettledOffset)(event.contentOffset.x);
+        driver.value = 0;
       },
     });
 
@@ -449,6 +462,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       setFocusedDayKey(null);
       scrollX.value = x;
       guardX.value = x;
+      driver.value = 0;
       const apply = () => {
         mainScrollRef.current?.scrollTo({ x, y: 0, animated: false });
         dayHeaderRef.current?.scrollTo({ x, y: 0, animated: false });
@@ -537,6 +551,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
         const targetIndex = Math.max(0, Math.min(dayCount - 1, currentIndex + delta));
         const target = dayOffsets[targetIndex] ?? 0;
         leadingIndexRef.current = targetIndex;
+        driver.value = 0;
         mainScrollRef.current?.scrollTo({ x: target, y: 0, animated: true });
       },
     }));
@@ -560,7 +575,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
             snapToOffsets={dayOffsets}
             decelerationRate="fast"
             showsHorizontalScrollIndicator={false}
-            removeClippedSubviews
+            removeClippedSubviews={Platform.OS === 'ios'}
           >
             {dayKeys.map((d, i) => {
               const key = toDayKey(d);
@@ -587,7 +602,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
             horizontal
             scrollEnabled={false}
             showsHorizontalScrollIndicator={false}
-            removeClippedSubviews
+            removeClippedSubviews={Platform.OS === 'ios'}
           >
             {dayKeys.map((d, i) => {
               const key = toDayKey(d);
@@ -660,7 +675,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
               onScroll={horizontalScrollHandler}
               scrollEventThrottle={16}
               showsHorizontalScrollIndicator={false}
-              removeClippedSubviews
+              removeClippedSubviews={Platform.OS === 'ios'}
               style={{ height: GRID_HEIGHT }}
             >
               {dayKeys.map((d, dayIndex) => {
@@ -688,6 +703,11 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                       </View>
                     )}
                     {dayEvents.map((ev, evIndex) => {
+                      // A widened day has room to put overlapping events
+                      // side by side (see lane/laneCount in
+                      // lib/weekTimeline.ts), so every title is readable.
+                      const sideBySide = key === focusedDayKey && ev.laneCount > 1;
+                      const laneWidth = (dayWidths[dayIndex] - 4) / ev.laneCount;
                       // Same-time events cascade as offset cards rather than
                       // fully overlapping - each later card in the stack is
                       // nudged right so the one(s) behind it still show
@@ -706,10 +726,11 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                             {
                               top: (ev.startMinutes / 60) * HOUR_BLOCK_HEIGHT,
                               height: Math.max(18, ((ev.endMinutes - ev.startMinutes) / 60) * HOUR_BLOCK_HEIGHT),
-                              left: 2 + ev.stackIndex * STACK_OFFSET,
-                              right: 2,
+                              ...(sideBySide
+                                ? { left: 2 + ev.lane * laneWidth, width: laneWidth - 2 }
+                                : { left: 2 + ev.stackIndex * STACK_OFFSET, right: 2 }),
                               backgroundColor: ev.color || colors.primary,
-                              zIndex: ev.stackIndex,
+                              zIndex: sideBySide ? 0 : ev.stackIndex,
                             },
                           ]}
                           // One tap opens the event, widened day or not. It
@@ -720,7 +741,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                           onPress={() => onEventPress(ev.id)}
                           onLongPress={onEventLongPress ? () => onEventLongPress(ev.id) : undefined}
                         >
-                          <Text style={[styles.eventBlockText, ev.textColor ? { color: ev.textColor } : null]} numberOfLines={2}>
+                          <Text style={[styles.eventBlockText, ev.textColor ? { color: ev.textColor } : null]} numberOfLines={sideBySide ? 3 : 2}>
                             {ev.title}
                           </Text>
                         </TouchableOpacity>

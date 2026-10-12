@@ -1,5 +1,5 @@
-import React, { useRef, useState } from 'react';
-import { View, Image, TouchableOpacity, StyleSheet, Modal, Pressable, Text } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Image, TouchableOpacity, StyleSheet, Modal, Pressable, Text, Animated, AccessibilityInfo } from 'react-native';
 import { useRouter } from 'expo-router';
 import { colors } from '../lib/theme';
 
@@ -7,9 +7,66 @@ const MENU_WIDTH = 200;
 
 // The app-icon mark (blue = nothing new, red = something new), trimmed and
 // made transparent from assets/images/splash-icon.png and "icon red.png" so
-// it sits cleanly on the header instead of inside a pale square.
-const logoBlue = require('../assets/images/ping-mark-blue.png');
-const logoRed = require('../assets/images/ping-mark-red.png');
+// it sits cleanly on the header instead of inside a pale square. The blue
+// one is tinted to colors.primary so it matches Create/Groups beside it
+// (TestFlight feedback: "change it out for the icon that matches the color
+// of this page").
+const logoBlue = require('../assets/images/ping-mark-app-blue.png');
+// The red mark split into its three shapes (same canvas, so they stack
+// exactly), for the "sending a signal" animation below.
+const redDot = require('../assets/images/ping-mark-red-dot.png');
+const redMid = require('../assets/images/ping-mark-red-mid.png');
+const redOuter = require('../assets/images/ping-mark-red-outer.png');
+
+// When something's new, the red mark slowly "pings": just the dot, then the
+// dot and middle arc, then the full mark, then back to the dot - like it's
+// sending out a signal. Static for anyone with Reduce Motion turned on.
+const PHASE_MS = 650;
+const FADE_MS = 220;
+
+function SignalingRedMark() {
+  const mid = useRef(new Animated.Value(0)).current;
+  const outer = useRef(new Animated.Value(0)).current;
+  const [reduceMotion, setReduceMotion] = useState(false);
+
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion).catch(() => {});
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => sub.remove();
+  }, []);
+
+  useEffect(() => {
+    if (reduceMotion) {
+      mid.setValue(1);
+      outer.setValue(1);
+      return;
+    }
+    mid.setValue(0);
+    outer.setValue(0);
+    const fade = (v: Animated.Value, to: number) =>
+      Animated.timing(v, { toValue: to, duration: FADE_MS, useNativeDriver: true });
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.delay(PHASE_MS), // 1: dot
+        fade(mid, 1),
+        Animated.delay(PHASE_MS), // 2: dot + middle
+        fade(outer, 1),
+        Animated.delay(PHASE_MS * 1.4), // 3: full mark, held a little longer
+        Animated.parallel([fade(mid, 0), fade(outer, 0)]),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [reduceMotion, mid, outer]);
+
+  return (
+    <View style={styles.logo}>
+      <Image source={redDot} style={styles.layer} resizeMode="contain" />
+      <Animated.Image source={redMid} style={[styles.layer, { opacity: mid }]} resizeMode="contain" />
+      <Animated.Image source={redOuter} style={[styles.layer, { opacity: outer }]} resizeMode="contain" />
+    </View>
+  );
+}
 
 type Props = {
   hasNotifications?: boolean;
@@ -54,7 +111,11 @@ export default function PingLogoMenu({ hasNotifications = false, onCreatePing }:
     <>
       <TouchableOpacity ref={buttonRef} onPress={openMenu} activeOpacity={0.8}>
         <View style={styles.logoWrap}>
-          <Image source={hasNotifications ? logoRed : logoBlue} style={styles.logo} resizeMode="contain" />
+          {hasNotifications ? (
+            <SignalingRedMark />
+          ) : (
+            <Image source={logoBlue} style={styles.logo} resizeMode="contain" />
+          )}
         </View>
       </TouchableOpacity>
 
@@ -83,7 +144,8 @@ export default function PingLogoMenu({ hasNotifications = false, onCreatePing }:
 const styles = StyleSheet.create({
   // Both marks share one square size, so the blue/red swap never nudges the
   // header layout.
-  logo: { width: 34, height: 34 },
+  logo: { width: 28, height: 28 },
+  layer: { position: 'absolute', top: 0, left: 0, width: 28, height: 28 },
   logoWrap: { position: 'relative' },
   backdrop: { flex: 1 },
   menu: {

@@ -13,6 +13,13 @@
     },
     "production": {
       "autoIncrement": true
+    },
+    "android-emulator": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleDebug"
+      }
     }
   },
   "submit": {

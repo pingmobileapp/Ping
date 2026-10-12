@@ -103,7 +103,9 @@ export default function EventDetailModal({ visible, eventId, onClose, startOnMes
   const backRotateY = flipAnim.interpolate({ inputRange: [0, 180], outputRange: ['-180deg', '-360deg'] });
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={handleClose}>
+    // Android's back button: from messages, flip back to the details face
+    // (same as the "‹ Event Details" link); from details, close.
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={isFlipped ? toggleFlip : handleClose}>
       {/* RN's Modal renders into its own native root, separate from the
           GestureHandlerRootView wrapping the rest of the app in
           app/_layout.tsx - without this, react-native-gesture-handler

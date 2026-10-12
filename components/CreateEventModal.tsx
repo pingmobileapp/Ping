@@ -152,7 +152,6 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
   // value is never tucked away out of sight.
   const hasExtras =
     description.trim() !== '' ||
-    isMultiDay ||
     !!recurrence ||
     isPublic ||
     discoverable ||
@@ -985,6 +984,19 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
               </View>
             </TouchableOpacity>
 
+            {/* Right under All day, not behind More options - it's a "when"
+                choice, and that's where people look for it (TestFlight
+                feedback: "The multi day option is not here"). */}
+            <TouchableOpacity style={styles.publicRow} onPress={toggleMultiDay}>
+              <View style={[styles.checkbox, isMultiDay && styles.checkboxChecked]}>
+                {isMultiDay && <Text style={styles.checkmark}>✓</Text>}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.publicRowTitle}>Multi-day event</Text>
+                <Text style={styles.publicRowSubtitle}>Spans more than one day, like a trip</Text>
+              </View>
+            </TouchableOpacity>
+
 
             <Text style={styles.label}>Location</Text>
             <TextInput
@@ -1127,7 +1139,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
               <TouchableOpacity style={styles.moreOptionsButton} onPress={() => setMoreOpen((v) => !v)}>
                 <Text style={styles.moreOptionsTitle}>{moreOpen ? 'Fewer options ▴' : 'More options ▾'}</Text>
                 {!moreOpen && (
-                  <Text style={styles.moreOptionsHint}>Description, what to bring, repeat, co-hosts, multi-day{DISCOVER_LISTINGS_ENABLED ? ', Discover' : ''}</Text>
+                  <Text style={styles.moreOptionsHint}>Description, what to bring, repeat, co-hosts{DISCOVER_LISTINGS_ENABLED ? ', Discover' : ''}</Text>
                 )}
               </TouchableOpacity>
             )}
@@ -1143,16 +1155,6 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
                 onChangeText={setDescription}
                 multiline
               />
-
-              <TouchableOpacity style={styles.publicRow} onPress={toggleMultiDay}>
-                <View style={[styles.checkbox, isMultiDay && styles.checkboxChecked]}>
-                  {isMultiDay && <Text style={styles.checkmark}>✓</Text>}
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.publicRowTitle}>Multi-day event</Text>
-                  <Text style={styles.publicRowSubtitle}>Spans more than one day, like a trip</Text>
-                </View>
-              </TouchableOpacity>
 
               <RecurrencePicker value={recurrence} onChange={setRecurrence} checkboxSize={24} />
 

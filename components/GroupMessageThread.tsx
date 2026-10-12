@@ -439,8 +439,15 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
           ListEmptyComponent={
             // FlatList's `inverted` prop flips its whole content via a
             // transform, including ListEmptyComponent — counter-flip so
-            // this text renders right-side up.
-            <Text style={[styles.emptyText, { transform: [{ scaleY: -1 }] }]}>
+            // this text renders right-side up. Android flips both axes
+            // (scale -1), iOS only the vertical one; undoing just scaleY
+            // on Android left the text mirrored.
+            <Text
+              style={[
+                styles.emptyText,
+                { transform: Platform.OS === 'android' ? [{ scale: -1 }] : [{ scaleY: -1 }] },
+              ]}
+            >
               No messages yet — say something!
             </Text>
           }

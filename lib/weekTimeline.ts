@@ -15,6 +15,11 @@ export type AllDayItem = { id: string; title: string; dayKey: string };
 // stackIndex steps so overlapping events cascade into view as offset
 // cards instead of stacking flush on top of each other, all still full-
 // width rather than split into side-by-side lanes.
+// lane/laneCount are for a WIDENED day only: there, overlapping events sit
+// side by side (lane 0..laneCount-1 within their overlap group) so every
+// title is readable - asked for 2026-10-11, "an easier way to see
+// overlapping events". Narrow days keep the cascade (lanes there read as
+// too gridded, per the Aug 25 change).
 export type DayColumnEvent = {
   id: string;
   title: string;
@@ -24,9 +29,11 @@ export type DayColumnEvent = {
   // Dark text on a light block - only starred Discover events set it.
   textColor?: string;
   stackIndex: number;
+  lane: number;
+  laneCount: number;
 };
 
-type RawDayEvent = Omit<DayColumnEvent, 'stackIndex'>;
+type RawDayEvent = Omit<DayColumnEvent, 'stackIndex' | 'lane' | 'laneCount'>;
 
 const eventsOverlap = (a: RawDayEvent, b: RawDayEvent) => a.endMinutes > b.startMinutes && a.startMinutes < b.endMinutes;
 
@@ -39,14 +46,42 @@ export function packDayEvents(dayEvents: RawDayEvent[]): DayColumnEvent[] {
   const sorted = [...dayEvents].sort((a, b) => a.startMinutes - b.startMinutes || a.endMinutes - b.endMinutes);
   const active: RawDayEvent[] = [];
 
-  return sorted.map((ev) => {
+  const packed: DayColumnEvent[] = sorted.map((ev) => {
     for (let i = active.length - 1; i >= 0; i--) {
       if (!eventsOverlap(active[i], ev)) active.splice(i, 1);
     }
     const stackIndex = active.length;
     active.push(ev);
-    return { ...ev, stackIndex };
+    return { ...ev, stackIndex, lane: 0, laneCount: 1 };
   });
+
+  // Lanes: walk events in start order, grouping ones that overlap (directly
+  // or through a chain). Each event takes the first lane whose last event
+  // has already ended; every event in a group shares the group's lane count.
+  let group: DayColumnEvent[] = [];
+  let laneEnds: number[] = [];
+  let groupEnd = -1;
+  const closeGroup = () => {
+    group.forEach((g) => (g.laneCount = laneEnds.length));
+    group = [];
+    laneEnds = [];
+  };
+  for (const ev of packed) {
+    if (group.length > 0 && ev.startMinutes >= groupEnd) closeGroup();
+    let lane = laneEnds.findIndex((end) => end <= ev.startMinutes);
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(ev.endMinutes);
+    } else {
+      laneEnds[lane] = ev.endMinutes;
+    }
+    ev.lane = lane;
+    group.push(ev);
+    groupEnd = Math.max(groupEnd, ev.endMinutes);
+  }
+  closeGroup();
+
+  return packed;
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');

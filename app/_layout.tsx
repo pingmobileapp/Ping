@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, useRouter } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import { AuthProvider, useAuth } from '../lib/AuthContext';
 import { NotificationsProvider, useNotificationsContext } from '../lib/NotificationsContext';
 import { useAccountGate } from '../lib/useAccountGate';
@@ -107,6 +108,9 @@ function RootNavigation() {
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
+      {/* Ping's screens are always light, so the clock/battery icons must
+          always be dark - Android otherwise draws them white on white. */}
+      <StatusBar style="dark" />
       <AuthProvider>
         <RootNavigation />
       </AuthProvider>
