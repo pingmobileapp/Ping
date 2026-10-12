@@ -11,6 +11,7 @@ import { PingEvent } from '../components/EventCard';
 import EventDetailModal from '../components/EventDetailModal';
 import GroupChatModal from '../components/GroupChatModal';
 import { supabase } from '../supabase';
+import { useNotificationsContext } from '../lib/NotificationsContext';
 
 // The Message Board used to live inline on Home, revealed by dragging the
 // calendar sheet down - that drag range now belongs to Month view's own
@@ -28,6 +29,16 @@ export default function MessagesScreen() {
     useLatestGroupMessages(session?.user?.id);
 
   const [boardView, setBoardView] = useState<'events' | 'groups'>('events');
+  // Conversations with an unread message get a red dot (and bold text) -
+  // message notifications live here rather than in Notifications. Opening
+  // the conversation marks them read (MessageThread / GroupMessageThread).
+  const { notifications } = useNotificationsContext();
+  const unreadEventIds = new Set(
+    notifications.filter((n) => n.type === 'message' && n.event_id && !n.read_at).map((n) => n.event_id!)
+  );
+  const unreadGroupIds = new Set(
+    notifications.filter((n) => n.type === 'group_message' && n.group_id && !n.read_at).map((n) => n.group_id!)
+  );
   const [events, setEvents] = useState<PingEvent[]>([]);
   const [groups, setGroups] = useState<PingGroup[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
@@ -171,11 +182,13 @@ export default function MessagesScreen() {
       </View>
 
       <View style={styles.toggleRow}>
-        <TouchableOpacity onPress={() => setBoardView('events')}>
+        <TouchableOpacity style={styles.toggleItem} onPress={() => setBoardView('events')}>
           <Text style={[styles.toggleText, boardView === 'events' && styles.toggleTextActive]}>Events</Text>
+          {unreadEventIds.size > 0 && <View style={styles.toggleDot} />}
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setBoardView('groups')}>
+        <TouchableOpacity style={styles.toggleItem} onPress={() => setBoardView('groups')}>
           <Text style={[styles.toggleText, boardView === 'groups' && styles.toggleTextActive]}>Groups</Text>
+          {unreadGroupIds.size > 0 && <View style={styles.toggleDot} />}
         </TouchableOpacity>
       </View>
 
@@ -190,7 +203,12 @@ export default function MessagesScreen() {
           extraData={latestByEvent}
           refreshControl={<RefreshControl refreshing={false} onRefresh={handleRefresh} tintColor={colors.primary} />}
           renderItem={({ item }) => (
-            <CompactEventRow event={item} snippet={latestByEvent[item.id]} onPress={openEvent} />
+            <CompactEventRow
+              event={item}
+              snippet={latestByEvent[item.id]}
+              unread={unreadEventIds.has(item.id)}
+              onPress={openEvent}
+            />
           )}
           ListEmptyComponent={<Text style={styles.emptyText}>No events yet.</Text>}
         />
@@ -201,7 +219,12 @@ export default function MessagesScreen() {
           extraData={latestByGroup}
           refreshControl={<RefreshControl refreshing={false} onRefresh={handleRefresh} tintColor={colors.primary} />}
           renderItem={({ item }) => (
-            <CompactGroupRow group={item} snippet={latestByGroup[item.id]} onPress={openGroup} />
+            <CompactGroupRow
+              group={item}
+              snippet={latestByGroup[item.id]}
+              unread={unreadGroupIds.has(item.id)}
+              onPress={openGroup}
+            />
           )}
           ListEmptyComponent={<Text style={styles.emptyText}>No groups yet — create one from the Groups screen.</Text>}
         />
@@ -239,5 +262,7 @@ const styles = StyleSheet.create({
   toggleRow: { flexDirection: 'row', gap: 16, paddingHorizontal: 20, marginBottom: 8 },
   toggleText: { color: colors.textSecondary, fontSize: 14, fontWeight: '600' },
   toggleTextActive: { color: colors.primary },
+  toggleItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  toggleDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.danger },
   emptyText: { color: colors.textMuted, textAlign: 'center', marginTop: 40, fontSize: 15 },
 });

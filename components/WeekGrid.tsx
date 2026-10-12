@@ -733,12 +733,15 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                               zIndex: sideBySide ? 0 : ev.stackIndex,
                             },
                           ]}
-                          // One tap opens the event, widened day or not. It
-                          // used to take two (the first only widened the
-                          // day), which made opening an event feel broken -
-                          // hiding and reporting are on the event screen's
-                          // ••• menu; holding an event here is a shortcut.
-                          onPress={() => onEventPress(ev.id)}
+                          // On a narrow day, the first tap widens the day so
+                          // everything on it is readable (overlaps go side by
+                          // side); tapping an event in the widened day opens
+                          // it (TestFlight feedback, build 113). 1.1.2 had
+                          // made every tap open straight away, which left
+                          // crowded days unreadable. Hiding and reporting are
+                          // on the event screen's ••• menu; holding an event
+                          // here is a shortcut.
+                          onPress={() => (key === focusedDayKey ? onEventPress(ev.id) : handleDayTap(key, dayIndex))}
                           onLongPress={onEventLongPress ? () => onEventLongPress(ev.id) : undefined}
                         >
                           <Text style={[styles.eventBlockText, ev.textColor ? { color: ev.textColor } : null]} numberOfLines={sideBySide ? 3 : 2}>

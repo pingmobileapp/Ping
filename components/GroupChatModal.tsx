@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Modal, View, TouchableOpacity, Text, StyleSheet } from 'react-native';
+import { Modal, View, TouchableOpacity, Text, StyleSheet, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import ReAnimated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
@@ -20,6 +20,7 @@ type Props = {
 export default function GroupChatModal({ visible, groupId, groupName, onClose }: Props) {
   const router = useRouter();
   const dragY = useSharedValue(0);
+  const { height: screenHeight } = useWindowDimensions();
 
   useEffect(() => {
     if (visible) dragY.value = 0;
@@ -38,11 +39,12 @@ export default function GroupChatModal({ visible, groupId, groupName, onClose }:
     })
     .onEnd((e) => {
       if (e.translationY > 100 || e.velocityY > 800) {
-        dragY.value = withTiming(800, { duration: 200 }, (finished) => {
-          if (finished) {
-            dragY.value = 0;
-            runOnJS(onClose)();
-          }
+        // Slide fully off the bottom and stay there - the modal closes from
+        // there. Snapping back to 0 first (it used to) flashed the card back
+        // to full height for a frame (TestFlight feedback, build 113); the
+        // open effect resets it for next time.
+        dragY.value = withTiming(screenHeight, { duration: 200 }, (finished) => {
+          if (finished) runOnJS(onClose)();
         });
       } else {
         dragY.value = withSpring(0, { damping: 18 });

@@ -15,6 +15,11 @@ export type NotificationRow = {
   read_at: string | null;
 };
 
+// Chat messages (event and group) live in Messages, with a red dot there,
+// not in the Notifications list (TestFlight feedback, build 113). They still
+// turn the Ping logo red and count toward the app icon badge.
+export const isMessageNotification = (n: { type: string }) => n.type === 'message' || n.type === 'group_message';
+
 export type PendingInvite = {
   id: string;
   event_id: string;
@@ -153,10 +158,13 @@ export function useNotifications(userId?: string | null) {
   }, []);
 
   const markAllRead = useCallback(async () => {
-    const unreadIds = notifications.filter((n) => !n.read_at).map((n) => n.id);
+    // Only what the Notifications list shows - message notifications clear
+    // when their conversation is opened.
+    const unreadIds = notifications.filter((n) => !n.read_at && !isMessageNotification(n)).map((n) => n.id);
     if (unreadIds.length === 0) return;
     const now = new Date().toISOString();
-    setNotifications((prev) => prev.map((n) => (n.read_at ? n : { ...n, read_at: now })));
+    const marked = new Set(unreadIds);
+    setNotifications((prev) => prev.map((n) => (marked.has(n.id) ? { ...n, read_at: now } : n)));
     const { error } = await supabase.from('notifications').update({ read_at: now }).in('id', unreadIds);
     if (error) console.error('Error marking all notifications read:', error);
   }, [notifications]);
@@ -172,6 +180,8 @@ export function useNotifications(userId?: string | null) {
   }, []);
 
   const unreadCount = notifications.filter((n) => !n.read_at).length + pendingInvites.length;
+  const unreadMessageCount = notifications.filter((n) => !n.read_at && isMessageNotification(n)).length;
+  const unreadOtherCount = unreadCount - unreadMessageCount;
 
   // Pushes carry their own badge number (see supabase/functions/send-push),
   // but that only ever grows a stale number until the next push - reading
@@ -203,6 +213,8 @@ export function useNotifications(userId?: string | null) {
     notifications,
     pendingInvites,
     unreadCount,
+    unreadMessageCount,
+    unreadOtherCount,
     loading,
     refresh: fetchAll,
     markRead,

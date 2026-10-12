@@ -17,7 +17,7 @@ import { supabase } from '../supabase';
 import { useAuth } from '../lib/AuthContext';
 import { colors } from '../lib/theme';
 import { notify } from '../lib/notify';
-import { displayName } from '../lib/displayName';
+import { displayName, myDisplayName } from '../lib/displayName';
 import { useMessageReactions } from '../lib/useMessageReactions';
 import { reportContent, blockUser } from '../lib/moderation';
 import { containsObjectionableContent } from '../lib/contentFilter';
@@ -101,6 +101,22 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
       .then(({ data }) => {
         setIsMember(!!data);
         setMuted(!!data?.muted);
+      });
+  }, [groupId, session?.user?.id]);
+
+  // Opening the group chat clears its unread dot in Messages (and the Ping
+  // logo), the same way MessageThread does for event chats.
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    supabase
+      .from('notifications')
+      .update({ read_at: new Date().toISOString() })
+      .eq('recipient_id', session.user.id)
+      .eq('group_id', groupId)
+      .eq('type', 'group_message')
+      .is('read_at', null)
+      .then(({ error }) => {
+        if (error) console.error('Error marking group message notification read:', error);
       });
   }, [groupId, session?.user?.id]);
 
@@ -313,8 +329,7 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
       .map((m) => m.user_id as string)
       .filter((id) => id !== session.user.id);
 
-    const senderDisplayName =
-      session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Someone';
+    const senderDisplayName = await myDisplayName(session.user);
     const notifTitle = groupRow?.name ? `New message — ${groupRow.name}` : 'New group message';
     const notifBody = `${senderDisplayName}: ${body}`;
 

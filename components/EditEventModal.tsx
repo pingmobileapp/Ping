@@ -14,6 +14,7 @@ import {
   PanResponder,
   Alert,
   Image,
+  Dimensions,
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Calendar } from 'react-native-calendars';
@@ -197,14 +198,15 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       },
       onPanResponderRelease: (_, gesture) => {
         if (gesture.dy > 100 || gesture.vy > 0.8) {
+          // Slide fully off the bottom and stay there - the modal closes from
+          // there. Snapping back to 0 here first (it used to) flashed the card
+          // back to full height for a frame before it disappeared (TestFlight
+          // feedback, build 113). The open effect resets it for next time.
           Animated.timing(dragY, {
-            toValue: 800,
+            toValue: Dimensions.get('window').height,
             duration: 200,
             useNativeDriver: true,
-          }).start(() => {
-            dragY.setValue(0);
-            onClose();
-          });
+          }).start(() => onClose());
         } else {
           Animated.spring(dragY, { toValue: 0, useNativeDriver: true, bounciness: 6 }).start();
         }

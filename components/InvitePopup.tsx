@@ -3,7 +3,7 @@ import { Alert, Modal, View, Text, TouchableOpacity, StyleSheet, ActivityIndicat
 import { supabase } from '../supabase';
 import { useAuth } from '../lib/AuthContext';
 import { colors, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
-import { displayName } from '../lib/displayName';
+import { displayName, myDisplayName, useMyDisplayName } from '../lib/displayName';
 import { askRsvpScope, findMySeriesInvites, showRsvpError, submitRsvp, submitSeriesRsvp } from '../lib/rsvp';
 import { startEventCheckout } from '../lib/discoverCheckout';
 import { toListingActivity, activityKey, fetchInterestedKeys, toggleInterest } from '../lib/discoverActivities';
@@ -60,6 +60,7 @@ type ConflictState =
 
 export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
   const { session } = useAuth();
+  const myName = useMyDisplayName(session?.user);
 
   const [loading, setLoading] = useState(false);
   const [event, setEvent] = useState<PopupEvent | null>(null);
@@ -215,7 +216,7 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
     }
 
     const hostIds = [event.host_id, ...coHostIds].filter((id): id is string => !!id);
-    const responderName = displayName({ full_name: session.user.user_metadata?.full_name, email: session.user.email });
+    const responderName = await myDisplayName(session.user);
 
     // A repeating Ping: offer to answer every upcoming date at once (see
     // submitSeriesRsvp in lib/rsvp.ts).
@@ -389,10 +390,7 @@ export default function InvitePopup({ eventId, onClose, onOpenFull }: Props) {
         timeLabel={timeLabel}
         location={event.location}
         priceLabel={event.price_cents != null ? formatPrice(event.price_cents) : null}
-        buyerName={displayName({
-          full_name: session?.user?.user_metadata?.full_name,
-          email: session?.user?.email,
-        })}
+        buyerName={myName}
       />
     )}
     </>

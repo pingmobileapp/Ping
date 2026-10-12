@@ -54,5 +54,5 @@ const styles = StyleSheet.create({
   dateUnread: { color: colors.primary, fontWeight: '700' },
   preview: { color: colors.textSecondary, fontSize: 14, marginTop: 2 },
   previewUnread: { color: colors.textPrimary, fontWeight: '600' },
-  unreadDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.primary },
+  unreadDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.danger },
 });

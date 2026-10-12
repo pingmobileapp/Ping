@@ -15,7 +15,7 @@ import { runOnJS } from 'react-native-reanimated';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { colors } from '../../lib/theme';
 import { useAuth } from '../../lib/AuthContext';
-import { displayName } from '../../lib/displayName';
+import { useMyDisplayName } from '../../lib/displayName';
 import TicketModal from '../../components/TicketModal';
 import {
   Activity,
@@ -103,6 +103,7 @@ export default function DiscoverScreen() {
   const [freeOnly, setFreeOnly] = useState(false);
   const [showAllDay, setShowAllDay] = useState(false);
   const { session } = useAuth();
+  const myName = useMyDisplayName(session?.user);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [weatherByPingId, setWeatherByPingId] = useState<Record<string, DailyWeather>>({});
   const [interestedKeys, setInterestedKeys] = useState<Set<string>>(new Set());
@@ -594,10 +595,7 @@ export default function DiscoverScreen() {
         timeLabel={ticketActivity ? formatActivityTime(ticketActivity) : ''}
         location={ticketActivity?.location ?? null}
         priceLabel={ticketActivity?.priceLabel ?? null}
-        buyerName={displayName({
-          full_name: session?.user?.user_metadata?.full_name,
-          email: session?.user?.email,
-        })}
+        buyerName={myName}
       />
     </View>
   );

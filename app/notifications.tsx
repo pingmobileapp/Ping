@@ -4,7 +4,7 @@ import { Swipeable } from 'react-native-gesture-handler';
 import { Stack, useRouter, useFocusEffect } from 'expo-router';
 import { colors } from '../lib/theme';
 import { useNotificationsContext } from '../lib/NotificationsContext';
-import { NotificationRow as NotificationRowData } from '../lib/useNotifications';
+import { NotificationRow as NotificationRowData, isMessageNotification } from '../lib/useNotifications';
 import CompactEventRow from '../components/CompactEventRow';
 import NotificationRow from '../components/NotificationRow';
 
@@ -27,7 +27,7 @@ const renderDeleteAction = (dragX: Animated.AnimatedInterpolation<number>, onPre
 export default function NotificationsScreen() {
   const router = useRouter();
   const {
-    notifications,
+    notifications: allNotifications,
     pendingInvites,
     loading,
     refresh,
@@ -70,6 +70,8 @@ export default function NotificationsScreen() {
     }
   };
 
+  // Chat messages are shown in Messages instead (see isMessageNotification).
+  const notifications = allNotifications.filter((n) => !isMessageNotification(n));
   const hasUnread = notifications.some((n) => !n.read_at);
   const isEmpty = !loading && pendingInvites.length === 0 && notifications.length === 0;
 

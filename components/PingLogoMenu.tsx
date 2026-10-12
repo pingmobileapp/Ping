@@ -69,11 +69,20 @@ function SignalingRedMark() {
 }
 
 type Props = {
+  // Anything unread at all - turns the logo red and starts its signal.
   hasNotifications?: boolean;
-  onCreatePing: () => void;
+  // Unread chat messages - red dot on the Messages item.
+  hasUnreadMessages?: boolean;
+  // Unread everything-else (invites, RSVPs, updates) - red dot on
+  // Notifications.
+  hasUnreadNotifications?: boolean;
 };
 
-export default function PingLogoMenu({ hasNotifications = false, onCreatePing }: Props) {
+export default function PingLogoMenu({
+  hasNotifications = false,
+  hasUnreadMessages = false,
+  hasUnreadNotifications = false,
+}: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState({ top: 0, left: 0 });
@@ -84,11 +93,6 @@ export default function PingLogoMenu({ hasNotifications = false, onCreatePing }:
       setAnchor({ top: y + height + 8, left: x });
     });
     setOpen(true);
-  };
-
-  const handleCreatePing = () => {
-    setOpen(false);
-    onCreatePing();
   };
 
   // The Message Board used to also be reachable by dragging Home's
@@ -122,17 +126,14 @@ export default function PingLogoMenu({ hasNotifications = false, onCreatePing }:
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setOpen(false)}>
           <View style={[styles.menu, { top: anchor.top, left: anchor.left, width: MENU_WIDTH }]}>
-            <TouchableOpacity style={styles.menuItem} onPress={handleCreatePing}>
-              <Text style={styles.menuItemText}>Create a Ping</Text>
-            </TouchableOpacity>
-            <View style={styles.menuDivider} />
-            <TouchableOpacity style={styles.menuItem} onPress={handleOpenMessages}>
+            <TouchableOpacity style={[styles.menuItem, styles.menuItemRow]} onPress={handleOpenMessages}>
               <Text style={styles.menuItemText}>Messages</Text>
+              {hasUnreadMessages && <View style={styles.unreadDot} />}
             </TouchableOpacity>
             <View style={styles.menuDivider} />
             <TouchableOpacity style={[styles.menuItem, styles.menuItemRow]} onPress={handleOpenNotifications}>
               <Text style={styles.menuItemText}>Notifications</Text>
-              {hasNotifications && <View style={styles.unreadDot} />}
+              {hasUnreadNotifications && <View style={styles.unreadDot} />}
             </TouchableOpacity>
           </View>
         </Pressable>
@@ -165,5 +166,5 @@ const styles = StyleSheet.create({
   menuItemRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   menuItemText: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
   menuDivider: { height: 1, backgroundColor: colors.divider, marginHorizontal: 8 },
-  unreadDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.primary },
+  unreadDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.danger },
 });

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, View, TouchableOpacity, Text, Animated, StyleSheet } from 'react-native';
+import { Modal, View, TouchableOpacity, Text, Animated, StyleSheet, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import ReAnimated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import EventDetailContent from './EventDetailContent';
@@ -17,6 +17,7 @@ export default function EventDetailModal({ visible, eventId, onClose, startOnMes
   const [isFlipped, setIsFlipped] = useState(startOnMessages);
   const flipAnim = useRef(new Animated.Value(startOnMessages ? 180 : 0)).current;
   const dragY = useSharedValue(0);
+  const { height: screenHeight } = useWindowDimensions();
 
   useEffect(() => {
     if (visible) {
@@ -80,11 +81,12 @@ export default function EventDetailModal({ visible, eventId, onClose, startOnMes
     })
     .onEnd((e) => {
       if (e.translationY > 100 || e.velocityY > 800) {
-        dragY.value = withTiming(800, { duration: 200 }, (finished) => {
-          if (finished) {
-            dragY.value = 0;
-            runOnJS(handleClose)();
-          }
+        // Slide fully off the bottom and stay there - the modal closes from
+        // there. Snapping back to 0 first (it used to) flashed the card back
+        // to full height for a frame (TestFlight feedback, build 113); the
+        // open effect resets it for next time.
+        dragY.value = withTiming(screenHeight, { duration: 200 }, (finished) => {
+          if (finished) runOnJS(handleClose)();
         });
       } else {
         dragY.value = withSpring(0, { damping: 18 });

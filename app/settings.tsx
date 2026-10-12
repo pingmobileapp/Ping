@@ -20,6 +20,7 @@ import { uploadAvatarImage } from '../lib/imageUpload';
 import { normalizePhone } from '../lib/phone';
 import { healInviteLinks } from '../lib/healInvites';
 import { requestAppTourReplay } from '../lib/appTour';
+import CalendarSyncSetting from '../components/CalendarSyncSetting';
 import { colors } from '../lib/theme';
 import { fetchConnectStatus, startConnectOnboarding, ConnectAccountState } from '../lib/stripeConnect';
 import { DISCOVER_LISTINGS_ENABLED } from '../lib/features';
@@ -289,6 +290,8 @@ export default function SettingsScreen() {
               Fix names and numbers, find people listed twice, and remove contacts you don't need.
             </Text>
           </View>
+
+          {!!session?.user?.id && <CalendarSyncSetting userId={session.user.id} />}
 
           <View style={styles.payoutsSection}>
             <TouchableOpacity

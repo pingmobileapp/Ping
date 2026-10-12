@@ -193,7 +193,6 @@ export default function HomeScreen() {
     root: useRef<View>(null),
     logo: useRef<View>(null),
     create: useRef<View>(null),
-    groups: useRef<View>(null),
     profile: useRef<View>(null),
     calendar: useRef<View>(null),
     upcoming: useRef<View>(null),
@@ -204,6 +203,14 @@ export default function HomeScreen() {
   const measureRef = (ref: React.RefObject<View | null>) => (done: (r: Rect | null) => void) => {
     if (!ref.current) return done(null);
     ref.current.measureInWindow((x, y, width, height) => done({ x, y, width, height }));
+  };
+  // The tab bar isn't part of this screen, but it sits directly below it,
+  // split evenly into Home / Groups / Discover.
+  const measureTab = (index: number, done: (r: Rect | null) => void) => {
+    if (!tourRefs.root.current) return done(null);
+    tourRefs.root.current.measureInWindow((x, y, width, height) =>
+      done({ x: x + (width / 3) * index, y: y + height, width: width / 3, height: 49 })
+    );
   };
   const tourSteps: TourStep[] = [
     tourMode === "offer"
@@ -254,7 +261,7 @@ export default function HomeScreen() {
     {
       title: "Groups",
       body: "Save the people you invite often, like family or a team, and invite everyone in one tap.",
-      measure: measureRef(tourRefs.groups),
+      measure: (done) => measureTab(1, done),
     },
     {
       title: "Notifications & messages",
@@ -269,14 +276,7 @@ export default function HomeScreen() {
     {
       title: "Discover",
       body: "Find local events happening near you, and save the ones you're interested in.",
-      // The tab bar isn't part of this screen, but it sits directly below
-      // it: the Discover tab is the right half of that strip.
-      measure: (done) => {
-        if (!tourRefs.root.current) return done(null);
-        tourRefs.root.current.measureInWindow((x, y, width, height) =>
-          done({ x: x + width / 2, y: y + height, width: width / 2, height: 49 })
-        );
-      },
+      measure: (done) => measureTab(2, done),
     },
   ];
 
@@ -415,6 +415,8 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   const {
     notifications,
     unreadCount,
+    unreadMessageCount,
+    unreadOtherCount,
     refresh: refreshNotifications,
     pendingEventModal,
     clearEventModal,
@@ -654,20 +656,34 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     });
   }, [fetchExternalEvents, calendarSyncEnabled]);
 
-  // Per-account opt-in (see calendarSyncEnabled above) - loaded once per
-  // signed-in user, separately from the device-level OS permission check.
+  // Turned off in Settings (or access revoked in iPhone Settings): drop the
+  // phone events already on screen instead of leaving a stale copy.
   useEffect(() => {
-    if (!session?.user?.id) return;
-    supabase
-      .from("profiles")
-      .select("calendar_sync_enabled")
-      .eq("id", session.user.id)
-      .maybeSingle()
-      .then(({ data, error }) => {
-        if (error) console.error("Error loading calendar sync preference:", error);
-        setCalendarSyncEnabled(!!data?.calendar_sync_enabled);
-      });
-  }, [session?.user?.id]);
+    if (calendarSyncEnabled === false || (calendarPermission !== null && calendarPermission !== "granted")) {
+      setExternalEvents([]);
+    }
+  }, [calendarSyncEnabled, calendarPermission]);
+
+  // Per-account opt-in (see calendarSyncEnabled above), separate from the
+  // device-level OS permission. Both are re-read every time Home comes into
+  // view, not just once, so turning phone calendar on or off in Settings
+  // (components/CalendarSyncSetting.tsx) - or granting access in iPhone
+  // Settings - shows up as soon as you're back here.
+  useFocusEffect(
+    useCallback(() => {
+      if (!session?.user?.id) return;
+      getCalendarPermissionStatus().then(setCalendarPermission);
+      supabase
+        .from("profiles")
+        .select("calendar_sync_enabled")
+        .eq("id", session.user.id)
+        .maybeSingle()
+        .then(({ data, error }) => {
+          if (error) console.error("Error loading calendar sync preference:", error);
+          setCalendarSyncEnabled(!!data?.calendar_sync_enabled);
+        });
+    }, [session?.user?.id]),
+  );
 
   // Without this, anything written straight to the phone calendar from
   // somewhere other than this exact screen - Discover's "Add to My
@@ -1707,15 +1723,13 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
           <View ref={tourRefs.logo} collapsable={false}>
             <PingLogoMenu
               hasNotifications={unreadCount > 0}
-              onCreatePing={() => setModalVisible(true)}
+              hasUnreadMessages={unreadMessageCount > 0}
+              hasUnreadNotifications={unreadOtherCount > 0}
             />
           </View>
           <View style={styles.headerActions}>
             <TouchableOpacity ref={tourRefs.create} onPress={() => setModalVisible(true)}>
               <Text style={styles.createText}>Create</Text>
-            </TouchableOpacity>
-            <TouchableOpacity ref={tourRefs.groups} onPress={() => router.push("/groups")}>
-              <Text style={styles.groupsText}>Groups</Text>
             </TouchableOpacity>
             <View ref={tourRefs.profile} collapsable={false}>
               <ProfileMenu
@@ -1979,7 +1993,6 @@ const styles = StyleSheet.create({
   },
   headerActions: { flexDirection: "row", gap: 16, alignItems: "center" },
   createText: { color: colors.primary, fontSize: 14, fontWeight: "700" },
-  groupsText: { color: colors.primary, fontSize: 14, fontWeight: "600" },
   contentArea: { flex: 1, position: "relative", overflow: "hidden" },
   calendarWrapper: {},
   // Fixed to MIN_TOP_INSET so it's exactly the height that stays visible

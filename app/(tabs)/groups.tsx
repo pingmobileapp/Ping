@@ -160,10 +160,10 @@ export default function GroupsScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
     <View style={styles.container}>
+      {/* A bottom tab now (between Home and Discover - TestFlight feedback,
+          build 113), so there's nothing to go back to. */}
       <View style={styles.headerRow}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.backText}>‹ Back</Text>
-        </TouchableOpacity>
+        <View style={{ width: 50 }} />
         <Text style={styles.pageTitle}>Groups</Text>
         <TouchableOpacity onPress={() => setCreating(true)}>
           <Text style={styles.newText}>+ New</Text>
@@ -217,7 +217,8 @@ export default function GroupsScreen() {
                 style={styles.chatButton}
                 onPress={() => {
                   openGroupChat(item.id, item.name);
-                  router.dismissTo('/');
+                  // Home owns the group chat modal - switch to its tab.
+                  router.navigate('/');
                 }}
               >
                 <Text style={styles.chatButtonIcon}>💬</Text>
@@ -242,7 +243,6 @@ export default function GroupsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background, paddingTop: 60, paddingHorizontal: 20 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  backText: { color: colors.primary, fontSize: 16, fontWeight: '600' },
   pageTitle: { color: colors.textPrimary, fontSize: 20, fontWeight: '700' },
   sectionTitle: {
     color: colors.textSecondary,

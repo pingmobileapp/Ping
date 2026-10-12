@@ -17,7 +17,7 @@ import { supabase } from '../supabase';
 import { useAuth } from '../lib/AuthContext';
 import { colors } from '../lib/theme';
 import { notify } from '../lib/notify';
-import { displayName } from '../lib/displayName';
+import { displayName, myDisplayName } from '../lib/displayName';
 import { useMessageReactions } from '../lib/useMessageReactions';
 import { reportContent, blockUser } from '../lib/moderation';
 import { containsObjectionableContent } from '../lib/contentFilter';
@@ -343,8 +343,7 @@ export default function MessageThread({ eventId, onFlipBack, backLabel = 'Event 
       (otherInvitees as any[]) || [],
       findMentionedUserIds(body, otherGuests)
     );
-    const senderDisplayName =
-      session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Someone';
+    const senderDisplayName = await myDisplayName(session.user);
     const notifTitle = eventRow?.title ? `New message — ${eventRow.title}` : 'New message';
     const notifBody = `${senderDisplayName}: ${body}`;
     const mentionTitle = eventRow?.title
