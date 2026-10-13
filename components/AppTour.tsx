@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Modal, View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
 import { colors } from '../lib/theme';
+import { useRegisterModal } from '../lib/modalPresence';
 
 // A step-by-step "here's where things are" tour for new users (asked for
 // 2026-10-11): the screen dims, one part of it stays lit, and a bubble with
@@ -35,6 +36,7 @@ const GAP = 14; // space between target and bubble (the arrow sits in it)
 const MARGIN = 16;
 
 export default function AppTour({ visible, steps, onFinish, firstSkipLabel }: Props) {
+  useRegisterModal(visible);
   const { width: winW, height: winH } = useWindowDimensions();
   const [index, setIndex] = useState(0);
   const [rect, setRect] = useState<Rect | null>(null);

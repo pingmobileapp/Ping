@@ -18,6 +18,7 @@ import { colors } from '../lib/theme';
 import { notify } from '../lib/notify';
 import ImportContactsModal from './ImportContactsModal';
 import NonAppInviteQueue, { QueueContact } from './NonAppInviteQueue';
+import { useRegisterModal } from '../lib/modalPresence';
 
 type Contact = {
   id: string;
@@ -48,6 +49,7 @@ export default function ShareInviteModal({
   onClose,
   onInvited,
 }: Props) {
+  useRegisterModal(visible);
   const { session } = useAuth();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);

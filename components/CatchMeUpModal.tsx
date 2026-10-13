@@ -4,6 +4,7 @@ import { supabase } from '../supabase';
 import { useAuth } from '../lib/AuthContext';
 import { generateCatchMeUp } from '../lib/catchMeUp';
 import { colors } from '../lib/theme';
+import { useRegisterModal } from '../lib/modalPresence';
 
 type Props = {
   visible: boolean;
@@ -14,6 +15,7 @@ type Props = {
 // schedule - no cron/background infra needed, and it's always current with
 // whatever just happened.
 export default function CatchMeUpModal({ visible, onClose }: Props) {
+  useRegisterModal(visible);
   const { session } = useAuth();
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState('');

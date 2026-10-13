@@ -23,6 +23,7 @@ WebBrowser.maybeCompleteAuthSession();
 const logoBlue = require('../../assets/images/ping-mark-blue.png');
 
 export default function LoginScreen() {
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
@@ -43,8 +44,15 @@ export default function LoginScreen() {
     }
     setLoading(true);
 
+    // Email sign-ups were the one path that never asked for a name, so 26 of
+    // 31 email accounts showed up nameless in guest lists (Apple and Google
+    // always send one). Optional - App Review doesn't allow requiring it -
+    // and NamePrompt reminds people later. AuthContext's ensureProfileName
+    // copies this full_name onto the profile at first login.
+    const signUpOptions = name.trim() ? { data: { full_name: name.trim() } } : undefined;
+
     const { error } = isSignUp
-      ? await supabase.auth.signUp({ email, password })
+      ? await supabase.auth.signUp({ email, password, options: signUpOptions })
       : await supabase.auth.signInWithPassword({ email, password });
 
     setLoading(false);
@@ -198,6 +206,18 @@ export default function LoginScreen() {
         <View style={styles.dividerLine} />
       </View>
 
+      {isSignUp && (
+        <TextInput
+          style={styles.input}
+          placeholder="Your name (optional)"
+          placeholderTextColor={colors.textMuted}
+          autoCapitalize="words"
+          textContentType="name"
+          autoComplete="name"
+          value={name}
+          onChangeText={setName}
+        />
+      )}
       <TextInput
         style={styles.input}
         placeholder="Email"

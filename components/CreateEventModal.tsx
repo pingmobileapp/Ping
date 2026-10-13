@@ -42,6 +42,7 @@ import ImportContactsModal from './ImportContactsModal';
 import ImageCropModal from './ImageCropModal';
 import NonAppInviteQueue, { QueueContact } from './NonAppInviteQueue';
 import RecurrencePicker from './RecurrencePicker';
+import { useRegisterModal } from '../lib/modalPresence';
 
 type Contact = {
   id: string;
@@ -80,6 +81,7 @@ type Props = {
 };
 
 export default function CreateEventModal({ visible, onClose, onCreated, initialDate, prefill }: Props) {
+  useRegisterModal(visible);
   const { session } = useAuth();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');

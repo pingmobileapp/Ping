@@ -46,6 +46,24 @@ export function showRsvpError(kind: RsvpErrorKind | undefined) {
   }
 }
 
+
+// Answering an invite - from the invite popup, the event card, or a push
+// notification's quick buttons - clears its "You're invited!" notification,
+// so it doesn't sit there unread until someone opens Notifications
+// (TestFlight feedback, build 114). useNotifications' realtime UPDATE
+// listener picks this up and clears the dot/count right away.
+async function markInviteNotificationsRead(userId: string, eventIds: string[]) {
+  if (eventIds.length === 0) return;
+  const { error } = await supabase
+    .from('notifications')
+    .update({ read_at: new Date().toISOString() })
+    .eq('recipient_id', userId)
+    .eq('type', 'invite')
+    .in('event_id', eventIds)
+    .is('read_at', null);
+  if (error) console.error('Error clearing invite notification:', error);
+}
+
 export async function submitRsvp(opts: SubmitRsvpOptions): Promise<SubmitRsvpResult> {
   const { eventId, hostIds, eventTitle, userId, myInviteeId, responderName, status, invitedVia = 'app' } = opts;
 
@@ -83,6 +101,8 @@ export async function submitRsvp(opts: SubmitRsvpOptions): Promise<SubmitRsvpRes
   }
 
   if (errorKind) return { inviteeId, error: true, errorKind };
+
+  await markInviteNotificationsRead(userId, [eventId]);
 
   if (status === 'declined' && inviteeId) {
     const { error: releaseError } = await supabase.from('item_claims').delete().eq('invitee_id', inviteeId);
@@ -165,6 +185,8 @@ export async function submitSeriesRsvp(opts: SubmitSeriesRsvpOptions): Promise<S
     }
   }
   if (updated.length === 0) return [];
+
+  await markInviteNotificationsRead(opts.userId, updated.map((i) => i.event.id));
 
   if (status === 'declined') {
     const { error: releaseError } = await supabase

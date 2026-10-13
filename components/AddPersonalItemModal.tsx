@@ -22,6 +22,7 @@ import {
   isPersonalItemImportant,
   forgetPersonalItem,
 } from '../lib/eventReminders';
+import { useRegisterModal } from '../lib/modalPresence';
 
 type Props = {
   visible: boolean;
@@ -64,6 +65,7 @@ const errorMessage = (err: unknown): string => (err instanceof Error ? err.messa
 // created - editingEvent.isPersonal only changes the messaging/marker
 // handling, not whether editing is allowed.
 export default function AddPersonalItemModal({ visible, initialDate, initialMinutes, editingEvent, onClose, onSaved, onConvertToPing }: Props) {
+  useRegisterModal(visible);
   const [title, setTitle] = useState('');
   const [details, setDetails] = useState('');
   const [recurrence, setRecurrence] = useState<RecurrenceConfig | null>(null);

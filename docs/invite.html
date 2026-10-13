@@ -80,7 +80,9 @@
     const params = new URLSearchParams(window.location.search);
     const inviteeId = params.get('i');
     const content = document.getElementById('content');
-    const APP_STORE_URL = 'https://apps.apple.com/app/id6799301780';
+    const APP_STORE_URL = /android/i.test(navigator.userAgent)
+      ? 'https://play.google.com/store/apps/details?id=com.pingmobileapp.ping'
+      : 'https://apps.apple.com/app/id6799301780';
     const FUNCTION_URL = 'https://rmooxzkinakbyhvxcivv.supabase.co/functions/v1/invite-info';
 
     function escapeHtml(str) {

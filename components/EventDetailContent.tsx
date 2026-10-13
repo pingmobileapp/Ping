@@ -498,7 +498,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
       }
       await hideEvent(key);
       setHiddenForMe(true);
-      Alert.alert('Hidden from your calendar', 'Bring it back anytime from the Hidden filter on Home. Your RSVP is unchanged.');
+      Alert.alert('Hidden from your calendar', 'Bring it back anytime from Hidden in your profile menu (tap your picture on Home). Your RSVP is unchanged.');
     };
     const options: { label: string; destructive?: boolean; run: () => void }[] = [
       { label: hiddenForMe ? 'Unhide' : 'Hide from my calendar', run: toggleHidden },

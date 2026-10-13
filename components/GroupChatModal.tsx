@@ -5,6 +5,7 @@ import ReAnimated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring, with
 import { useRouter } from 'expo-router';
 import GroupMessageThread from './GroupMessageThread';
 import { colors } from '../lib/theme';
+import { useRegisterModal } from '../lib/modalPresence';
 
 type Props = {
   visible: boolean;
@@ -18,6 +19,7 @@ type Props = {
 // app/groups/[id].tsx member-management route), so this goes straight to
 // the chat and reuses only the swipe-to-dismiss gesture, not the flip.
 export default function GroupChatModal({ visible, groupId, groupName, onClose }: Props) {
+  useRegisterModal(visible);
   const router = useRouter();
   const dragY = useSharedValue(0);
   const { height: screenHeight } = useWindowDimensions();

@@ -4,17 +4,19 @@ import React from 'react';
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 import ResponsiveContainer from '@/components/ResponsiveContainer';
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
   return (
     <ResponsiveContainer>
       <Tabs
         screenOptions={{
-          tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
+          // Always the light-theme colors: Ping's screens (and this tab bar)
+          // are always light, and following the phone's dark mode made the
+          // selected tab white on a white bar - Home simply vanished at
+          // night (TestFlight feedback, build 114).
+          tabBarActiveTintColor: Colors.light.tint,
+          tabBarInactiveTintColor: Colors.light.tabIconDefault,
           headerShown: false,
           tabBarButton: HapticTab,
         }}>

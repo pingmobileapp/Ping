@@ -5,6 +5,7 @@ import ReAnimated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring, with
 import EventDetailContent from './EventDetailContent';
 import MessageThread from './MessageThread';
 import { colors } from '../lib/theme';
+import { useRegisterModal } from '../lib/modalPresence';
 
 type Props = {
   visible: boolean;
@@ -14,6 +15,7 @@ type Props = {
 };
 
 export default function EventDetailModal({ visible, eventId, onClose, startOnMessages = false }: Props) {
+  useRegisterModal(visible);
   const [isFlipped, setIsFlipped] = useState(startOnMessages);
   const flipAnim = useRef(new Animated.Value(startOnMessages ? 180 : 0)).current;
   const dragY = useSharedValue(0);

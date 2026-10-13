@@ -42,6 +42,7 @@ import RecurrencePicker from './RecurrencePicker';
 import ImportContactsModal from './ImportContactsModal';
 import ImageCropModal from './ImageCropModal';
 import NonAppInviteQueue, { QueueContact } from './NonAppInviteQueue';
+import { useRegisterModal } from '../lib/modalPresence';
 
 type Contact = {
   id: string;
@@ -87,6 +88,7 @@ type Props = {
 // the host can add more people later too - handleSave only sends invites
 // to newly selected people, deduped against who's already invited.
 export default function EditEventModal({ visible, event, onClose, onSaved, onDeleted }: Props) {
+  useRegisterModal(visible);
   const { session } = useAuth();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');

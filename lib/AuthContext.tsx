@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../supabase';
 import { registerForPushNotifications } from './pushNotifications';
+import NamePrompt from '../components/NamePrompt';
 
 // New profile rows start with no full_name. Backfill it once from a real
 // name signal (Google's profile name) if we have one. Deliberately does
@@ -71,6 +72,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   return (
     <AuthContext.Provider value={{ session, loading, signOut }}>
       {children}
+      {session && (
+        <NamePrompt
+          key={session.user.id}
+          userId={session.user.id}
+          signUpName={session.user.user_metadata?.full_name || session.user.user_metadata?.name}
+          accountCreatedAt={session.user.created_at}
+        />
+      )}
     </AuthContext.Provider>
   );
 }

@@ -44,3 +44,5 @@ app-example
 
 # Supabase CLI local cache
 supabase/.temp/
+
+.claude/settings.local.json

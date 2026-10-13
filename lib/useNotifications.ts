@@ -134,6 +134,12 @@ export function useNotifications(userId?: string | null) {
           // its refreshed body/timestamp.
           const row = payload.new as NotificationRow;
           setNotifications((prev) => {
+            const existing = prev.find((n) => n.id === row.id);
+            // Just marked read (same timestamp) - update it where it is
+            // instead of jumping it to the top.
+            if (existing && existing.created_at === row.created_at) {
+              return prev.map((n) => (n.id === row.id ? row : n));
+            }
             const rest = prev.filter((n) => n.id !== row.id);
             return [row, ...rest];
           });

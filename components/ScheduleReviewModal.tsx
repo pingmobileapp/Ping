@@ -17,6 +17,7 @@ import { Calendar } from 'react-native-calendars';
 import { colors, calendarTheme } from '../lib/theme';
 import { ExtractedEvent } from '../lib/scheduleImport';
 import { getCalendarPermissionStatus, requestCalendarAccess, createPersonalCalendarEvent } from '../lib/calendarConflicts';
+import { useRegisterModal } from '../lib/modalPresence';
 
 export type ScheduleRowPrefill = {
   title: string;
@@ -109,6 +110,7 @@ const toTimeString = (d: Date) => `${String(d.getHours()).padStart(2, '0')}:${St
 // wrong, then confirm to create the rest via the same
 // createPersonalCalendarEvent path AddPersonalItemModal uses one at a time.
 export default function ScheduleReviewModal({ visible, extractedEvents, onClose, onSaved, onCreatePing }: Props) {
+  useRegisterModal(visible);
   const [rows, setRows] = useState<Row[]>([]);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);

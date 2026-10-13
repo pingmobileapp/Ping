@@ -44,6 +44,7 @@ import ProfileMenu from "../../components/ProfileMenu";
 import FilterMenu, { HomeView, ListFilter, VIEW_LABELS } from "../../components/FilterMenu";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import AppTour, { Rect, TourStep } from "../../components/AppTour";
+import { useAnyModalOpen } from "../../lib/modalPresence";
 import { AppTourMode, getAppTourMode, markAppTourDone } from "../../lib/appTour";
 import ScheduleReviewModal from "../../components/ScheduleReviewModal";
 import WeekGrid, { WeekGridHandle } from "../../components/WeekGrid";
@@ -422,7 +423,14 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     clearEventModal,
     pendingGroupChat,
     clearGroupChat,
+    popupEventId,
   } = useNotificationsContext();
+  // An invite popup on screen blocks opening another sheet until it closes
+  // (two Modals at once can freeze iOS - see lib/modalPresence.ts). When a
+  // sheet is already open the popup itself waits instead, so this only
+  // holds while the popup is actually showing.
+  const anyModalOpen = useAnyModalOpen();
+  const invitePopupShowing = !!popupEventId && !anyModalOpen;
 
   // Which events have an unread chat notification right now - drives the
   // red dot on EventCard's chat icon. MessageThread marks the underlying
@@ -468,22 +476,22 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   // own full-page route - keeps every entry point landing on the same
   // flip-card modal.
   useEffect(() => {
-    if (!pendingEventModal) return;
+    if (!pendingEventModal || invitePopupShowing) return;
     setSelectedEventId(pendingEventModal.eventId);
     setOpenViaMessages(pendingEventModal.startOnMessages);
     setDetailVisible(true);
     clearEventModal();
-  }, [pendingEventModal, clearEventModal]);
+  }, [pendingEventModal, clearEventModal, invitePopupShowing]);
 
   // Same idea for group chats - the Groups screens have no chat UI of
   // their own, they just hand off to this same modal.
   useEffect(() => {
-    if (!pendingGroupChat) return;
+    if (!pendingGroupChat || invitePopupShowing) return;
     setSelectedGroupId(pendingGroupChat.groupId);
     setSelectedGroupName(pendingGroupChat.groupName ?? null);
     setGroupChatVisible(true);
     clearGroupChat();
-  }, [pendingGroupChat, clearGroupChat]);
+  }, [pendingGroupChat, clearGroupChat, invitePopupShowing]);
 
   const fetchMyBringing = useCallback(async (myInviteeIds: string[]) => {
     if (myInviteeIds.length === 0) {
@@ -771,7 +779,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
       ]);
       return;
     }
-    Alert.alert("Hide this event?", "You can bring it back later from the Hidden filter.", [
+    Alert.alert("Hide this event?", "You can bring it back later from Hidden in your profile menu.", [
       { text: "Cancel", style: "cancel" },
       { text: "Hide", onPress: () => handleHideEvent(event) },
     ]);
@@ -780,12 +788,12 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   // Hiding a Ping is a personal display choice like hiding a calendar item -
   // it comes off this person's Week/Month calendar and Upcoming list, but
   // their RSVP and the event itself are untouched, and it can be brought
-  // back from the Hidden filter. Asked for on 1.1.1 after a long-press on
+  // back from Hidden in your profile menu. Asked for on 1.1.1 after a long-press on
   // a Ping in Week view did nothing.
   const showPingHideOption = (event: PingEvent) => {
     Alert.alert(
       "Hide this Ping?",
-      "It comes off your calendar and Upcoming list. Your RSVP doesn't change, and you can bring it back from the Hidden filter.",
+      "It comes off your calendar and Upcoming list. Your RSVP doesn't change, and you can bring it back from Hidden in your profile menu.",
       [
         { text: "Cancel", style: "cancel" },
         { text: "Hide", onPress: async () => setHiddenEventIds(await hideEvent(hiddenPingKey(event.id))) },
@@ -1662,7 +1670,9 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
       <ExternalEventRow
         event={item.event}
         onEdit={item.event.editable ? () => setEditingPersonalEvent(item.event) : undefined}
-        onHide={() => handleHideEvent(item.event)}
+        // Asks first (same as holding the row) - a stray tap on the ✕ used to
+        // hide it instantly (TestFlight feedback, build 114).
+        onHide={() => showHideOptions(item.event)}
         onLongPressHide={() => showHideOptions(item.event)}
       />
     );

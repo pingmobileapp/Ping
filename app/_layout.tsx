@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { View, ActivityIndicator } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, useRouter } from 'expo-router';
@@ -8,6 +8,7 @@ import { NotificationsProvider, useNotificationsContext } from '../lib/Notificat
 import { useAccountGate } from '../lib/useAccountGate';
 import { healInviteLinks } from '../lib/healInvites';
 import { watchForAppUpdates } from '../lib/updatePrompt';
+import { useAnyModalOpen } from '../lib/modalPresence';
 import LoginScreen from './(auth)/login';
 import InvitePopup from '../components/InvitePopup';
 import TermsGateScreen from '../components/TermsGateScreen';
@@ -18,13 +19,31 @@ import { colors } from '../lib/theme';
 function InvitePopupHost() {
   const router = useRouter();
   const { popupEventId, closeInvitePopup, openEventModal } = useNotificationsContext();
+  // Wait while any other sheet is open - two RN Modals on screen at once can
+  // freeze the app on iOS (see lib/modalPresence.ts). The invite stays
+  // queued and appears as soon as that sheet closes.
+  const otherModalOpen = useAnyModalOpen();
+  // ...and give the closing sheet's slide-away a moment to finish first -
+  // iOS can't present one sheet while another is still animating closed.
+  const [clearToShow, setClearToShow] = useState(!otherModalOpen);
+  useEffect(() => {
+    if (otherModalOpen) {
+      setClearToShow(false);
+      return;
+    }
+    const t = setTimeout(() => setClearToShow(true), 600);
+    return () => clearTimeout(t);
+  }, [otherModalOpen]);
 
   return (
     <InvitePopup
-      eventId={popupEventId}
+      eventId={clearToShow ? popupEventId : null}
       onClose={closeInvitePopup}
       onOpenFull={(eventId) => {
-        closeInvitePopup();
+        // Drop the rest of the queued invites rather than popping the next
+        // one up over the event card they asked to see (they stay listed in
+        // Notifications as pending).
+        closeInvitePopup([], true);
         openEventModal(eventId);
         // dismissTo, not push - returns to the existing Home screen
         // instead of mounting a second instance of it (push('/') here was
