@@ -39,6 +39,8 @@ import { dollarsToCents, centsToDollarsInput } from '../lib/pricing';
 import { containsObjectionableContent } from '../lib/contentFilter';
 import { reportContent } from '../lib/moderation';
 import RecurrencePicker from './RecurrencePicker';
+import StopsEditor from './StopsEditor';
+import { EventStop, cleanStops, parseStops, shiftStops, stopDays } from '../lib/stops';
 import ImportContactsModal from './ImportContactsModal';
 import ImageCropModal from './ImageCropModal';
 import NonAppInviteQueue, { QueueContact } from './NonAppInviteQueue';
@@ -73,6 +75,7 @@ export type EditableEvent = {
   description: string | null;
   recurrence_id: string | null;
   group_id: string | null;
+  stops?: unknown;
 };
 
 type Props = {
@@ -96,6 +99,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   const [eventDate, setEventDate] = useState(new Date());
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [isMultiDay, setIsMultiDay] = useState(false);
+  const [stops, setStops] = useState<EventStop[]>([]);
   const [isAllDay, setIsAllDay] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
@@ -231,6 +235,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       // end_date === null - only a real, different-day end_date means it
       // was actually set up as spanning multiple days.
       setIsMultiDay(isMultiDayEvent(event.event_date, event.end_date));
+      setStops(parseStops(event.stops));
       setIsAllDay(!!event.is_all_day);
       setIsPublic(event.is_public);
       setDiscoverable(event.discoverable);
@@ -763,6 +768,9 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
     const guestRows = (finalInvitees || []).filter((i) => i.user_id !== session.user.id);
 
     const failedDates: string[] = [];
+    const baseStops = isMultiDay
+      ? cleanStops(stops, stopDays(eventDate, resolveEndDate(eventDate, endDate, isMultiDay, isAllDay)))
+      : [];
 
     for (const occ of futureOccurrences) {
       const { data: eventRow, error } = await supabase
@@ -772,6 +780,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
             title,
             description: description.trim() || null,
             location,
+            stops: shiftStops(baseStops, eventDate, occ.startDate),
             event_date: occ.startDate.toISOString(),
             end_date: occ.endDate ? occ.endDate.toISOString() : null,
             is_all_day: isAllDay,
@@ -903,7 +912,8 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       // Bulk-applying to sibling occurrences deliberately excludes
       // event_date/end_date - shifting a whole series' dates needs
       // relative-offset math, not an absolute overwrite, and is out of
-      // scope here. A date/time change always saves as "this event only"
+      // scope here. Stops are left out for the same reason: each one is
+      // tied to a specific date. A date/time change always saves as "this event only"
       // (the branch below), never bulk.
       const futureUpdates: Record<string, any> = {
         title,
@@ -941,6 +951,9 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
         image_url: imageUrl,
         image_url_full: imageUrlFull,
       };
+      // Turning multi-day off leaves saved stops alone (just hidden), so
+      // turning it back on doesn't lose them.
+      if (isMultiDay) updates.stops = cleanStops(stops, stopDays(eventDate, finalEndDate));
       if (sendNow) updates.status = 'sent';
       if (newRecurrenceId) updates.recurrence_id = newRecurrenceId;
       if (!event.group_id && selectedTagGroupId) updates.group_id = selectedTagGroupId;
@@ -1414,6 +1427,14 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
               value={location}
               onChangeText={setLocation}
             />
+
+            {isMultiDay && (
+              <StopsEditor
+                stops={stops}
+                onChange={setStops}
+                days={stopDays(eventDate, resolveEndDate(eventDate, endDate, isMultiDay, isAllDay))}
+              />
+            )}
 
             <TouchableOpacity style={styles.publicRow} onPress={() => setIsPublic(!isPublic)}>
               <View style={[styles.checkbox, isPublic && styles.checkboxChecked]}>

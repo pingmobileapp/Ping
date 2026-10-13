@@ -42,6 +42,8 @@ import ImportContactsModal from './ImportContactsModal';
 import ImageCropModal from './ImageCropModal';
 import NonAppInviteQueue, { QueueContact } from './NonAppInviteQueue';
 import RecurrencePicker from './RecurrencePicker';
+import StopsEditor from './StopsEditor';
+import { EventStop, cleanStops, shiftStops, stopDays } from '../lib/stops';
 import { useRegisterModal } from '../lib/modalPresence';
 
 type Contact = {
@@ -89,6 +91,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
   const [eventDate, setEventDate] = useState(new Date());
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [isMultiDay, setIsMultiDay] = useState(false);
+  const [stops, setStops] = useState<EventStop[]>([]);
   const [isAllDay, setIsAllDay] = useState(false);
   const [recurrence, setRecurrence] = useState<RecurrenceConfig | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -159,7 +162,8 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
     isPublic ||
     discoverable ||
     selectedCoHostIds.length > 0 ||
-    items.length > 0;
+    items.length > 0 ||
+    (isMultiDay && stops.length > 0);
   const showMore = moreOpen || hasExtras;
 
   const dragY = useRef(new Animated.Value(0)).current;
@@ -458,6 +462,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
       setIsAllDay(false);
     }
     setRecurrence(null);
+    setStops([]);
     setMoreOpen(false);
     setAddingContact(false);
     setSuggestedItems([]);
@@ -582,6 +587,11 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
     status: 'sent' | 'draft',
     shouldNotify: boolean
   ): Promise<{ eventId: string; smsQueueItems: QueueContact[] }> => {
+    // Stops only belong to a multi-day Ping. Each occurrence of a repeating
+    // one gets its own copy, moved onto that occurrence's dates.
+    const baseStops = isMultiDay
+      ? cleanStops(stops, stopDays(eventDate, resolveEndDate(eventDate, endDate, isMultiDay, isAllDay)))
+      : [];
     const { data: eventRow, error } = await supabase
       .from('events')
       .insert([
@@ -589,6 +599,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
           title,
           description: description.trim() || null,
           location,
+          stops: shiftStops(baseStops, eventDate, occStart),
           event_date: occStart.toISOString(),
           end_date: occEnd ? occEnd.toISOString() : null,
           is_all_day: isAllDay,
@@ -997,7 +1008,11 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.publicRowTitle}>Multi-day event</Text>
-                <Text style={styles.publicRowSubtitle}>Spans more than one day, like a trip</Text>
+                <Text style={styles.publicRowSubtitle}>
+                  {isMultiDay
+                    ? 'Add where you’ll be each day under More options'
+                    : 'Spans more than one day, like a trip'}
+                </Text>
               </View>
             </TouchableOpacity>
 
@@ -1143,7 +1158,9 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
               <TouchableOpacity style={styles.moreOptionsButton} onPress={() => setMoreOpen((v) => !v)}>
                 <Text style={styles.moreOptionsTitle}>{moreOpen ? 'Fewer options ▴' : 'More options ▾'}</Text>
                 {!moreOpen && (
-                  <Text style={styles.moreOptionsHint}>Description, what to bring, repeat, co-hosts{DISCOVER_LISTINGS_ENABLED ? ', Discover' : ''}</Text>
+                  <Text style={styles.moreOptionsHint}>
+                    Description{isMultiDay ? ', stops along the way' : ''}, what to bring, repeat, co-hosts{DISCOVER_LISTINGS_ENABLED ? ', Discover' : ''}
+                  </Text>
                 )}
               </TouchableOpacity>
             )}
@@ -1159,6 +1176,14 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
                 onChangeText={setDescription}
                 multiline
               />
+
+              {isMultiDay && (
+                <StopsEditor
+                  stops={stops}
+                  onChange={setStops}
+                  days={stopDays(eventDate, resolveEndDate(eventDate, endDate, isMultiDay, isAllDay))}
+                />
+              )}
 
               <RecurrencePicker value={recurrence} onChange={setRecurrence} checkboxSize={24} />
 

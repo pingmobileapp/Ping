@@ -29,7 +29,9 @@ import { submitRsvp, RsvpStatus, findMySeriesInvites, submitSeriesRsvp, askRsvpS
 import { removeEventFromDeviceCalendar, syncAcceptedEventToDeviceCalendar } from '../lib/pingCalendarSync';
 import { scheduleEventReminder, cancelEventReminder, REMINDER_OPTIONS } from '../lib/eventReminders';
 import { displayName } from '../lib/displayName';
-import { formatEventDate, formatEventTime } from '../lib/eventDate';
+import { formatEventDate, formatEventTime, isMultiDayEvent } from '../lib/eventDate';
+import { formatStopDay, parseStops } from '../lib/stops';
+import { openInMaps } from '../lib/maps';
 import { DailyWeather, fetchWeatherForEvents } from '../lib/eventWeather';
 import { formatPrice } from '../lib/pricing';
 import { startEventCheckout } from '../lib/discoverCheckout';
@@ -80,6 +82,7 @@ type EventDetail = {
   description: string | null;
   recurrence_id: string | null;
   group_id: string | null;
+  stops?: unknown;
 };
 
 type InviteeRow = {
@@ -934,6 +937,15 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
   }
 
   const dateLabel = formatEventDate(event.event_date, event.end_date, 'long');
+  // Only a multi-day Ping shows its stops - turning multi-day off in Edit
+  // leaves them saved but out of sight rather than deleting them.
+  const stops = isMultiDayEvent(event.event_date, event.end_date) ? parseStops(event.stops) : [];
+  const stopsByDay = stops.reduce<{ day: string; stops: typeof stops }[]>((acc, stop) => {
+    const last = acc[acc.length - 1];
+    if (last && last.day === stop.day) last.stops.push(stop);
+    else acc.push({ day: stop.day, stops: [stop] });
+    return acc;
+  }, []);
   const timeLabel = formatEventTime(event.event_date, event.is_all_day, event.end_date);
 
   // See EventCard.tsx's matching comment - same undocumented-but-commonly-
@@ -944,20 +956,8 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     });
   };
 
-  // `maps://` is iOS-only and Apple Maps specifically; `geo:` is Android's
-  // generic "hand this query to whatever maps app is installed" scheme.
-  // Either can still fail (no maps app at all, an odd address string), so
-  // this falls back to Google's web maps URL, which always works in a
-  // plain browser.
   const handleOpenLocation = () => {
-    if (!event.location) return;
-    const encoded = encodeURIComponent(event.location);
-    const url = Platform.OS === 'ios' ? `maps://?address=${encoded}` : `geo:0,0?q=${encoded}`;
-    Linking.openURL(url).catch(() => {
-      Linking.openURL(`https://maps.google.com/?q=${encoded}`).catch(() => {
-        Alert.alert('Could not open Maps', "Couldn't open a maps app for this address.");
-      });
-    });
+    if (event.location) openInMaps(event.location);
   };
 
   // A description is free-form host-typed text ("RSVP to Honey
@@ -1066,6 +1066,30 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
               )
             )}
           </Text>
+        )}
+
+        {stopsByDay.length > 0 && (
+          <View style={styles.itinerary}>
+            <Text style={styles.sectionLabel}>Itinerary</Text>
+            {stopsByDay.map((group) => (
+              <View key={group.day} style={styles.itineraryDay}>
+                <Text style={styles.itineraryDayLabel}>{formatStopDay(group.day)}</Text>
+                {group.stops.map((stop) => (
+                  <View key={stop.id} style={styles.itineraryStop}>
+                    {!!stop.name && <Text style={styles.itineraryStopName}>{stop.name}</Text>}
+                    {!!stop.address && (
+                      <TouchableOpacity
+                        onPress={() => openInMaps(stop.address)}
+                        hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+                      >
+                        <Text style={[styles.meta, styles.locationLink]}>{stop.address}</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+              </View>
+            ))}
+          </View>
         )}
 
         {!!hostProfile && (
@@ -1501,6 +1525,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
             description: event.description,
             recurrence_id: event.recurrence_id,
             group_id: event.group_id,
+            stops: event.stops,
           } as EditableEvent
         }
         onClose={() => setEditModalVisible(false)}
@@ -1575,6 +1600,11 @@ const styles = StyleSheet.create({
   title: { color: colors.textPrimary, fontSize: 26, fontWeight: '700', marginBottom: 8 },
   meta: { color: colors.textSecondary, fontSize: 15, marginBottom: 2 },
   locationLink: { color: colors.primary, textDecorationLine: 'underline' },
+  itinerary: { marginTop: 16 },
+  itineraryDay: { marginBottom: 12 },
+  itineraryDayLabel: { color: colors.textPrimary, fontSize: 15, fontWeight: '700', marginBottom: 4 },
+  itineraryStop: { paddingLeft: 12, borderLeftWidth: 2, borderLeftColor: colors.border, marginBottom: 6 },
+  itineraryStopName: { color: colors.textPrimary, fontSize: 15, marginBottom: 2 },
   dateTimeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
   weatherText: { color: colors.textSecondary, fontSize: 15, fontWeight: '600' },
   description: { color: colors.textPrimary, fontSize: 15, lineHeight: 21, marginTop: 10 },
