@@ -68,6 +68,12 @@
   }
   .steps-title { font-size: 18px; font-weight: 700; margin: 0 0 14px; text-align: left; }
   .small { color: #6B6B6B; font-size: 14px; margin-top: 22px; }
+  .itinerary { margin-top: 16px; padding-top: 14px; border-top: 1px solid #E8DCC8; }
+  .itinerary-title { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: #6B6B6B; margin-bottom: 10px; }
+  .itinerary-day { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+  .itinerary-stop { border-left: 2px solid #E8DCC8; padding-left: 12px; margin: 0 0 8px; font-size: 15px; }
+  .itinerary-stop a { color: #2E86C1; }
+  .itinerary-group { margin-bottom: 12px; }
 </style>
 </head>
 <body>
@@ -80,7 +86,13 @@
     const params = new URLSearchParams(window.location.search);
     const inviteeId = params.get('i');
     const content = document.getElementById('content');
-    const APP_STORE_URL = /android/i.test(navigator.userAgent)
+    // Flip to true once Ping is live on Google Play - until then an Android
+    // visitor gets a "coming soon" note instead of a link to a Play listing
+    // that doesn't exist yet.
+    const PLAY_STORE_LIVE = false;
+    const IS_ANDROID = /android/i.test(navigator.userAgent);
+    const IS_APPLE = /iphone|ipad|ipod|macintosh/i.test(navigator.userAgent);
+    const APP_STORE_URL = IS_ANDROID
       ? 'https://play.google.com/store/apps/details?id=com.pingmobileapp.ping'
       : 'https://apps.apple.com/app/id6799301780';
     const FUNCTION_URL = 'https://rmooxzkinakbyhvxcivv.supabase.co/functions/v1/invite-info';
@@ -89,6 +101,43 @@
       const div = document.createElement('div');
       div.textContent = str;
       return div.innerHTML;
+    }
+
+    const dayKey = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    function mapsUrl(address) {
+      const q = encodeURIComponent(address);
+      return IS_APPLE ? `https://maps.apple.com/?q=${q}` : `https://maps.google.com/?q=${q}`;
+    }
+
+    // Same shape as the app's Itinerary (lib/stops.ts): stops grouped by
+    // day, in the order the host added them. Only for a multi-day Ping.
+    function itineraryHtml(stops) {
+      if (!stops || stops.length === 0) return '';
+      const groups = [];
+      for (const stop of stops) {
+        const last = groups[groups.length - 1];
+        if (last && last.day === stop.day) last.stops.push(stop);
+        else groups.push({ day: stop.day, stops: [stop] });
+      }
+      return `
+        <div class="itinerary">
+          <div class="itinerary-title">Itinerary</div>
+          ${groups.map((g) => {
+            const [y, m, d] = g.day.split('-').map(Number);
+            const label = new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+            return `
+              <div class="itinerary-group">
+                <div class="itinerary-day">${escapeHtml(label)}</div>
+                ${g.stops.map((s) => `
+                  <div class="itinerary-stop">
+                    ${s.name ? `<div>${escapeHtml(s.name)}</div>` : ''}
+                    ${s.address ? `<a href="${escapeHtml(mapsUrl(s.address))}">${escapeHtml(s.address)}</a>` : ''}
+                  </div>`).join('')}
+              </div>`;
+          }).join('')}
+        </div>`;
     }
 
     function statusLabel(status) {
@@ -108,7 +157,11 @@
         })
         .then((info) => {
           const date = new Date(info.eventDate);
-          const dateLabel = date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+          const end = info.endDate ? new Date(info.endDate) : null;
+          const isMultiDay = !!end && dayKey(end) !== dayKey(date);
+          const dateLabel = isMultiDay
+            ? `${date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} – ${end.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}`
+            : date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
           const whenLabel = info.isAllDay
             ? dateLabel
             : `${dateLabel} · ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
@@ -123,6 +176,7 @@
               <div class="row">${escapeHtml(whenLabel)}</div>
               ${info.location ? `<div class="row">${escapeHtml(info.location)}</div>` : ''}
               ${label ? `<div class="status">${label}</div>` : ''}
+              ${isMultiDay ? itineraryHtml(info.stops) : ''}
             </div>
             <p class="steps-title">How to RSVP</p>
             <ol class="steps">
@@ -130,7 +184,9 @@
               <li><span class="num">2</span><span>Sign up and add <strong>this phone number</strong>, the one ${host} texted.</span></li>
               <li><span class="num">3</span><span>Your invite will be waiting. Tap it to RSVP and chat with everyone going.</span></li>
             </ol>
-            <a class="button" href="${APP_STORE_URL}">Get the Ping App</a>
+            ${IS_ANDROID && !PLAY_STORE_LIVE
+              ? '<p class="hint">Ping for Android is coming soon. For now, ask ' + host + ' to keep you posted, or open this link on an iPhone.</p>'
+              : `<a class="button" href="${APP_STORE_URL}">Get the Ping App</a>`}
             <p class="small">Already have Ping? Open the app and check that your phone number is saved in Settings.</p>
           `;
         })

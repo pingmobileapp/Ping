@@ -33,7 +33,7 @@ serve(async (req) => {
 
     const { data: invitee, error } = await supabase
       .from('invitees')
-      .select('rsvp_status, events(title, location, event_date, is_all_day, host_id, image_url)')
+      .select('rsvp_status, events(title, location, event_date, end_date, is_all_day, host_id, image_url, stops)')
       .eq('id', inviteeId)
       .maybeSingle();
 
@@ -60,7 +60,15 @@ serve(async (req) => {
         eventTitle: event.title,
         location: event.location,
         eventDate: event.event_date,
+        endDate: event.end_date || null,
         isAllDay: !!event.is_all_day,
+        // A multi-day Ping's itinerary (see lib/stops.ts) - just what the
+        // page shows, not the app's internal stop ids.
+        stops: Array.isArray(event.stops)
+          ? event.stops
+              .filter((s: any) => s && typeof s.day === 'string')
+              .map((s: any) => ({ day: s.day, name: s.name || '', address: s.address || '' }))
+          : [],
         hostName,
         rsvpStatus: invitee.rsvp_status,
         imageUrl: event.image_url || null,
