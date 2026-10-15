@@ -60,8 +60,12 @@ import {
   deleteCalendarEvent,
   getCalendarPermissionStatus,
   getUpcomingExternalEvents,
+  moveCalendarEvent,
   requestCalendarAccess,
 } from "../../lib/calendarConflicts";
+import { notify } from "../../lib/notify";
+import { parseStops, shiftStops } from "../../lib/stops";
+import { refreshSyncedCopy } from "../../lib/pingCalendarSync";
 import { getHiddenEventIds, hideEvent, hiddenKeyFor, hiddenPingKey, isHidden, onHiddenEventsChange, unhideEvent } from "../../lib/hiddenEvents";
 import { getAllImportantItemIds } from "../../lib/eventReminders";
 import { fetchDayNotes, saveDayNote } from "../../lib/dayNotes";
@@ -100,6 +104,9 @@ export default function HomeScreen() {
   const { shouldPrompt: shouldPromptPhone, refresh: refreshProfilePhone } = useProfilePhone(session?.user?.id);
   const [phoneBannerDismissed, setPhoneBannerDismissed] = useState(false);
   const [events, setEvents] = useState<PingEvent[]>([]);
+  // Pings you co-host (event_hosts) - you can drag those in Week view too,
+  // not just the ones where you're host_id.
+  const [coHostEventIds, setCoHostEventIds] = useState<Set<string>>(new Set());
   const [weatherByEventId, setWeatherByEventId] = useState<Record<string, DailyWeather>>({});
   const [interestedActivities, setInterestedActivities] = useState<InterestedActivity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -594,6 +601,13 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     }
     setEvents(data as PingEvent[]);
     setEventsLoadError(false);
+    supabase
+      .from("event_hosts")
+      .select("event_id")
+      .eq("user_id", session.user.id)
+      .then(({ data: hostRows }) => {
+        if (hostRows) setCoHostEventIds(new Set(hostRows.map((r) => r.event_id)));
+      });
     // access_token on purpose: a token refresh changes it, which re-creates
     // this callback and re-triggers the useFocusEffect below, so a fetch
     // that was skipped above (or ran during a bad-token window) heals on its
@@ -954,6 +968,114 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
 
   // Week view's long-press equivalent of the Upcoming list's hide icon -
   // offers to hide a phone-calendar item or a Ping.
+  // Week view drag-to-move (hold an event, then drag it). Only things this
+  // person can actually change: a Ping they host or co-host, or a phone
+  // calendar item on a calendar that accepts edits. Never a multi-day one
+  // - Week shows it as one block per day, and dragging one day's piece of
+  // it has no clear meaning.
+  const sameDay = (start: Date, end: Date) =>
+    toDateKey(start) === toDateKey(new Date(end.getTime() - 1));
+  const canMoveWeekItem = (id: string) => {
+    if (id.startsWith("ping-")) {
+      const p = events.find((e) => e.id === id.slice(5));
+      if (!p || p.is_all_day) return false;
+      if (p.host_id !== session?.user?.id && !coHostEventIds.has(p.id)) return false;
+      const start = new Date(p.event_date);
+      return !p.end_date || sameDay(start, new Date(p.end_date));
+    }
+    if (id.startsWith("ext-")) {
+      const ext = externalEvents.find((e) => hiddenKeyFor(e) === id.slice(4));
+      return !!ext && ext.editable && !ext.allDay && sameDay(ext.startDate, ext.endDate);
+    }
+    return false;
+  };
+
+  const handleWeekItemMove = (id: string, dayKey: string, startMinutes: number) => {
+    const [y, m, d] = dayKey.split("-").map(Number);
+    const newStart = new Date(y, m - 1, d, Math.floor(startMinutes / 60), startMinutes % 60);
+    // Whole minutes, so a start that was saved with stray seconds (Create
+    // stamps "now") doesn't leave the moved end at 7:44:07.
+    const shifted = (from: Date, to: Date) =>
+      new Date(newStart.getTime() + Math.round((to.getTime() - from.getTime()) / 60000) * 60000);
+    const whenLabel = `${newStart.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} at ${newStart.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+
+    if (id.startsWith("ext-")) {
+      const ext = externalEvents.find((e) => hiddenKeyFor(e) === id.slice(4));
+      if (!ext) return;
+      const newEnd = shifted(ext.startDate, ext.endDate);
+      const moved = { ...ext, startDate: newStart, endDate: newEnd };
+      setExternalEvents((prev) => prev.map((e) => (e === ext ? moved : e)));
+      moveCalendarEvent(ext, newStart, newEnd)
+        .then(() => fetchExternalEvents())
+        .catch((err) => {
+          console.error("Error moving calendar item:", err);
+          setExternalEvents((prev) => prev.map((e) => (e === moved ? ext : e)));
+          Alert.alert("Couldn't move it", "Your phone calendar didn't accept the change.");
+        });
+      return;
+    }
+
+    if (!id.startsWith("ping-")) return;
+    const p = events.find((e) => e.id === id.slice(5));
+    if (!p) return;
+    const oldStart = new Date(p.event_date);
+    const newEnd = p.end_date ? shifted(oldStart, new Date(p.end_date)) : null;
+    const updates = {
+      event_date: newStart.toISOString(),
+      end_date: newEnd ? newEnd.toISOString() : null,
+      // Stops are tied to dates - they ride along with the Ping.
+      stops: shiftStops(parseStops(p.stops), oldStart, newStart),
+    };
+    const moved = { ...p, ...updates };
+    // Shown in its new spot right away; put back if it's cancelled or fails.
+    setEvents((prev) => prev.map((e) => (e.id === p.id ? moved : e)));
+    const putBack = () => setEvents((prev) => prev.map((e) => (e.id === p.id ? p : e)));
+
+    const save = async (notifyGuests: boolean) => {
+      const { error } = await supabase.from("events").update(updates).eq("id", p.id);
+      if (error) {
+        console.error("Error moving Ping:", error);
+        putBack();
+        Alert.alert("Couldn't move it", "Check your connection and try again.");
+        return;
+      }
+      refreshSyncedCopy({
+        id: p.id,
+        title: p.title,
+        event_date: updates.event_date,
+        end_date: updates.end_date,
+        is_all_day: !!p.is_all_day,
+        location: p.location,
+      }).catch((err) => console.error("Error updating phone calendar copy:", err));
+      if (!notifyGuests) return;
+      // Same audience as Edit's "Save & notify": everyone but you and
+      // anyone who's already declined.
+      const { data: invitees } = await supabase
+        .from("invitees")
+        .select("user_id, rsvp_status")
+        .eq("event_id", p.id);
+      const recipientIds = (invitees || [])
+        .filter((i) => i.rsvp_status !== "declined")
+        .map((i) => i.user_id)
+        .filter((uid): uid is string => !!uid && uid !== session?.user?.id);
+      await notify(recipientIds, `${p.title} was moved`, `It's now ${whenLabel}.`, {
+        eventId: p.id,
+        type: "event_updated",
+      });
+    };
+
+    // A draft has no guests to tell yet.
+    if (p.status === "draft") {
+      save(false);
+      return;
+    }
+    Alert.alert(`Move to ${whenLabel}?`, "Let the people you've invited know about the new time?", [
+      { text: "Cancel", style: "cancel", onPress: putBack },
+      { text: "Move silently", onPress: () => save(false) },
+      { text: "Move & notify", onPress: () => save(true) },
+    ]);
+  };
+
   const handleWeekItemLongPress = (id: string) => {
     if (id.startsWith("ping-")) {
       const p = declinedFilteredEvents.find((e) => e.id === id.slice(5));
@@ -1807,6 +1929,8 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
               height={landscapeWeek ? landscapeGridHeight : weekGridMaxHeight}
               onEventPress={handleWeekItemPress}
               onEventLongPress={handleWeekItemLongPress}
+              canMoveEvent={canMoveWeekItem}
+              onEventMove={handleWeekItemMove}
               onVisibleWeekChange={setVisibleWeekStart}
               onEmptySlotLongPress={handleEmptySlotLongPress}
               onDateHeaderLongPress={handleDateHeaderLongPress}

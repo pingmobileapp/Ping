@@ -116,6 +116,16 @@ export async function syncAcceptedEventToDeviceCalendar(
   }
 }
 
+// After a Ping's time changes from this device (Week view drag-to-move):
+// moves the copy already on this phone's calendar, if there is one. Never
+// creates one or asks for calendar access - that's the RSVP's job.
+export async function refreshSyncedCopy(event: SyncableEvent): Promise<void> {
+  const map = await getStoredMap();
+  if (!map[event.id]) return;
+  if ((await getCalendarPermissionStatus()) !== 'granted') return;
+  await syncAcceptedEventToDeviceCalendar(event, 'accepted');
+}
+
 // For a Discover self-leave, where the invitee row is deleted outright
 // rather than switched to a non-accepted status - same cleanup, just with
 // no status to branch on first.

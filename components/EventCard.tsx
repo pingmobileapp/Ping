@@ -20,6 +20,10 @@ export type PingEvent = {
   // Set when this Ping was created via a single selected group in
   // CreateEventModal - lets a group's own screen show its tagged events.
   group_id?: string | null;
+  // From select('*') - used by Week view's drag-to-move (who may move it,
+  // and its itinerary stops, which move with it).
+  host_id?: string | null;
+  stops?: unknown;
 };
 
 type RsvpStatus = 'pending' | 'accepted' | 'interested' | 'declined';

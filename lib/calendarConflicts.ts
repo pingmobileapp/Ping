@@ -330,6 +330,17 @@ export async function updateCalendarEvent(
   );
 }
 
+// Week view's drag-to-move: only the time changes. A repeating phone
+// calendar item moves just the occurrence that was dragged (EventKit finds
+// it by its ORIGINAL start), never the rest of its series.
+export async function moveCalendarEvent(event: ExternalEvent, startDate: Date, endDate: Date): Promise<void> {
+  await Calendar.updateEventAsync(
+    event.id,
+    { startDate, endDate },
+    event.recurrenceRule ? { futureEvents: false, instanceStartDate: event.startDate.toISOString() } : undefined
+  );
+}
+
 export async function deleteCalendarEvent(
   eventId: string,
   futureEvents?: boolean,

@@ -12,6 +12,8 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
 } from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import * as Haptics from 'expo-haptics';
 import { HOUR_BLOCK_HEIGHT } from 'react-native-calendars/src/timeline/Packer';
 import { colors } from '../lib/theme';
 import { DayColumnEvent, AllDayItem } from '../lib/weekTimeline';
@@ -47,6 +49,134 @@ const formatHour = (hour: number) => {
 
 export type WeekGridHandle = { scrollByDays: (delta: number) => void };
 
+// Dragging an event snaps its start to this many minutes, like Apple
+// Calendar and Outlook.
+const DRAG_SNAP_MINUTES = 15;
+// How long an event has to be held before it lifts for dragging. Moving
+// the finger sooner than this is a scroll, not a drag.
+const DRAG_HOLD_MS = 400;
+
+const formatClock = (minutes: number) => {
+  const h = Math.floor(minutes / 60) % 24;
+  const m = minutes % 60;
+  const suffix = h < 12 ? 'AM' : 'PM';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${pad(m)} ${suffix}`;
+};
+
+// One event block in a day column. Tap = the usual open/widen. Hold =
+// lift it and drag to a new day/time (onMove) when `movable`; letting go
+// without moving, or holding an item that can't move, shows the old
+// long-press menu (onHold) instead. Gesture-handler rather than RN
+// touchables so a long-press can turn into a pan in one continuous touch.
+function EventBlock({
+  ev,
+  blockStyle,
+  leftPx,
+  title,
+  textStyle,
+  numberOfLines,
+  movable,
+  onPress,
+  onHold,
+  onDragStart,
+  onDragPreview,
+  onDragEnd,
+}: {
+  ev: DayColumnEvent;
+  blockStyle: any;
+  leftPx: number;
+  title: string;
+  textStyle: any;
+  numberOfLines: number;
+  movable: boolean;
+  onPress: () => void;
+  onHold?: () => void;
+  onDragStart: () => void;
+  onDragPreview: (fingerX: number, newStartMinutes: number) => void;
+  onDragEnd: (fingerX: number, newStartMinutes: number) => void;
+}) {
+  const tx = useSharedValue(0);
+  const ty = useSharedValue(0);
+  const lifted = useSharedValue(0);
+  const startX = useSharedValue(0);
+  const lastSlot = useSharedValue(-1);
+  const lastColumnX = useSharedValue(0);
+
+  const snapStart = (translationY: number) => {
+    'worklet';
+    const raw = ev.startMinutes + (translationY / HOUR_BLOCK_HEIGHT) * 60;
+    const snapped = Math.round(raw / DRAG_SNAP_MINUTES) * DRAG_SNAP_MINUTES;
+    return Math.max(0, Math.min(24 * 60 - DRAG_SNAP_MINUTES, snapped));
+  };
+
+  const drag = Gesture.Pan()
+    .activateAfterLongPress(DRAG_HOLD_MS)
+    .onBegin((e) => {
+      startX.value = e.x;
+    })
+    .onStart(() => {
+      lifted.value = 1;
+      lastSlot.value = ev.startMinutes;
+      lastColumnX.value = 0;
+      runOnJS(onDragStart)();
+    })
+    .onUpdate((e) => {
+      const newStart = snapStart(e.translationY);
+      tx.value = e.translationX;
+      ty.value = ((newStart - ev.startMinutes) / 60) * HOUR_BLOCK_HEIGHT;
+      const fingerX = leftPx + startX.value + e.translationX;
+      // Only cross the JS bridge when the preview could have changed.
+      const columnStep = Math.round(fingerX / 20);
+      if (newStart !== lastSlot.value || columnStep !== lastColumnX.value) {
+        lastSlot.value = newStart;
+        lastColumnX.value = columnStep;
+        runOnJS(onDragPreview)(fingerX, newStart);
+      }
+    })
+    .onEnd((e) => {
+      runOnJS(onDragEnd)(leftPx + startX.value + e.translationX, snapStart(e.translationY));
+    })
+    .onFinalize(() => {
+      tx.value = 0;
+      ty.value = 0;
+      lifted.value = 0;
+    });
+
+  const hold = Gesture.LongPress()
+    .minDuration(450)
+    .onStart(() => {
+      if (onHold) runOnJS(onHold)();
+    });
+
+  const tap = Gesture.Tap().onEnd((_e, success) => {
+    if (success) runOnJS(onPress)();
+  });
+
+  const gesture = Gesture.Exclusive(movable ? drag : hold, tap);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: tx.value }, { translateY: ty.value }, { scale: lifted.value ? 1.04 : 1 }],
+    opacity: lifted.value ? 0.92 : 1,
+    shadowOpacity: lifted.value ? 0.4 : 0.25,
+    shadowRadius: lifted.value ? 8 : 2,
+    elevation: lifted.value ? 12 : 2,
+    zIndex: lifted.value ? 1000 : (blockStyle.zIndex ?? 0),
+  }));
+
+  return (
+    <GestureDetector gesture={gesture}>
+      {/* Claims the RN touch so the day column's own Pressable (widen on
+          tap, "+ Add Personal Item" on hold) doesn't also fire. */}
+      <Animated.View style={[blockStyle, animatedStyle]} onStartShouldSetResponder={() => true}>
+        <Text style={textStyle} numberOfLines={numberOfLines}>
+          {title}
+        </Text>
+      </Animated.View>
+    </GestureDetector>
+  );
+}
+
 type Props = {
   rangeStart: Date;
   dayCount: number;
@@ -74,6 +204,12 @@ type Props = {
   // call sites that don't need it (none currently) aren't forced to wire
   // a no-op.
   onEventLongPress?: (id: string) => void;
+  // Drag-to-move (hold an event, then drag it): whether this item can be
+  // moved by this user, and what to do when it's dropped on a new day/
+  // start time. Both optional - without them every event just keeps the
+  // hold-for-menu behavior.
+  canMoveEvent?: (id: string) => boolean;
+  onEventMove?: (id: string, dayKey: string, startMinutes: number) => void;
   onVisibleWeekChange: (weekStart: Date) => void;
   // Long-pressing empty space in a day column (not on top of an existing
   // event - see isFreeSlot) shows a pill right where the press landed;
@@ -136,6 +272,8 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       height,
       onEventPress,
       onEventLongPress,
+      canMoveEvent,
+      onEventMove,
       onVisibleWeekChange,
       onEmptySlotLongPress,
       onDateHeaderLongPress,
@@ -166,6 +304,10 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     const NORMAL_DAY_WIDTH = columnWidth / 7;
     const FOCUSED_DAY_WIDTH = columnWidth * 0.45;
     const [focusedDayKey, setFocusedDayKey] = useState<string | null>(null);
+    // While an event is lifted: which day it came from (that column is
+    // raised above its neighbors so the block isn't drawn under them),
+    // and the "Tue 3:15 PM" it would land on, shown in the block.
+    const [dragging, setDragging] = useState<{ id: string; fromDayKey: string; label: string } | null>(null);
 
     const [emptySlotPrompt, setEmptySlotPrompt] = useState<{ dayKey: string; top: number; minutes: number } | null>(
       null,
@@ -275,6 +417,15 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
         else break;
       }
       return idx;
+    };
+
+    // A dragged block reports where the finger is relative to its own day
+    // column; this turns that into the day it's over now.
+    const dragTargetIndex = (fromIndex: number, fingerX: number) =>
+      Math.max(0, Math.min(dayKeys.length - 1, indexForOffset((dayOffsets[fromIndex] ?? 0) + fingerX)));
+    const dragLabel = (dayIndex: number, startMinutes: number) => {
+      const day = dayKeys[dayIndex];
+      return `${day.toLocaleDateString(undefined, { weekday: 'short' })} ${formatClock(startMinutes)}`;
     };
 
     const mainScrollRef = useAnimatedRef<Animated.ScrollView>();
@@ -658,7 +809,12 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
           </Animated.ScrollView>
         </View>
 
-        <Animated.ScrollView ref={verticalScrollRef} showsVerticalScrollIndicator={false} style={animatedScrollAreaStyle}>
+        <Animated.ScrollView
+          ref={verticalScrollRef}
+          showsVerticalScrollIndicator={false}
+          style={animatedScrollAreaStyle}
+          scrollEnabled={!dragging}
+        >
           <View style={{ flexDirection: 'row' }}>
             <View style={{ width: TIMELINE_LEFT_INSET, height: GRID_HEIGHT }}>
               {Array.from({ length: 24 }, (_, hour) => (
@@ -670,6 +826,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
             <Animated.ScrollView
               ref={mainScrollRef}
               horizontal
+              scrollEnabled={!dragging}
               snapToOffsets={dayOffsets}
               decelerationRate="fast"
               onScroll={horizontalScrollHandler}
@@ -685,7 +842,12 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                 return (
                   <Pressable
                     key={key}
-                    style={[styles.dayColumn, hasAllDay && styles.dayColumnAllDay, { width: dayWidths[dayIndex] }]}
+                    style={[
+                      styles.dayColumn,
+                      hasAllDay && styles.dayColumnAllDay,
+                      { width: dayWidths[dayIndex] },
+                      dragging?.fromDayKey === key && styles.dayColumnLifted,
+                    ]}
                     delayLongPress={450}
                     // Tapping a day's empty space widens it to read (and
                     // tapping again narrows it back). Tapping an event opens
@@ -718,21 +880,29 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                       // than also pulling in with stackIndex, so it's a
                       // simple cascade of same-width cards, not a split
                       // into narrower side-by-side lanes.
+                      const leftPx = sideBySide ? 2 + ev.lane * laneWidth : 2 + ev.stackIndex * STACK_OFFSET;
+                      const isDragged = dragging?.id === ev.id && dragging.fromDayKey === key;
                       return (
-                        <TouchableOpacity
+                        <EventBlock
                           key={`${ev.id}-${evIndex}`}
-                          style={[
+                          ev={ev}
+                          leftPx={leftPx}
+                          blockStyle={[
                             styles.eventBlock,
                             {
                               top: (ev.startMinutes / 60) * HOUR_BLOCK_HEIGHT,
                               height: Math.max(18, ((ev.endMinutes - ev.startMinutes) / 60) * HOUR_BLOCK_HEIGHT),
                               ...(sideBySide
-                                ? { left: 2 + ev.lane * laneWidth, width: laneWidth - 2 }
-                                : { left: 2 + ev.stackIndex * STACK_OFFSET, right: 2 }),
+                                ? { left: leftPx, width: laneWidth - 2 }
+                                : { left: leftPx, right: 2 }),
                               backgroundColor: ev.color || colors.primary,
                               zIndex: sideBySide ? 0 : ev.stackIndex,
                             },
                           ]}
+                          title={isDragged ? dragging.label : ev.title}
+                          textStyle={[styles.eventBlockText, ev.textColor ? { color: ev.textColor } : null]}
+                          numberOfLines={sideBySide ? 3 : 2}
+                          movable={!!onEventMove && !!canMoveEvent?.(ev.id)}
                           // On a narrow day, the first tap widens the day so
                           // everything on it is readable (overlaps go side by
                           // side); tapping an event in the widened day opens
@@ -740,14 +910,31 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                           // made every tap open straight away, which left
                           // crowded days unreadable. Hiding and reporting are
                           // on the event screen's ••• menu; holding an event
-                          // here is a shortcut.
+                          // that can't be moved here is a shortcut to them.
                           onPress={() => (key === focusedDayKey ? onEventPress(ev.id) : handleDayTap(key, dayIndex))}
-                          onLongPress={onEventLongPress ? () => onEventLongPress(ev.id) : undefined}
-                        >
-                          <Text style={[styles.eventBlockText, ev.textColor ? { color: ev.textColor } : null]} numberOfLines={sideBySide ? 3 : 2}>
-                            {ev.title}
-                          </Text>
-                        </TouchableOpacity>
+                          onHold={onEventLongPress ? () => onEventLongPress(ev.id) : undefined}
+                          onDragStart={() => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+                            setEmptySlotPrompt(null);
+                            setDragging({ id: ev.id, fromDayKey: key, label: dragLabel(dayIndex, ev.startMinutes) });
+                          }}
+                          onDragPreview={(fingerX, newStart) => {
+                            Haptics.selectionAsync().catch(() => {});
+                            const label = dragLabel(dragTargetIndex(dayIndex, fingerX), newStart);
+                            setDragging((prev) => (prev ? { ...prev, label } : prev));
+                          }}
+                          onDragEnd={(fingerX, newStart) => {
+                            setDragging(null);
+                            const targetKey = toDayKey(dayKeys[dragTargetIndex(dayIndex, fingerX)]);
+                            if (targetKey === key && newStart === ev.startMinutes) {
+                              // Held and let go without moving - same as a
+                              // long-press on anything else.
+                              onEventLongPress?.(ev.id);
+                              return;
+                            }
+                            onEventMove?.(ev.id, targetKey, newStart);
+                          }}
+                        />
                       );
                     })}
                     {emptySlotPrompt?.dayKey === key && (
@@ -839,6 +1026,9 @@ const styles = StyleSheet.create({
   // A day with an all-day item is shaded top to bottom, so the whole day
   // reads as taken - a lighter wash of the all-day chip's blue.
   dayColumnAllDay: { backgroundColor: 'rgba(174, 225, 249, 0.45)' },
+  // The column an event is being dragged out of sits above its neighbors,
+  // so the lifted block isn't drawn underneath the next day's events.
+  dayColumnLifted: { zIndex: 100, elevation: 100 },
   hourLine: { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: colors.divider },
   nowLine: { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: colors.danger, flexDirection: 'row', alignItems: 'center' },
   nowDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.danger, marginLeft: -4 },
