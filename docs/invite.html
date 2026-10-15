@@ -112,8 +112,9 @@
     }
 
     // Same shape as the app's Itinerary (lib/stops.ts): stops grouped by
-    // day, in the order the host added them. Only for a multi-day Ping.
-    function itineraryHtml(stops) {
+    // day, in the order the host added them. Day headings only for a
+    // multi-day Ping - a one-day Ping's date is already shown above.
+    function itineraryHtml(stops, showDays) {
       if (!stops || stops.length === 0) return '';
       const groups = [];
       for (const stop of stops) {
@@ -129,7 +130,7 @@
             const label = new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
             return `
               <div class="itinerary-group">
-                <div class="itinerary-day">${escapeHtml(label)}</div>
+                ${showDays ? `<div class="itinerary-day">${escapeHtml(label)}</div>` : ''}
                 ${g.stops.map((s) => `
                   <div class="itinerary-stop">
                     ${s.name ? `<div>${escapeHtml(s.name)}</div>` : ''}
@@ -176,7 +177,7 @@
               <div class="row">${escapeHtml(whenLabel)}</div>
               ${info.location ? `<div class="row">${escapeHtml(info.location)}</div>` : ''}
               ${label ? `<div class="status">${label}</div>` : ''}
-              ${isMultiDay ? itineraryHtml(info.stops) : ''}
+              ${itineraryHtml(info.stops, isMultiDay)}
             </div>
             <p class="steps-title">How to RSVP</p>
             <ol class="steps">

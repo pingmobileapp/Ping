@@ -768,9 +768,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
     const guestRows = (finalInvitees || []).filter((i) => i.user_id !== session.user.id);
 
     const failedDates: string[] = [];
-    const baseStops = isMultiDay
-      ? cleanStops(stops, stopDays(eventDate, resolveEndDate(eventDate, endDate, isMultiDay, isAllDay)))
-      : [];
+    const baseStops = cleanStops(stops, stopDays(eventDate, resolveEndDate(eventDate, endDate, isMultiDay, isAllDay)));
 
     for (const occ of futureOccurrences) {
       const { data: eventRow, error } = await supabase
@@ -951,9 +949,9 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
         image_url: imageUrl,
         image_url_full: imageUrlFull,
       };
-      // Turning multi-day off leaves saved stops alone (just hidden), so
-      // turning it back on doesn't lose them.
-      if (isMultiDay) updates.stops = cleanStops(stops, stopDays(eventDate, finalEndDate));
+      // Any stop the new dates no longer cover (the trip got shortened, or
+      // multi-day turned off) moves onto the nearest day it still has.
+      updates.stops = cleanStops(stops, stopDays(eventDate, finalEndDate));
       if (sendNow) updates.status = 'sent';
       if (newRecurrenceId) updates.recurrence_id = newRecurrenceId;
       if (!event.group_id && selectedTagGroupId) updates.group_id = selectedTagGroupId;
@@ -1428,13 +1426,11 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
               onChangeText={setLocation}
             />
 
-            {isMultiDay && (
-              <StopsEditor
-                stops={stops}
-                onChange={setStops}
-                days={stopDays(eventDate, resolveEndDate(eventDate, endDate, isMultiDay, isAllDay))}
-              />
-            )}
+            <StopsEditor
+              stops={stops}
+              onChange={setStops}
+              days={stopDays(eventDate, resolveEndDate(eventDate, endDate, isMultiDay, isAllDay))}
+            />
 
             <TouchableOpacity style={styles.publicRow} onPress={() => setIsPublic(!isPublic)}>
               <View style={[styles.checkbox, isPublic && styles.checkboxChecked]}>

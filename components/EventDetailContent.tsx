@@ -937,9 +937,10 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
   }
 
   const dateLabel = formatEventDate(event.event_date, event.end_date, 'long');
-  // Only a multi-day Ping shows its stops - turning multi-day off in Edit
-  // leaves them saved but out of sight rather than deleting them.
-  const stops = isMultiDayEvent(event.event_date, event.end_date) ? parseStops(event.stops) : [];
+  const stops = parseStops(event.stops);
+  // A one-day Ping's stops are all on that day - the date is already right
+  // above, so the per-day headings only show for a multi-day Ping.
+  const showStopDays = isMultiDayEvent(event.event_date, event.end_date);
   const stopsByDay = stops.reduce<{ day: string; stops: typeof stops }[]>((acc, stop) => {
     const last = acc[acc.length - 1];
     if (last && last.day === stop.day) last.stops.push(stop);
@@ -1073,7 +1074,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
             <Text style={styles.sectionLabel}>Itinerary</Text>
             {stopsByDay.map((group) => (
               <View key={group.day} style={styles.itineraryDay}>
-                <Text style={styles.itineraryDayLabel}>{formatStopDay(group.day)}</Text>
+                {showStopDays && <Text style={styles.itineraryDayLabel}>{formatStopDay(group.day)}</Text>}
                 {group.stops.map((stop) => (
                   <View key={stop.id} style={styles.itineraryStop}>
                     {!!stop.name && <Text style={styles.itineraryStopName}>{stop.name}</Text>}

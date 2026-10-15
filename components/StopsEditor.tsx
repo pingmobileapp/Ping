@@ -10,9 +10,10 @@ type Props = {
   days: string[];
 };
 
-// "Stops along the way" for a multi-day Ping - shared by Create and Edit.
-// Any number of stops per day (a lunch stop and a hotel); each picks its
-// day from the event's own date range.
+// "Stops along the way" for any Ping - shared by Create and Edit. Any
+// number of stops per day (a lunch stop and a hotel); on a multi-day Ping
+// each picks its day from the event's own date range.
+// (Asked for 2026-10-15: available whether or not Multi-day is checked.)
 export default function StopsEditor({ stops, onChange, days }: Props) {
   const update = (id: string, patch: Partial<EventStop>) =>
     onChange(stops.map((s) => (s.id === id ? { ...s, ...patch } : s)));
@@ -31,7 +32,11 @@ export default function StopsEditor({ stops, onChange, days }: Props) {
   return (
     <View>
       <Text style={styles.label}>Stops along the way</Text>
-      <Text style={styles.helper}>Where everyone will be each day, like a hotel each night. Add as many as you need.</Text>
+      <Text style={styles.helper}>
+        {days.length > 1
+          ? 'Where everyone will be each day, like a hotel each night. Add as many as you need.'
+          : 'Other places you’ll go, like dinner before the show. Add as many as you need.'}
+      </Text>
 
       {stops.map((stop, index) => (
         <View key={stop.id} style={styles.stopCard}>

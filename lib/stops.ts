@@ -1,4 +1,4 @@
-// Itinerary stops on a multi-day Ping - where the group is each day/night
+// Itinerary stops on a Ping - where the group is each day/night
 // of a trip (asked for 2026-10-13: a motorcycle ride staying at a different
 // hotel each night). Stored as a JSON array on events.stops; any number of
 // stops per day, kept in day order.
