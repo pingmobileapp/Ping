@@ -23,7 +23,7 @@
 </head>
 <body>
 <h1>Ping — Privacy Policy</h1>
-<p class="updated">Last updated: August 7, 2026</p>
+<p class="updated">Last updated: October 20, 2026</p>
 
 <p>
   Ping is an event-planning and group-messaging app. This page explains what
@@ -36,41 +36,69 @@
   <li><strong>Phone number:</strong> if you add one in Settings, used only to match you against contacts other users add, so invites reach the right account.</li>
   <li><strong>Contacts:</strong> if you choose to import from your device's contacts, we store the name and phone number of the contacts you select, so you can invite them to events and groups. We never access your contacts without you explicitly choosing to import them.</li>
   <li><strong>Photos:</strong> photos you choose to attach to an event or your profile, using your device's camera or photo library.</li>
-  <li><strong>Content you create:</strong> events, invitations, RSVPs, group memberships, and messages you send within the app.</li>
+  <li><strong>Content you create:</strong> events (including their location, stops, and details), invitations, RSVPs, group memberships, items you offer to bring, and messages you send within the app.</li>
+  <li><strong>Approximate location, only if you ask for it:</strong> if you tap &ldquo;Let me know when it&rsquo;s here&rdquo; on the Discover tab, we save your city, state, and a location rounded to about 7 miles, so we can tell you when Discover reaches your area and decide where to add it next. We never store your exact location.</li>
+  <li><strong>Payments:</strong> if you buy a ticket to, or sell tickets for, a paid event on Discover, the payment is handled by Stripe. We receive a record of the purchase, but not your card number.</li>
   <li><strong>Push notification token:</strong> a device identifier used to deliver notifications to you, if you enable them.</li>
 </ul>
 
+<h2>Information that stays on your phone</h2>
+<ul>
+  <li><strong>Your location:</strong> if you allow it, Discover uses your location on your phone to show nearby events and how far away they are. It isn&rsquo;t sent to us, except the rounded location described above when you ask to be notified.</li>
+  <li><strong>Your calendar:</strong> if you allow it, Ping reads your phone&rsquo;s calendar on your phone to show your other events alongside your Pings and to warn about conflicts. Ping writes to your calendar only when you add a personal item, accept a Ping, move or edit an item, or add a Discover event. Your calendar&rsquo;s contents aren&rsquo;t uploaded to us.</li>
+</ul>
+
+<h2>People you invite who don&rsquo;t use Ping</h2>
+<p>
+  When you invite someone who isn&rsquo;t on Ping, they get a link to a web page
+  showing that event&rsquo;s details. They can answer Going, Maybe, or Can&rsquo;t go
+  from that page without an account. Their answer is saved with your invite
+  and shown to the event&rsquo;s hosts. The page never shows the guest list or
+  anyone else&rsquo;s information.
+</p>
+
 <h2>How we use this information</h2>
 <p>
-  We use your information solely to operate the app's core features: creating
+  We use your information solely to operate the app's features: creating
   and displaying events, matching invited contacts to their accounts,
-  delivering in-app and push notifications, and showing messages within
-  events and groups you're part of. We do not sell your information, and we
-  do not use it for advertising.
+  delivering in-app and push notifications, showing messages within events
+  and groups you're part of, processing ticket payments, and deciding where
+  to bring Discover next. We do not sell your information, and we do not use
+  it for advertising.
 </p>
+
+<h2>Services that help run Ping</h2>
+<ul>
+  <li><strong>Supabase</strong> hosts Ping&rsquo;s database, photos, and server functions.</li>
+  <li><strong>Anthropic</strong> powers optional AI features. When you use &ldquo;Catch me up&rdquo;, it receives the titles and dates of your upcoming events and your recent notifications. When you use &ldquo;Suggest&rdquo; for what to bring, it receives the event&rsquo;s title and details. When you use &ldquo;Scan a Schedule&rdquo;, it receives the photo you took. Under its commercial terms, Anthropic uses this only to return the result, not to train its models.</li>
+  <li><strong>Stripe</strong> processes payments for paid Discover events.</li>
+  <li><strong>Expo</strong> (and Apple and Google&rsquo;s push services) deliver push notifications.</li>
+  <li><strong>OpenStreetMap services (Nominatim, Photon)</strong> turn an event&rsquo;s location text into map coordinates, and <strong>Open-Meteo</strong> uses those coordinates for the event&rsquo;s weather forecast.</li>
+  <li><strong>Google and Apple</strong> handle sign-in, if you choose to sign in with them.</li>
+</ul>
+<p>These services receive only what&rsquo;s needed for their part, and we don&rsquo;t share your information with anyone for their own marketing.</p>
 
 <h2>Data storage</h2>
 <p>
-  App data is stored using Supabase, a hosted database and backend provider.
-  Photos are stored via Supabase Storage. Reasonable technical safeguards
-  (access controls at the database level) restrict who can read your data to
-  you and the people you've explicitly shared events, groups, or messages
-  with.
+  Reasonable technical safeguards (access controls at the database level)
+  restrict who can read your data to you and the people you've explicitly
+  shared events, groups, or messages with.
 </p>
 
 <h2>Sharing with other users</h2>
 <p>
   Your name and profile photo are visible to people you share an event or
   group with. Messages you send in an event or group chat are visible to
-  other members of that event or group. We do not share your information
-  with third parties for their own purposes.
+  other members of that event or group. Your RSVP and anything you offer to
+  bring are visible to the event&rsquo;s hosts and guests.
 </p>
 
 <h2>Your choices</h2>
 <ul>
   <li>You can remove your phone number or profile photo at any time in Settings.</li>
-  <li>You can decline to import contacts or grant camera/photo library access — these features simply won't be available if declined.</li>
-  <li>You can delete your account by contacting us at the email below.</li>
+  <li>You can decline contacts, calendar, location, camera, or photo access. Those features simply won&rsquo;t be available.</li>
+  <li>You can delete your account and its data at any time in Settings &rarr; Delete Account.</li>
+  <li>To have your &ldquo;Let me know&rdquo; request for Discover removed, or with any other request about your data, email us at the address below.</li>
 </ul>
 
 <h2>Contact</h2>

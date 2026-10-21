@@ -27,3 +27,7 @@ create policy discover_area_requests_delete_own on public.discover_area_requests
   for delete using (user_id = auth.uid());
 
 revoke all on public.discover_area_requests from anon;
+-- Explicit grants: from 2026-10-30, Supabase stops granting Data API access
+-- to new public tables automatically (RLS above still limits rows).
+grant select, insert, update, delete on public.discover_area_requests to authenticated;
+grant select, insert, update, delete on public.discover_area_requests to service_role;
