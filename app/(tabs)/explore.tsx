@@ -29,7 +29,8 @@ import {
   isFreeActivity,
   toggleInterest,
 } from '../../lib/discoverActivities';
-import { filterActivitiesForRegion, filterActivitiesNearby, regionForCoords } from '../../lib/discoverRegion';
+import { filterActivitiesForRegion, filterActivitiesNearby, isCoveredArea, regionForCoords } from '../../lib/discoverRegion';
+import { AreaRequest, describeArea, fetchMyAreaRequest, requestDiscoverForMyArea } from '../../lib/discoverAreaRequests';
 import {
   createPersonalCalendarEvent,
   getCalendarPermissionStatus,
@@ -116,6 +117,12 @@ export default function DiscoverScreen() {
   const [loading, setLoading] = useState(true);
   const [locationPermission, setLocationPermission] = useState<LocationPermissionStatus | null>(null);
   const [coords, setCoords] = useState<Coords | null>(null);
+  // Outside every area Discover has events for (only knowable with a
+  // location) - the list is just Ping users' own listings, so a card
+  // explains why instead of a blank "nothing found" (2026-10-20).
+  const outsideArea = !isCoveredArea(coords);
+  const [areaRequest, setAreaRequest] = useState<AreaRequest | null>(null);
+  const [savingAreaRequest, setSavingAreaRequest] = useState(false);
   const dateListRef = useRef<FlatList<string>>(null);
   const resultsListRef = useRef<FlatList<Activity>>(null);
   // Briefly glows the card a deep link (from Home's "interested" cards)
@@ -210,6 +217,19 @@ export default function DiscoverScreen() {
       if (status === 'granted') getCurrentCoords().then(setCoords);
     });
   }, []);
+
+  useEffect(() => {
+    if (outsideArea && session?.user?.id) fetchMyAreaRequest(session.user.id).then(setAreaRequest);
+  }, [outsideArea, session?.user?.id]);
+
+  const handleRequestArea = async () => {
+    if (!coords || !session?.user?.id || savingAreaRequest) return;
+    setSavingAreaRequest(true);
+    const saved = await requestDiscoverForMyArea(session.user.id, coords);
+    setSavingAreaRequest(false);
+    if (saved) setAreaRequest(saved);
+    else Alert.alert("Couldn't save that", 'Check your connection and try again.');
+  };
 
   const handleEnableLocation = async () => {
     const granted = await requestLocationAccess();
@@ -380,9 +400,20 @@ export default function DiscoverScreen() {
         )}
       </View>
 
+      {/* No location yet: say plainly that this is Utah, so someone in
+          another state doesn't take it as everything Ping has. */}
       {locationPermission === 'undetermined' && (
         <TouchableOpacity style={styles.locationPromptRow} onPress={handleEnableLocation}>
-          <Text style={styles.locationPromptText}>📍 Use your location to see what&apos;s actually near you</Text>
+          <Text style={styles.locationPromptText}>
+            Showing events in Utah · 📍 Use your location to see what&apos;s near you
+          </Text>
+        </TouchableOpacity>
+      )}
+      {locationPermission === 'denied' && (
+        <TouchableOpacity style={styles.locationPromptRow} onPress={() => Linking.openSettings()}>
+          <Text style={styles.locationPromptText}>
+            Showing events in Utah · Turn on location in Settings to see what&apos;s near you
+          </Text>
         </TouchableOpacity>
       )}
 
@@ -465,6 +496,37 @@ export default function DiscoverScreen() {
             data={visibleActivities}
             keyExtractor={(a) => a.id}
             contentContainerStyle={styles.listContent}
+            ListHeaderComponent={
+              outsideArea ? (
+                <View style={styles.areaCard}>
+                  <Text style={styles.areaCardTitle}>Discover isn&apos;t in your area yet</Text>
+                  <Text style={styles.areaCardBody}>
+                    Local events are live in Utah and the Boise area for now, with more places coming. Invites,
+                    your calendar, and groups work anywhere.
+                  </Text>
+                  {areaRequest ? (
+                    <Text style={styles.areaCardDone}>
+                      ✓ We&apos;ll let you know when Discover comes to {describeArea(areaRequest)}.
+                    </Text>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.areaCardButton}
+                      onPress={handleRequestArea}
+                      disabled={savingAreaRequest}
+                    >
+                      {savingAreaRequest ? (
+                        <ActivityIndicator color={colors.textOnPrimary} />
+                      ) : (
+                        <Text style={styles.areaCardButtonText}>Let me know when it&apos;s here</Text>
+                      )}
+                    </TouchableOpacity>
+                  )}
+                  {visibleActivities.length > 0 && (
+                    <Text style={styles.areaCardFootnote}>Below: events Ping users have shared for this day.</Text>
+                  )}
+                </View>
+              ) : null
+            }
             onScrollToIndexFailed={(info) => {
               setTimeout(
                 () => resultsListRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.3 }),
@@ -578,10 +640,12 @@ export default function DiscoverScreen() {
               );
             }}
             ListEmptyComponent={
+              outsideArea ? null : (
               <Text style={styles.emptyText}>
                 Nothing found for this day yet - try &quot;See all day&quot;, a different filter, or swipe to
                 another day.
               </Text>
+              )
             }
           />
         </GestureDetector>
@@ -686,5 +750,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   calendarButtonText: { color: colors.primary, fontSize: 14, fontWeight: '700' },
+  areaCard: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 16,
+    padding: 18,
+    marginTop: 4,
+  },
+  areaCardTitle: { color: colors.textPrimary, fontSize: 17, fontWeight: '700', marginBottom: 6 },
+  areaCardBody: { color: colors.textSecondary, fontSize: 15, lineHeight: 21 },
+  areaCardButton: {
+    backgroundColor: colors.primary,
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: 'center',
+    marginTop: 14,
+  },
+  areaCardButtonText: { color: colors.textOnPrimary, fontSize: 15, fontWeight: '700' },
+  areaCardDone: { color: colors.textPrimary, fontSize: 15, fontWeight: '600', marginTop: 14 },
+  areaCardFootnote: { color: colors.textMuted, fontSize: 13, marginTop: 12 },
   emptyText: { color: colors.textMuted, textAlign: 'center', marginTop: 60, fontSize: 15, paddingHorizontal: 20 },
 });

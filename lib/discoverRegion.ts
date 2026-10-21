@@ -28,6 +28,22 @@ function haversineMiles(aLat: number, aLng: number, bLat: number, bLng: number):
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// Center of the Utah crawlers' events (Salt Lake / Utah County, from the
+// activities table on 2026-10-20) and how far from it someone still counts
+// as a Utah user - Ogden, Provo and Park City are all inside.
+const UTAH_CENTER: LatLng = { latitude: 40.68, longitude: -111.9 };
+const UTAH_USER_RADIUS_MILES = 75;
+
+// Whether Discover has any local events for where this person is. No
+// location (denied, or not asked yet) counts as covered: they're shown
+// Utah, with a note saying so.
+export function isCoveredArea(coords: LatLng | null): boolean {
+  if (!coords) return true;
+  const toBoise = haversineMiles(coords.latitude, coords.longitude, BOISE_ANCHOR.latitude, BOISE_ANCHOR.longitude);
+  const toUtah = haversineMiles(coords.latitude, coords.longitude, UTAH_CENTER.latitude, UTAH_CENTER.longitude);
+  return toBoise <= BOISE_USER_RADIUS_MILES || toUtah <= UTAH_USER_RADIUS_MILES;
+}
+
 export function regionForCoords(coords: LatLng | null): DiscoverRegion {
   if (!coords) return 'utah';
   const miles = haversineMiles(coords.latitude, coords.longitude, BOISE_ANCHOR.latitude, BOISE_ANCHOR.longitude);
