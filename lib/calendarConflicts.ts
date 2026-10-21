@@ -299,6 +299,23 @@ export async function createPersonalCalendarEvent(
 // caller passes one through only when the user is newly adding a
 // recurrence during an edit - an already-recurring item's rule is never
 // re-sent, since that's what futureEvents/readOnlyExisting scope instead).
+// expo-calendar's iOS save (initializeEvent in CalendarModule.swift) writes
+// title, location, notes, all-day, alarms, availability and url from
+// whatever it's handed - a field left out is saved as blank, not left
+// alone. Fields Ping doesn't edit are read back from the event first and
+// sent along unchanged. (A drag that sent only new times wiped a real
+// calendar item's title, which then dropped out of Ping entirely -
+// TestFlight 1.1.9, 2026-10-20.)
+async function untouchedFields(eventId: string): Promise<Partial<Calendar.Event>> {
+  const current = await Calendar.getEventAsync(eventId);
+  return {
+    location: current.location ?? undefined,
+    url: current.url ?? undefined,
+    availability: current.availability,
+    ...(current.timeZone ? { timeZone: current.timeZone } : {}),
+  };
+}
+
 export async function updateCalendarEvent(
   eventId: string,
   title: string,
@@ -314,6 +331,7 @@ export async function updateCalendarEvent(
 ): Promise<void> {
   const alarms = minutesToAlarms(reminderMinutesBefore);
   const updates: Partial<Calendar.Event> = {
+    ...(await untouchedFields(eventId)),
     title,
     startDate,
     endDate,
@@ -330,15 +348,24 @@ export async function updateCalendarEvent(
   );
 }
 
-// Week view's drag-to-move: only the time changes. A repeating phone
-// calendar item moves just the occurrence that was dragged (EventKit finds
-// it by its ORIGINAL start), never the rest of its series.
+// Week view's drag-to-move: only the time changes - everything else is read
+// back and re-sent as-is (see untouchedFields). One-off items only: for a
+// repeating item, expo-calendar's occurrence lookup (getEvent in
+// CalendarModule.swift) hands back the series' FIRST occurrence unless the
+// dragged one is that first one, so a drag could move the wrong date.
 export async function moveCalendarEvent(event: ExternalEvent, startDate: Date, endDate: Date): Promise<void> {
-  await Calendar.updateEventAsync(
-    event.id,
-    { startDate, endDate },
-    event.recurrenceRule ? { futureEvents: false, instanceStartDate: event.startDate.toISOString() } : undefined
-  );
+  if (event.recurrenceRule) throw new Error('Repeating calendar items are not moved by drag');
+  const current = await Calendar.getEventAsync(event.id);
+  if (!current?.title) throw new Error('Calendar item not found');
+  await Calendar.updateEventAsync(event.id, {
+    ...(await untouchedFields(event.id)),
+    title: current.title,
+    notes: current.notes ?? undefined,
+    allDay: current.allDay,
+    alarms: current.alarms ?? [],
+    startDate,
+    endDate,
+  });
 }
 
 export async function deleteCalendarEvent(

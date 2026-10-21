@@ -985,7 +985,8 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     }
     if (id.startsWith("ext-")) {
       const ext = externalEvents.find((e) => hiddenKeyFor(e) === id.slice(4));
-      return !!ext && ext.editable && !ext.allDay && sameDay(ext.startDate, ext.endDate);
+      // Not repeating ones - see moveCalendarEvent.
+      return !!ext && ext.editable && !ext.allDay && !ext.recurrenceRule && sameDay(ext.startDate, ext.endDate);
     }
     return false;
   };
