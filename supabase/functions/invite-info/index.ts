@@ -33,11 +33,11 @@ serve(async (req) => {
 
     const { data: invitee, error } = await supabase
       .from('invitees')
-      .select('rsvp_status, events(title, location, event_date, end_date, is_all_day, host_id, image_url, stops)')
+      .select('rsvp_status, events(title, location, event_date, end_date, is_all_day, host_id, image_url, stops, status, price_cents, capacity, accepted_count)')
       .eq('id', inviteeId)
       .maybeSingle();
 
-    if (error || !invitee || !invitee.events) {
+    if (error || !invitee || !invitee.events || (invitee.events as any).status !== 'sent') {
       return new Response(JSON.stringify({ error: 'Not found' }), {
         status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -72,6 +72,13 @@ serve(async (req) => {
         hostName,
         rsvpStatus: invitee.rsvp_status,
         imageUrl: event.image_url || null,
+        // For the page's RSVP buttons (see invite-rsvp): a priced event is
+        // paid for in the app, a full one can't take another "going", and
+        // a day after it ends nobody needs to answer anymore.
+        isPaid: !!(event.price_cents && event.price_cents > 0),
+        isFull:
+          event.capacity != null && (event.accepted_count ?? 0) >= event.capacity && invitee.rsvp_status !== 'accepted',
+        isPast: new Date(event.end_date || event.event_date).getTime() < Date.now() - 24 * 60 * 60 * 1000,
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

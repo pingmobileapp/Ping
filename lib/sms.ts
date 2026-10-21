@@ -27,8 +27,8 @@ export function buildInviteMessage(
   return [
     `You're invited to "${eventTitle}"! ${when}${location ? ` — ${location}` : ''}.`,
     '',
-    `See the details and RSVP on Ping: ${link}`,
-    '',
-    'New to Ping? Download it and sign up with this phone number — your invite will be waiting for you.',
+    // RSVPs work right on the page now (invite-rsvp), no app needed -
+    // 2026-10-20. The app stays the optional extra.
+    `See the details and RSVP here, no app needed: ${link}`,
   ].join('\n');
 }

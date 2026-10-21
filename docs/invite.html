@@ -68,6 +68,18 @@
   }
   .steps-title { font-size: 18px; font-weight: 700; margin: 0 0 14px; text-align: left; }
   .small { color: #6B6B6B; font-size: 14px; margin-top: 22px; }
+  .rsvp-title { font-size: 18px; font-weight: 700; margin: 0 0 12px; }
+  .rsvp-row { display: flex; gap: 8px; margin-bottom: 10px; }
+  .rsvp-btn {
+    flex: 1; padding: 13px 4px; border-radius: 12px; border: 1px solid #E8DCC8; background: #FFF8EC;
+    font-size: 15px; font-weight: 600; color: #2B2B2B; cursor: pointer; font-family: inherit;
+  }
+  .rsvp-btn.selected { background: #5DADE2; border-color: #5DADE2; color: #FFFFFF; }
+  .rsvp-btn:disabled { opacity: 0.6; cursor: default; }
+  .rsvp-msg { font-size: 15px; min-height: 22px; margin: 4px 0 8px; }
+  .rsvp-msg.error { color: #C0392B; }
+  .cal-link { display: inline-block; font-size: 15px; color: #2E86C1; margin-bottom: 8px; }
+  .app-pitch { margin-top: 32px; padding-top: 24px; border-top: 1px solid #E8DCC8; }
   .itinerary { margin-top: 16px; padding-top: 14px; border-top: 1px solid #E8DCC8; }
   .itinerary-title { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: #6B6B6B; margin-bottom: 10px; }
   .itinerary-day { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
@@ -96,6 +108,7 @@
       ? 'https://play.google.com/store/apps/details?id=com.pingmobileapp.ping'
       : 'https://apps.apple.com/app/id6799301780';
     const FUNCTION_URL = 'https://rmooxzkinakbyhvxcivv.supabase.co/functions/v1/invite-info';
+    const RSVP_URL = 'https://rmooxzkinakbyhvxcivv.supabase.co/functions/v1/invite-rsvp';
 
     function escapeHtml(str) {
       const div = document.createElement('div');
@@ -148,6 +161,85 @@
       return null;
     }
 
+    // "Add to calendar" for someone without the app - a one-event .ics file,
+    // which iPhone, Android and desktop calendars all open.
+    function icsHref(info) {
+      const pad = (n) => String(n).padStart(2, '0');
+      const utc = (d) =>
+        `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}00Z`;
+      const day = (d) => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+      const esc = (t) => String(t || '').replace(/[\\,;]/g, (c) => '\\' + c).replace(/\n/g, '\\n');
+      const start = new Date(info.eventDate);
+      const end = info.endDate ? new Date(info.endDate) : new Date(start.getTime() + 60 * 60000);
+      let when;
+      if (info.isAllDay) {
+        const after = new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1);
+        when = [`DTSTART;VALUE=DATE:${day(start)}`, `DTEND;VALUE=DATE:${day(after)}`];
+      } else {
+        when = [`DTSTART:${utc(start)}`, `DTEND:${utc(end)}`];
+      }
+      const lines = [
+        'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Ping//Invite//EN', 'BEGIN:VEVENT',
+        `UID:${inviteeId}@pingmobileapp`, `DTSTAMP:${utc(new Date())}`, ...when,
+        `SUMMARY:${esc(info.eventTitle)}`,
+        ...(info.location ? [`LOCATION:${esc(info.location)}`] : []),
+        `DESCRIPTION:${esc('Invited by ' + info.hostName + ' on Ping')}`,
+        'END:VEVENT', 'END:VCALENDAR',
+      ];
+      return 'data:text/calendar;charset=utf-8,' + encodeURIComponent(lines.join('\r\n'));
+    }
+
+    // Going / Maybe / Can't go, saved through invite-rsvp. Answering again
+    // just changes it.
+    function wireRsvp(info) {
+      const buttons = Array.from(document.querySelectorAll('.rsvp-btn'));
+      const msg = document.getElementById('rsvp-msg');
+      const cal = document.getElementById('cal-link');
+      const host = info.hostName;
+      const thanks = {
+        accepted: `You're going! ${host} will see it.`,
+        interested: `Marked as maybe. ${host} will see it.`,
+        declined: `Got it, you can't make it. ${host} will see it.`,
+      };
+      const show = (status) => {
+        buttons.forEach((b) => b.classList.toggle('selected', b.dataset.status === status));
+        if (cal) cal.style.display = status === 'accepted' ? 'inline-block' : 'none';
+      };
+      show(info.rsvpStatus);
+      buttons.forEach((btn) =>
+        btn.addEventListener('click', async () => {
+          const status = btn.dataset.status;
+          buttons.forEach((b) => (b.disabled = true));
+          msg.className = 'rsvp-msg';
+          msg.textContent = 'Saving…';
+          try {
+            const res = await fetch(RSVP_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ i: inviteeId, status }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              const reasons = {
+                full: "This event is full. You can still answer Maybe.",
+                paid: 'This event has tickets. Get them in the Ping app.',
+                past: 'This event has already happened.',
+              };
+              throw new Error(reasons[body.error] || "Couldn't save that. Check your connection and try again.");
+            }
+            info.rsvpStatus = body.status;
+            show(body.status);
+            msg.textContent = thanks[body.status];
+          } catch (err) {
+            msg.className = 'rsvp-msg error';
+            msg.textContent = err.message;
+          } finally {
+            buttons.forEach((b) => (b.disabled = false));
+          }
+        })
+      );
+    }
+
     if (!inviteeId) {
       content.innerHTML = '<p class="error">This invite link looks incomplete.</p>';
     } else {
@@ -166,8 +258,25 @@
           const whenLabel = info.isAllDay
             ? dateLabel
             : `${dateLabel} · ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
-          const label = statusLabel(info.rsvpStatus);
           const host = escapeHtml(info.hostName);
+          // Paid events are bought in the app, so the page only offers
+          // Maybe / Can't go there; past events can't be answered at all.
+          const canGo = !info.isPaid && !info.isFull;
+          const rsvpBlock = info.isPast
+            ? `<p class="hint">This event has already happened.</p>`
+            : `
+              <p class="rsvp-title">Can you make it?</p>
+              <div class="rsvp-row">
+                ${canGo ? '<button class="rsvp-btn" data-status="accepted">Going</button>' : ''}
+                <button class="rsvp-btn" data-status="interested">Maybe</button>
+                <button class="rsvp-btn" data-status="declined">Can't go</button>
+              </div>
+              <p class="rsvp-msg" id="rsvp-msg">${
+                info.isPaid ? 'This event has tickets. Get them in the Ping app.' :
+                info.isFull ? 'This event is full. You can still answer Maybe.' :
+                info.rsvpStatus && info.rsvpStatus !== 'pending' ? escapeHtml(statusLabel(info.rsvpStatus)) + '. You can change it anytime.' : ''
+              }</p>
+              <a class="cal-link" id="cal-link" style="display:none" href="${icsHref(info)}" download="ping-invite.ics">📅 Add to my calendar</a>`;
 
           content.innerHTML = `
             <h1>${escapeHtml(info.hostName)} invited you</h1>
@@ -176,20 +285,23 @@
               <div class="row"><strong>${escapeHtml(info.eventTitle)}</strong></div>
               <div class="row">${escapeHtml(whenLabel)}</div>
               ${info.location ? `<div class="row">${escapeHtml(info.location)}</div>` : ''}
-              ${label ? `<div class="status">${label}</div>` : ''}
               ${itineraryHtml(info.stops, isMultiDay)}
             </div>
-            <p class="steps-title">How to RSVP</p>
-            <ol class="steps">
-              <li><span class="num">1</span><span>Get the free Ping app.</span></li>
-              <li><span class="num">2</span><span>Sign up and add <strong>this phone number</strong>, the one ${host} texted.</span></li>
-              <li><span class="num">3</span><span>Your invite will be waiting. Tap it to RSVP and chat with everyone going.</span></li>
-            </ol>
-            ${IS_ANDROID && !PLAY_STORE_LIVE
-              ? '<p class="hint">Ping for Android is coming soon. For now, ask ' + host + ' to keep you posted, or open this link on an iPhone.</p>'
-              : `<a class="button" href="${APP_STORE_URL}">Get the Ping App</a>`}
-            <p class="small">Already have Ping? Open the app and check that your phone number is saved in Settings.</p>
+            ${rsvpBlock}
+            <div class="app-pitch">
+              <p class="steps-title">Want reminders and the group chat?</p>
+              <ol class="steps">
+                <li><span class="num">1</span><span>Get the free Ping app.</span></li>
+                <li><span class="num">2</span><span>Sign up with <strong>this phone number</strong>, the one ${host} texted.</span></li>
+                <li><span class="num">3</span><span>This invite and your answer will already be there.</span></li>
+              </ol>
+              ${IS_ANDROID && !PLAY_STORE_LIVE
+                ? '<p class="hint">Ping for Android is coming soon. Your answer above still reaches ' + host + '.</p>'
+                : `<a class="button" href="${APP_STORE_URL}">Get the Ping App</a>`}
+              <p class="small">Already have Ping? Open the app and check that your phone number is saved in Settings.</p>
+            </div>
           `;
+          if (!info.isPast) wireRsvp(info);
         })
         .catch(() => {
           content.innerHTML = '<p class="error">This invite couldn\'t be found. It may have been canceled.</p>';
