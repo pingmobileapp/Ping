@@ -975,21 +975,27 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   // it has no clear meaning.
   const sameDay = (start: Date, end: Date) =>
     toDateKey(start) === toDateKey(new Date(end.getTime() - 1));
-  const canMoveWeekItem = (id: string) => {
-    if (id.startsWith("ping-")) {
-      const p = events.find((e) => e.id === id.slice(5));
-      if (!p || p.is_all_day) return false;
-      if (p.host_id !== session?.user?.id && !coHostEventIds.has(p.id)) return false;
-      const start = new Date(p.event_date);
-      return !p.end_date || sameDay(start, new Date(p.end_date));
+  // Worked out once per data load, not per block per render: Week view
+  // draws ~210 days, so with a busy phone calendar that's thousands of
+  // blocks, and a lookup over every calendar item for each one made a
+  // single tap take seconds (TestFlight 1.1.10, 2026-10-22).
+  const movableWeekItemIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const p of events) {
+      if (p.is_all_day) continue;
+      if (p.host_id !== session?.user?.id && !coHostEventIds.has(p.id)) continue;
+      if (p.end_date && !sameDay(new Date(p.event_date), new Date(p.end_date))) continue;
+      ids.add(`ping-${p.id}`);
     }
-    if (id.startsWith("ext-")) {
-      const ext = externalEvents.find((e) => hiddenKeyFor(e) === id.slice(4));
+    for (const ext of externalEvents) {
       // Not repeating ones - see moveCalendarEvent.
-      return !!ext && ext.editable && !ext.allDay && !ext.recurrenceRule && sameDay(ext.startDate, ext.endDate);
+      if (ext.editable && !ext.allDay && !ext.recurrenceRule && sameDay(ext.startDate, ext.endDate)) {
+        ids.add(`ext-${hiddenKeyFor(ext)}`);
+      }
     }
-    return false;
-  };
+    return ids;
+  }, [events, externalEvents, coHostEventIds, session?.user?.id]);
+  const canMoveWeekItem = useCallback((id: string) => movableWeekItemIds.has(id), [movableWeekItemIds]);
 
   const handleWeekItemMove = (id: string, dayKey: string, startMinutes: number) => {
     const [y, m, d] = dayKey.split("-").map(Number);
