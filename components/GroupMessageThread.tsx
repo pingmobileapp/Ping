@@ -14,6 +14,7 @@ import {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 import { supabase } from '../supabase';
+import { confirmDeleteMessage, saveMessageEdit } from '../lib/messageEdits';
 import { useAuth } from '../lib/AuthContext';
 import { colors } from '../lib/theme';
 import { notify } from '../lib/notify';
@@ -32,6 +33,8 @@ type GroupMessage = {
   sender_id: string;
   body: string;
   created_at: string;
+  edited_at?: string | null;
+  deleted_at?: string | null;
   profiles: { full_name: string | null; email: string | null; avatar_url: string | null } | null;
 };
 
@@ -50,6 +53,18 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
   const draftRef = useRef('');
   const inputRef = useRef<TextInput>(null);
   const [sending, setSending] = useState(false);
+  // Set while the input box is being used to edit one of your own
+  // messages instead of writing a new one.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const startEditing = (message: { id: string; body: string }) => {
+    setEditingId(message.id);
+    updateDraft(message.body);
+    setTimeout(() => inputRef.current?.focus(), 250);
+  };
+  const cancelEditing = () => {
+    setEditingId(null);
+    updateDraft('');
+  };
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [isMember, setIsMember] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -160,7 +175,7 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
   const fetchLatest = useCallback(async () => {
     const { data, error } = await supabase
       .from('group_messages')
-      .select('id, group_id, sender_id, body, created_at, profiles(full_name, email, avatar_url)')
+      .select('id, group_id, sender_id, body, created_at, edited_at, deleted_at, profiles(full_name, email, avatar_url)')
       .eq('group_id', groupId)
       .order('created_at', { ascending: false })
       .limit(PAGE_SIZE);
@@ -182,7 +197,7 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
     const oldest = messages[messages.length - 1];
     const { data, error } = await supabase
       .from('group_messages')
-      .select('id, group_id, sender_id, body, created_at, profiles(full_name, email, avatar_url)')
+      .select('id, group_id, sender_id, body, created_at, edited_at, deleted_at, profiles(full_name, email, avatar_url)')
       .eq('group_id', groupId)
       .lt('created_at', oldest.created_at)
       .order('created_at', { ascending: false })
@@ -233,6 +248,19 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
           }
         }
       )
+      // Someone edited or deleted a message - patch it in place.
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'group_messages', filter: `group_id=eq.${groupId}` },
+        (payload) => {
+          const row = payload.new as any;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === row.id ? { ...m, body: row.body, edited_at: row.edited_at, deleted_at: row.deleted_at } : m
+            )
+          );
+        }
+      )
       .subscribe();
 
     return () => {
@@ -248,6 +276,18 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
 
     const body = draftRef.current.trim();
     if (!body || !session?.user?.id) return;
+
+    if (editingId) {
+      const id = editingId;
+      setSending(true);
+      const ok = await saveMessageEdit('group_messages', id, body);
+      setSending(false);
+      if (!ok) return;
+      setEditingId(null);
+      updateDraft('');
+      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, body, edited_at: new Date().toISOString() } : m)));
+      return;
+    }
 
     setSending(true);
     updateDraft('');
@@ -428,6 +468,8 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
                 showSenderName={showSenderLabel}
                 avatarUrl={!isMine ? item.profiles?.avatar_url : undefined}
                 body={item.body}
+                edited={!!item.edited_at}
+                deleted={!!item.deleted_at}
                 // The list is inverted (newest first): index + 1 is the message
                 // before this one, index - 1 the one after.
                 isLastInRun={
@@ -440,10 +482,25 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
                 isActive={reactingToId === item.id}
                 onToggleReaction={(emoji) => toggleReaction(item.id, emoji)}
                 onLongPressBubble={(anchor) => {
+                  if (item.deleted_at) return;
                   if (isMine) {
                     setReactingToId(item.id);
                     setPickerAnchor(anchor);
-                    setPickerActions(undefined);
+                    setPickerActions([
+                      { label: 'Edit', onPress: () => startEditing(item) },
+                      {
+                        label: 'Delete',
+                        destructive: true,
+                        onPress: () =>
+                          confirmDeleteMessage('group_messages', item.id, () =>
+                            setMessages((prev) =>
+                              prev.map((m) =>
+                                m.id === item.id ? { ...m, body: '', deleted_at: new Date().toISOString() } : m
+                              )
+                            )
+                          ),
+                      },
+                    ]);
                   } else {
                     handleLongPressOther(item, anchor);
                   }
@@ -469,6 +526,14 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
         />
       )}
 
+      {editingId && (
+        <View style={styles.editingBar}>
+          <Text style={styles.editingText}>Editing message</Text>
+          <TouchableOpacity onPress={cancelEditing} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={styles.editingCancel}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      )}
       <View
         style={[
           styles.inputRow,
@@ -485,7 +550,7 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
           multiline
         />
         <TouchableOpacity style={styles.sendButton} onPress={handleSend} disabled={sending || !draft.trim()}>
-          <Text style={styles.sendButtonText}>Send</Text>
+          <Text style={styles.sendButtonText}>{editingId ? 'Save' : 'Send'}</Text>
         </TouchableOpacity>
       </View>
 
@@ -508,6 +573,15 @@ export default function GroupMessageThread({ groupId, onSwipeBack }: Props) {
 }
 
 const styles = StyleSheet.create({
+  editingBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingHorizontal: 4,
+  },
+  editingText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
+  editingCancel: { color: colors.primary, fontSize: 13, fontWeight: '600' },
   muteRow: { alignItems: 'flex-end', marginBottom: 8 },
   muteText: { color: colors.textSecondary, fontSize: 14, fontWeight: '600' },
   emptyText: { color: colors.textMuted, textAlign: 'center', marginTop: 40, fontSize: 15 },

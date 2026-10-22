@@ -27,6 +27,11 @@ type Props = {
   // conversation (see timeHeaderFor).
   timeHeader?: string | null;
   body: string;
+  // The sender changed the text after sending - shows a small "Edited".
+  edited?: boolean;
+  // The sender deleted it - shows "Message deleted" in place of the text,
+  // with no tail, reactions, or long-press menu.
+  deleted?: boolean;
   // Guest names to highlight as @mentions in the body (MessageThread only).
   mentionLabels?: string[];
   reactions: ReactionCount[];
@@ -43,6 +48,8 @@ export default function MessageBubble({
   isLastInRun = true,
   timeHeader,
   body,
+  edited = false,
+  deleted = false,
   mentionLabels,
   reactions,
   isActive,
@@ -97,6 +104,11 @@ export default function MessageBubble({
         </View>
       )}
       <View style={isMine ? styles.bubbleColumnMine : styles.bubbleColumn}>
+        {deleted ? (
+          <View style={styles.deletedBubble}>
+            <Text style={styles.deletedText}>Message deleted</Text>
+          </View>
+        ) : (
         <View style={styles.bubbleWrapper}>
           <Animated.View
             ref={bubbleRef}
@@ -106,7 +118,7 @@ export default function MessageBubble({
             {/* iMessage's tail: a bubble-colored curve at the bottom corner,
                 trimmed by a background-colored curve. Both chat sheets are
                 colors.background, which is what makes the trim invisible. */}
-            {isLastInRun && (
+            {isLastInRun && !deleted && (
               <>
                 <View style={[styles.tail, isMine ? styles.tailMine : styles.tailTheirs]} />
                 <View style={[styles.tailCut, isMine ? styles.tailCutMine : styles.tailCutTheirs]} />
@@ -156,6 +168,8 @@ export default function MessageBubble({
             </View>
           )}
         </View>
+        )}
+        {edited && !deleted && <Text style={styles.editedLabel}>Edited</Text>}
       </View>
     </View>
     </View>
@@ -232,6 +246,15 @@ const styles = StyleSheet.create({
   bubbleText: { color: '#000000', fontSize: 17, lineHeight: 22 },
   bubbleTextMine: { color: '#FFFFFF' },
   mention: { fontWeight: '700' },
+  deletedBubble: {
+    borderRadius: BUBBLE_RADIUS,
+    borderWidth: 1,
+    borderColor: '#D1D1D6',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  deletedText: { color: '#8E8E93', fontSize: 15, fontStyle: 'italic' },
+  editedLabel: { color: '#8E8E93', fontSize: 11, marginTop: 2, marginHorizontal: 6 },
   bubbleWrapper: { position: 'relative' },
   reactionBadgeRow: { position: 'absolute', top: -16, flexDirection: 'row', gap: 2, zIndex: 2 },
   reactionBadgeRowMine: { left: -10 },

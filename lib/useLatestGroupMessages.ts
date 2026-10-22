@@ -25,7 +25,7 @@ export function useLatestGroupMessages(sessionUserId?: string | null) {
         idsToFetch.map(async (groupId) => {
           const { data, error } = await supabase
             .from('group_messages')
-            .select('sender_id, body, created_at, profiles(full_name, email)')
+            .select('sender_id, body, created_at, deleted_at, profiles(full_name, email)')
             .eq('group_id', groupId)
             .order('created_at', { ascending: false })
             .limit(1)
@@ -38,7 +38,7 @@ export function useLatestGroupMessages(sessionUserId?: string | null) {
 
           return [
             groupId,
-            { senderName, body: data.body, createdAt: data.created_at } as LatestGroupMessageInfo,
+            { senderName, body: data.deleted_at ? 'Message deleted' : data.body, createdAt: data.created_at } as LatestGroupMessageInfo,
           ] as const;
         })
       );

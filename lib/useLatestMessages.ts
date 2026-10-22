@@ -26,7 +26,7 @@ export function useLatestMessages(sessionUserId?: string | null) {
         idsToFetch.map(async (eventId) => {
           const { data, error } = await supabase
             .from('messages')
-            .select('sender_id, body, created_at, profiles(full_name, email)')
+            .select('sender_id, body, created_at, deleted_at, profiles(full_name, email)')
             .eq('event_id', eventId)
             .order('created_at', { ascending: false })
             .limit(1)
@@ -39,7 +39,7 @@ export function useLatestMessages(sessionUserId?: string | null) {
 
           return [
             eventId,
-            { senderName, body: data.body, createdAt: data.created_at } as LatestMessageInfo,
+            { senderName, body: data.deleted_at ? 'Message deleted' : data.body, createdAt: data.created_at } as LatestMessageInfo,
           ] as const;
         })
       );
