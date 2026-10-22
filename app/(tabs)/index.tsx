@@ -12,6 +12,7 @@ import {
   Alert,
   FlatList,
   LayoutChangeEvent,
+  Modal,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -113,6 +114,15 @@ export default function HomeScreen() {
   const [eventsLoadError, setEventsLoadError] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [fabMenuVisible, setFabMenuVisible] = useState(false);
+  // The header's "Create" opens the same three choices as the + button,
+  // as a dropdown right under it (asked for 2026-10-22). Holds where to
+  // draw it - the button's bottom-right corner on screen - while open.
+  const [createMenuAt, setCreateMenuAt] = useState<{ top: number; right: number } | null>(null);
+  const openCreateMenu = () => {
+    tourRefs.create.current?.measureInWindow((x, y, w, h) => {
+      setCreateMenuAt({ top: y + h + 6, right: Math.max(12, windowWidth - (x + w) - 8) });
+    });
+  };
   // Set only by long-pressing an empty Week-view slot (see
   // handleEmptySlotLongPress) - takes priority over selectedDate for the
   // create modals' initialDate below, without touching selectedDate itself
@@ -1889,8 +1899,8 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
             />
           </View>
           <View style={styles.headerActions}>
-            <TouchableOpacity ref={tourRefs.create} onPress={() => setModalVisible(true)}>
-              <Text style={styles.createText}>Create</Text>
+            <TouchableOpacity ref={tourRefs.create} onPress={openCreateMenu} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={styles.createText}>Create ▾</Text>
             </TouchableOpacity>
             <View ref={tourRefs.profile} collapsable={false}>
               <ProfileMenu
@@ -2014,6 +2024,34 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
         onFinish={finishTour}
         firstSkipLabel={tourMode === "offer" ? "No thanks" : undefined}
       />
+
+      <Modal visible={!!createMenuAt} transparent animationType="fade" onRequestClose={() => setCreateMenuAt(null)}>
+        <Pressable style={styles.createMenuBackdrop} onPress={() => setCreateMenuAt(null)}>
+          {createMenuAt && (
+            <View style={[styles.createMenu, { top: createMenuAt.top, right: createMenuAt.right }]}>
+              {[
+                { label: "Create a Ping", hint: "Invite people", run: () => setModalVisible(true) },
+                { label: "Add Personal Item", hint: "Just for you", run: () => setPersonalItemModalVisible(true) },
+                { label: "Scan a Schedule", hint: "From a photo", run: handleScanSchedule },
+              ].map((item, i) => (
+                <TouchableOpacity
+                  key={item.label}
+                  style={[styles.createMenuRow, i > 0 && styles.createMenuRowBorder]}
+                  onPress={() => {
+                    setCreateMenuAt(null);
+                    // Let the dropdown close before the next sheet opens -
+                    // iOS won't present a modal while another is dismissing.
+                    setTimeout(item.run, 250);
+                  }}
+                >
+                  <Text style={styles.createMenuLabel}>{item.label}</Text>
+                  <Text style={styles.createMenuHint}>{item.hint}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </Pressable>
+      </Modal>
 
       {fabMenuVisible && (
         <Pressable
@@ -2158,6 +2196,23 @@ const styles = StyleSheet.create({
   },
   headerActions: { flexDirection: "row", gap: 16, alignItems: "center" },
   createText: { color: colors.primary, fontSize: 14, fontWeight: "700" },
+  createMenuBackdrop: { flex: 1, backgroundColor: "rgba(43,43,43,0.25)" },
+  createMenu: {
+    position: "absolute",
+    width: 230,
+    backgroundColor: colors.background,
+    borderRadius: 14,
+    paddingVertical: 4,
+    shadowColor: colors.textPrimary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.2,
+    shadowRadius: 14,
+    elevation: 10,
+  },
+  createMenuRow: { paddingHorizontal: 16, paddingVertical: 12 },
+  createMenuRowBorder: { borderTopWidth: 1, borderTopColor: colors.divider },
+  createMenuLabel: { color: colors.textPrimary, fontSize: 16, fontWeight: "600" },
+  createMenuHint: { color: colors.textSecondary, fontSize: 12, marginTop: 1 },
   contentArea: { flex: 1, position: "relative", overflow: "hidden" },
   calendarWrapper: {},
   // Fixed to MIN_TOP_INSET so it's exactly the height that stays visible
