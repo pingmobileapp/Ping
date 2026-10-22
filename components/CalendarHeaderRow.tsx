@@ -9,6 +9,9 @@ type Props = {
   viewMode: 'month' | 'week';
   onSelectMonth: () => void;
   onSelectWeek: () => void;
+  // What the Week button says while Week is showing: "Week", "2 Days" or
+  // "Day" - tapping it again cycles through them (see index.tsx).
+  weekLabel?: string;
 };
 
 // Replaces react-native-calendars' own built-in header (see the
@@ -19,7 +22,7 @@ type Props = {
 // instead, reused unchanged by both Month and Week mode so the calendar
 // area's total height never varies by mode (the drag-sheet math depends on
 // that staying constant - see MIN_TOP_INSET/calFullHeight in index.tsx).
-export default function CalendarHeaderRow({ title, onPrev, onNext, viewMode, onSelectMonth, onSelectWeek }: Props) {
+export default function CalendarHeaderRow({ title, onPrev, onNext, viewMode, onSelectMonth, onSelectWeek, weekLabel = 'Week' }: Props) {
   return (
     <View style={styles.row}>
       <TouchableOpacity onPress={onPrev} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
@@ -37,7 +40,9 @@ export default function CalendarHeaderRow({ title, onPrev, onNext, viewMode, onS
           accessibilityRole="button"
           accessibilityState={{ selected: viewMode === 'week' }}
         >
-          <Text style={[styles.toggleText, viewMode === 'week' && styles.toggleTextActive]}>Week</Text>
+          <Text style={[styles.toggleText, viewMode === 'week' && styles.toggleTextActive]}>
+            {viewMode === 'week' ? `${weekLabel} ▾` : 'Week'}
+          </Text>
         </TouchableOpacity>
       </View>
       <Text style={styles.title} numberOfLines={1}>{title}</Text>

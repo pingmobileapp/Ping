@@ -44,11 +44,17 @@ const formatHour = (hour: number) => {
   return `${hour - 12} PM`;
 };
 
-export type WeekGridHandle = { scrollByDays: (delta: number) => void };
+export type WeekGridHandle = { scrollByDays: (delta: number) => void; scrollToToday: () => void };
+
+// How many days fit across the screen: a full week, two days, or one -
+// like Apple Calendar's week, 2-day and day views (2026-10-22).
+export type DaysVisible = 7 | 2 | 1;
 
 // Dragging an event snaps its start to this many minutes, like Apple
 // Calendar and Outlook.
 const DRAG_SNAP_MINUTES = 15;
+// Apple Calendar's today red, for the date circle and the Today button.
+const TODAY_RED = '#E5383B';
 // How long an event has to be held before it lifts for dragging. Moving
 // the finger sooner than this is a scroll, not a drag.
 const DRAG_HOLD_MS = 400;
@@ -133,7 +139,49 @@ const DragGhost = forwardRef<
 });
 DragGhost.displayName = 'DragGhost';
 
+// "Today" button in the corner left of the day headers (the bottom of the
+// grid is under the Upcoming sheet) - only while today has scrolled out of
+// view. Its own small component watching
+// the scroll position, so showing/hiding it never redraws the grid.
+function TodayPill({
+  scrollX,
+  dayWidth,
+  todayIndex,
+  daysVisible,
+  onPress,
+}: {
+  scrollX: SharedValue<number>;
+  dayWidth: number;
+  todayIndex: number;
+  daysVisible: number;
+  onPress: () => void;
+}) {
+  const [visible, setVisible] = useState(false);
+  useAnimatedReaction(
+    () => {
+      const first = Math.round(scrollX.value / dayWidth);
+      return todayIndex < first || todayIndex > first + daysVisible - 1;
+    },
+    (offScreen, prev) => {
+      if (offScreen !== prev) runOnJS(setVisible)(offScreen);
+    },
+    [dayWidth, todayIndex, daysVisible],
+  );
+  if (!visible) return null;
+  return (
+    <TouchableOpacity
+      style={styles.todayPill}
+      onPress={onPress}
+      accessibilityRole="button"
+      hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+    >
+      <Text style={styles.todayPillText}>Today</Text>
+    </TouchableOpacity>
+  );
+}
+
 type Props = {
+  daysVisible?: DaysVisible;
   rangeStart: Date;
   dayCount: number;
   // How many days into the range the initially-visible week starts - the
@@ -216,6 +264,7 @@ type Props = {
 const WeekGrid = forwardRef<WeekGridHandle, Props>(
   (
     {
+      daysVisible = 7,
       rangeStart,
       dayCount,
       initialDayIndex,
@@ -257,8 +306,24 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     // that resizes every column together. Only one day can be focused at a
     // time; tapping the already-focused day un-focuses it, tapping a
     // different one moves the focus there instead.
-    const NORMAL_DAY_WIDTH = columnWidth / 7;
-    const FOCUSED_DAY_WIDTH = columnWidth * 0.45;
+    // In 2-day and day view every column is already wide - tapping a day
+    // to widen it only applies to the 7-day week.
+    const NORMAL_DAY_WIDTH = columnWidth / daysVisible;
+    const FOCUSED_DAY_WIDTH = daysVisible === 7 ? columnWidth * 0.45 : NORMAL_DAY_WIDTH;
+    const canWiden = daysVisible === 7;
+    const todayIndexAt = (start: Date) => {
+      const t = new Date();
+      t.setHours(0, 0, 0, 0);
+      const s0 = new Date(start);
+      s0.setHours(0, 0, 0, 0);
+      return Math.round((t.getTime() - s0.getTime()) / 86400000);
+    };
+    // 2-day and day view open on today when today is in the week being
+    // shown, not on that week's Sunday.
+    const startIndexFor = (weekStartIdx: number) => {
+      const t = todayIndexAt(rangeStart);
+      return daysVisible < 7 && t >= weekStartIdx && t < weekStartIdx + 7 ? t : weekStartIdx;
+    };
     const [focusedDayKey, setFocusedDayKey] = useState<string | null>(null);
     // While an event is lifted: which day it came from (that column is
     // raised above its neighbors so the block isn't drawn under them),
@@ -683,7 +748,9 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     // Timeline's own scrollToNow did before this replaced it. No day is
     // focused yet at mount, so every column is still NORMAL_DAY_WIDTH here.
     useEffect(() => {
-      const x = initialDayIndex * NORMAL_DAY_WIDTH;
+      const startIdx = startIndexFor(initialDayIndex);
+      leadingIndexRef.current = startIdx;
+      const x = startIdx * NORMAL_DAY_WIDTH;
       scrollX.value = x;
       mainScrollRef.current?.scrollTo({ x, y: 0, animated: false });
       dayHeaderRef.current?.scrollTo({ x, y: 0, animated: false });
@@ -702,12 +769,24 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     // that day; otherwise the old offset shows a stretch of much earlier
     // days for a frame (reported as flashing back to early September).
     const prevDayWidthRef = useRef(NORMAL_DAY_WIDTH);
+    const prevDaysVisibleRef = useRef(daysVisible);
     const widthChanging = prevDayWidthRef.current !== NORMAL_DAY_WIDTH;
     useEffect(() => {
       const prev = prevDayWidthRef.current;
       prevDayWidthRef.current = NORMAL_DAY_WIDTH;
       if (prev === NORMAL_DAY_WIDTH) return;
-      const idx = leadingIndexRef.current;
+      // Switching between week / 2-day / day keeps the same days in view
+      // (and lands on today when switching in from today's week).
+      const daysChanged = prevDaysVisibleRef.current !== daysVisible;
+      prevDaysVisibleRef.current = daysVisible;
+      const lead = leadingIndexRef.current;
+      // Back to the full week: line up on that week's Sunday again.
+      const idx = !daysChanged
+        ? lead
+        : daysVisible === 7
+          ? Math.max(0, lead - (dayKeys[lead]?.getDay() ?? 0))
+          : startIndexFor(lead - (dayKeys[lead]?.getDay() ?? 0));
+      leadingIndexRef.current = idx;
       const x = idx * NORMAL_DAY_WIDTH;
       realignTimersRef.current.forEach(clearTimeout);
       realigningRef.current = true;
@@ -762,6 +841,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     // inside an already-focused day opens it instead of toggling focus (see
     // that TouchableOpacity's onPress below).
     const handleDayTap = (dayKey: string, dayIndex: number) => {
+      if (!canWiden) return;
       pendingFocusIndexRef.current = dayIndex;
       setFocusedDayKey((prev) => (prev === dayKey ? null : dayKey));
     };
@@ -793,6 +873,22 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       },
     );
 
+    // Today's column, and jumping back to it (the Today button, or the
+    // header's own control). In the 7-day week it lands on the start of
+    // this week, like the week first opens; in 2-day/day view, on today.
+    const goToToday = () => {
+      const todayIndex = todayIndexAt(rangeStart);
+      if (todayIndex < 0 || todayIndex >= dayCount) return;
+      const target = daysVisible === 7 ? todayIndex - new Date().getDay() : todayIndex;
+      const idx = Math.max(0, Math.min(dayCount - 1, target));
+      const x = dayOffsets[idx] ?? 0;
+      leadingIndexRef.current = idx;
+      driver.value = 0;
+      mainScrollRef.current?.scrollTo({ x, y: 0, animated: true });
+      const now = new Date();
+      verticalScrollRef.current?.scrollTo({ x: 0, y: Math.max(0, (now.getHours() - 1) * HOUR_BLOCK_HEIGHT), animated: true });
+    };
+
     useImperativeHandle(ref, () => ({
       // scrollTo here is the ScrollView instance's own imperative method
       // (via the ref's .current, same as any plain ref), not Reanimated's
@@ -808,6 +904,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
         driver.value = 0;
         mainScrollRef.current?.scrollTo({ x: target, y: 0, animated: true });
       },
+      scrollToToday: () => goToToday(),
     }));
 
     const now = new Date();
@@ -820,7 +917,15 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
         onLayout={(e) => setGridWidth(e.nativeEvent.layout.width)}
       >
         <View style={styles.headerRow}>
-          <View style={{ width: TIMELINE_LEFT_INSET }} />
+          <View style={styles.todaySlot}>
+            <TodayPill
+              scrollX={scrollX}
+              dayWidth={NORMAL_DAY_WIDTH}
+              todayIndex={todayIndexAt(rangeStart)}
+              daysVisible={daysVisible}
+              onPress={goToToday}
+            />
+          </View>
           <Animated.ScrollView
             ref={dayHeaderRef}
             horizontal
@@ -841,8 +946,16 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                   onPress={() => handleDayTap(key, i)}
                   onLongPress={() => onDateHeaderLongPress(key)}
                 >
-                  <Text style={styles.dayLabelDow}>{d.toLocaleDateString(undefined, { weekday: 'short' })}</Text>
-                  <Text style={[styles.dayLabelNum, key === today && styles.dayLabelNumToday]}>{d.getDate()}</Text>
+                  {/* Today's date in a red circle, like Apple Calendar. A
+                      2-day or day view has room to put it on one line. */}
+                  <View style={daysVisible < 7 ? styles.dayLabelInline : null}>
+                    <Text style={[styles.dayLabelDow, key === today && styles.dayLabelDowToday]}>
+                      {d.toLocaleDateString(undefined, { weekday: 'short' })}
+                    </Text>
+                    <View style={[styles.dayLabelNumWrap, key === today && styles.dayLabelNumWrapToday]}>
+                      <Text style={[styles.dayLabelNum, key === today && styles.dayLabelNumToday]}>{d.getDate()}</Text>
+                    </View>
+                  </View>
                 </Pressable>
               );
             })}
@@ -850,7 +963,13 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
         </View>
 
         <View style={[styles.allDayRow, { height: allDayRowHeight + notesRowHeight }]}>
-          <View style={{ width: TIMELINE_LEFT_INSET }} />
+          <View style={{ width: TIMELINE_LEFT_INSET, justifyContent: 'flex-end' }}>
+            {hasAnyAllDay && (
+              <View style={styles.allDayLabelSlot}>
+                <Text style={styles.allDayLabel}>all-day</Text>
+              </View>
+            )}
+          </View>
           <Animated.ScrollView
             ref={allDayRef}
             horizontal
@@ -884,7 +1003,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                   <View style={styles.allDayChipSlot}>
                     {first && (
                       <TouchableOpacity
-                        style={styles.allDayChip}
+                        style={[styles.allDayChip, { backgroundColor: first.fill, borderLeftColor: first.stripe }]}
                         // More than one full-day item on this day - a tap
                         // shouldn't silently jump into whichever one happened
                         // to be first, so it opens a chooser listing all of
@@ -898,7 +1017,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                           dayItems.length > 1 || !onEventLongPress ? undefined : () => onEventLongPress(first.id)
                         }
                       >
-                        <Text style={styles.allDayChipText} numberOfLines={1}>
+                        <Text style={[styles.allDayChipText, { color: first.textColor }]} numberOfLines={1}>
                           {first.title}
                           {dayItems.length > 1 ? ` +${dayItems.length - 1}` : ''}
                         </Text>
@@ -948,13 +1067,11 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                 const key = toDayKey(d);
                 const dayEvents =
                   Math.abs(dayIndex - renderCenter) <= RENDER_RADIUS_DAYS ? eventsByDay[key] || NO_EVENTS : NO_EVENTS;
-                const hasAllDay = (allDayByDay[key] || []).length > 0;
                 return (
                   <Pressable
                     key={key}
                     style={[
                       styles.dayColumn,
-                      hasAllDay && styles.dayColumnAllDay,
                       { width: dayWidths[dayIndex] },
                     ]}
                     delayLongPress={450}
@@ -1004,20 +1121,30 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                           // on the event screen's ••• menu; holding an event
                           // here is a shortcut (a movable one lifts to drag
                           // instead - see dragGesture).
-                          onPress={() => (key === focusedDayKey ? onEventPress(ev.id) : handleDayTap(key, dayIndex))}
+                          onPress={() =>
+                            !canWiden || key === focusedDayKey ? onEventPress(ev.id) : handleDayTap(key, dayIndex)
+                          }
                           delayLongPress={450}
                           onLongPress={onEventLongPress ? () => onEventLongPress(ev.id) : undefined}
                         >
                           {/* Title, then the time (and place) when there's room
                               for a second line - like Apple Calendar. */}
                           <Text
-                            style={[styles.eventBlockText, { color: ev.textColor }]}
+                            style={[
+                              styles.eventBlockText,
+                              { color: ev.textColor },
+                              // Leaves room for the repeat mark in the corner.
+                              ev.repeating && g.width >= 40 && styles.eventBlockTextRepeat,
+                            ]}
                             // Narrow columns get one line ending in "…" rather
                             // than a word broken across lines ("Workda / y").
                             numberOfLines={g.height >= 44 && g.width >= 80 ? 2 : 1}
                           >
                             {ev.title}
                           </Text>
+                          {ev.repeating && g.width >= 40 && (
+                            <Text style={[styles.repeatMark, { color: ev.textColor }]}>↻</Text>
+                          )}
                           {g.height >= 30 && g.width >= 44 && !!ev.subtitle && (
                             <Text style={[styles.eventBlockSub, { color: ev.textColor }]} numberOfLines={g.height >= 60 ? 2 : 1}>
                               {ev.subtitle}
@@ -1100,7 +1227,23 @@ const styles = StyleSheet.create({
   dayLabelCell: { alignItems: 'center', justifyContent: 'center' },
   dayLabelDow: { color: colors.textSecondary, fontSize: 11, fontWeight: '600' },
   dayLabelNum: { color: colors.textPrimary, fontSize: 13, fontWeight: '700' },
-  dayLabelNumToday: { color: colors.primary },
+  dayLabelDowToday: { color: TODAY_RED },
+  dayLabelNumWrap: { minWidth: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  dayLabelNumWrapToday: { backgroundColor: TODAY_RED },
+  dayLabelNumToday: { color: colors.white },
+  dayLabelInline: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  allDayLabelSlot: { height: ALL_DAY_ROW_HEIGHT, justifyContent: 'center', alignItems: 'flex-end', paddingRight: 6 },
+  allDayLabel: { fontSize: 10, color: colors.textSecondary },
+  repeatMark: { position: 'absolute', top: 1, right: 3, fontSize: 10, opacity: 0.8 },
+  todaySlot: { width: TIMELINE_LEFT_INSET, alignItems: 'center', justifyContent: 'center' },
+  todayPill: {
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: TODAY_RED,
+  },
+  todayPillText: { color: TODAY_RED, fontSize: 11, fontWeight: '700' },
   allDayRow: { flexDirection: 'row' },
   allDayCell: { paddingHorizontal: 2 },
   allDayChipSlot: { height: ALL_DAY_ROW_HEIGHT, justifyContent: 'center' },
@@ -1119,13 +1262,18 @@ const styles = StyleSheet.create({
   },
   noteBarText: { color: colors.textPrimary, fontSize: 10, fontWeight: '600' },
   noteBarPlus: { color: colors.textMuted, fontSize: 12, fontWeight: '600', lineHeight: 14 },
-  allDayChip: { backgroundColor: colors.primaryPale, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 3 },
-  allDayChipText: { color: colors.textPrimary, fontSize: 10, fontWeight: '600' },
+  // Same tint-and-stripe look as the timed blocks below it.
+  allDayChip: {
+    borderRadius: 4,
+    borderTopLeftRadius: 0,
+    borderBottomLeftRadius: 0,
+    borderLeftWidth: 3,
+    paddingHorizontal: 5,
+    paddingVertical: 3,
+  },
+  allDayChipText: { fontSize: 10, fontWeight: '600' },
   hourLabel: { position: 'absolute', left: 0, right: 8, textAlign: 'right', fontSize: 11, color: colors.textSecondary },
   dayColumn: { height: GRID_HEIGHT },
-  // A day with an all-day item is shaded top to bottom, so the whole day
-  // reads as taken - a lighter wash of the all-day chip's blue.
-  dayColumnAllDay: { backgroundColor: 'rgba(174, 225, 249, 0.45)' },
   dayRow: { flexDirection: 'row', height: GRID_HEIGHT },
   eventBlockDragging: { opacity: 0.35 },
   eventBlockPressed: { opacity: 0.7 },
@@ -1158,6 +1306,7 @@ const styles = StyleSheet.create({
     borderTopColor: colors.background,
   },
   eventBlockText: { fontSize: 11, fontWeight: '600', lineHeight: 13 },
+  eventBlockTextRepeat: { paddingRight: 10 },
   eventBlockSub: { fontSize: 10, lineHeight: 12, opacity: 0.85, marginTop: 1 },
   emptySlotPill: {
     position: 'absolute',

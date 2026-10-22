@@ -47,7 +47,7 @@ import AppTour, { Rect, TourStep } from "../../components/AppTour";
 import { useAnyModalOpen } from "../../lib/modalPresence";
 import { AppTourMode, getAppTourMode, markAppTourDone } from "../../lib/appTour";
 import ScheduleReviewModal from "../../components/ScheduleReviewModal";
-import WeekGrid, { WeekGridHandle } from "../../components/WeekGrid";
+import WeekGrid, { DaysVisible, WeekGridHandle } from "../../components/WeekGrid";
 import { useAuth } from "../../lib/AuthContext";
 import { useNotificationsContext } from "../../lib/NotificationsContext";
 import { colors } from "../../lib/theme";
@@ -340,7 +340,29 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   // picked day, then today (if the month view is already showing the
   // current month), then just the visible month's start - avoids jumping
   // back to today's week if they'd already paged Month view elsewhere.
+  // Week view's span - full week, 2 days, or 1 - like Apple Calendar.
+  // Tapping "Week" while already in Week cycles through them; remembered
+  // on this phone.
+  const [daysVisible, setDaysVisible] = useState<DaysVisible>(7);
+  useEffect(() => {
+    AsyncStorage.getItem("home.weekDaysVisible")
+      .then((v) => {
+        if (v === "2" || v === "1") setDaysVisible(Number(v) as DaysVisible);
+      })
+      .catch(() => {});
+  }, []);
+  const cycleDaysVisible = () => {
+    const next: DaysVisible = daysVisible === 7 ? 2 : daysVisible === 2 ? 1 : 7;
+    setDaysVisible(next);
+    AsyncStorage.setItem("home.weekDaysVisible", String(next)).catch(() => {});
+  };
+  const weekLabel = daysVisible === 7 ? "Week" : daysVisible === 2 ? "2 Days" : "Day";
+
   const onSelectWeek = () => {
+    if (viewMode === "week") {
+      cycleDaysVisible();
+      return;
+    }
     const today = new Date();
     const anchor = selectedDate
       ? (() => {
@@ -1888,9 +1910,10 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
           <View style={styles.calendarHeaderRow} ref={tourRefs.calendar} collapsable={false}>
             <CalendarHeaderRow
               title={viewMode === "month" ? monthLabel : formatWeekRangeLabel(visibleWeekStart)}
-              onPrev={() => (viewMode === "month" ? changeMonth(-1) : weekGridRef.current?.scrollByDays(-7))}
-              onNext={() => (viewMode === "month" ? changeMonth(1) : weekGridRef.current?.scrollByDays(7))}
+              onPrev={() => (viewMode === "month" ? changeMonth(-1) : weekGridRef.current?.scrollByDays(-daysVisible))}
+              onNext={() => (viewMode === "month" ? changeMonth(1) : weekGridRef.current?.scrollByDays(daysVisible))}
               viewMode={viewMode}
+              weekLabel={weekLabel}
               onSelectMonth={onSelectMonth}
               onSelectWeek={onSelectWeek}
             />
@@ -1914,6 +1937,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
           ) : (
             <WeekGrid
               ref={weekGridRef}
+              daysVisible={daysVisible}
               rangeStart={weekGridRangeStart}
               dayCount={WEEK_GRID_DAY_COUNT}
               initialDayIndex={WEEK_GRID_LOOKBACK_DAYS}

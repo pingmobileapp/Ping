@@ -6,7 +6,7 @@ import { eachDayKeyInRange } from './eventDate';
 import { hiddenKeyFor } from './hiddenEvents';
 import type { InterestedActivity } from './discoverActivities';
 
-export type AllDayItem = { id: string; title: string; dayKey: string };
+export type AllDayItem = { id: string; title: string; dayKey: string; fill: string; stripe: string; textColor: string };
 // startMinutes/endMinutes are minutes since that day's midnight - directly
 // usable as top = (startMinutes/60) * HOUR_BLOCK_HEIGHT, matching the same
 // math react-native-calendars' own Packer.js uses.
@@ -30,6 +30,8 @@ export type DayColumnEvent = {
   // Start time (and location, when there is one) shown under the title
   // when the block is tall enough.
   subtitle?: string;
+  // Part of a repeating series - Week view shows a small repeat mark.
+  repeating?: boolean;
   startMinutes: number;
   endMinutes: number;
   textColor: string;
@@ -172,14 +174,15 @@ export function buildDayColumns(
     title: string,
     palette: { fill: string; stripe: string; textColor: string },
     trueStart: Date,
-    location?: string | null
+    location?: string | null,
+    repeating?: boolean
   ) => {
     const dayKey = toDayKey(seg.start);
     const startMinutes = seg.start.getHours() * 60 + seg.start.getMinutes();
     const endMinutes = startMinutes + (seg.end.getTime() - seg.start.getTime()) / 60000;
     // The real start time, even on a later day's piece of an overnight item.
     const subtitle = [timeLabel(trueStart), location?.trim()].filter(Boolean).join(' · ');
-    (rawColumns[dayKey] ||= []).push({ id, title, startMinutes, endMinutes, ...palette, subtitle });
+    (rawColumns[dayKey] ||= []).push({ id, title, startMinutes, endMinutes, ...palette, subtitle, repeating });
   };
 
   for (const p of pings) {
@@ -190,7 +193,7 @@ export function buildDayColumns(
     pingTimedEntries.push({ title: p.title, start });
     for (const seg of splitByDay(start, end)) {
       if (!inRange(seg.start, rangeStart, rangeEnd)) continue;
-      pushSegment(seg, `ping-${p.id}`, p.title, PING_BLOCK, start, p.location);
+      pushSegment(seg, `ping-${p.id}`, p.title, PING_BLOCK, start, p.location, !!p.recurrence_id);
     }
   }
 
@@ -211,7 +214,8 @@ export function buildDayColumns(
         e.title,
         e.calendarColor ? blockPalette(e.calendarColor) : FALLBACK_BLOCK,
         e.startDate,
-        e.location
+        e.location,
+        !!e.recurrenceRule
       );
     }
   }
@@ -251,14 +255,15 @@ const pushAllDayAcrossSpan = (
   start: Date,
   end: Date | null,
   rangeStart: Date,
-  rangeEnd: Date
+  rangeEnd: Date,
+  palette: { fill: string; stripe: string; textColor: string }
 ) => {
   const spanKeys = eachDayKeyInRange(toDayKey(start), toDayKey(end ?? start));
   const rangeStartKey = toDayKey(rangeStart);
   const rangeEndKey = toDayKey(rangeEnd);
   for (const key of spanKeys) {
     if (key < rangeStartKey || key >= rangeEndKey) continue;
-    (columns[key] ||= []).push({ id, title, dayKey: key });
+    (columns[key] ||= []).push({ id, title, dayKey: key, ...palette });
   }
 };
 
@@ -323,7 +328,7 @@ export function buildAllDayColumns(
     // at least overlap the rendered range somewhere.
     if ((end ?? start) < rangeStart || start >= rangeEnd) continue;
     pingAllDayEntries.push({ title: p.title, start });
-    pushAllDayAcrossSpan(columns, `ping-${p.id}`, p.title, start, end, rangeStart, rangeEnd);
+    pushAllDayAcrossSpan(columns, `ping-${p.id}`, p.title, start, end, rangeStart, rangeEnd, PING_BLOCK);
   }
 
   for (const e of external) {
@@ -338,7 +343,16 @@ export function buildAllDayColumns(
     if ((end ?? e.startDate) < rangeStart || e.startDate >= rangeEnd) continue;
     if (externalItemDuplicatesPing(pingAllDayEntries, { title: e.title, start: e.startDate })) continue;
     // Same non-unique-id reasoning as buildDayColumns above.
-    pushAllDayAcrossSpan(columns, `ext-${hiddenKeyFor(e)}`, e.title, e.startDate, end, rangeStart, rangeEnd);
+    pushAllDayAcrossSpan(
+      columns,
+      `ext-${hiddenKeyFor(e)}`,
+      e.title,
+      e.startDate,
+      end,
+      rangeStart,
+      rangeEnd,
+      e.calendarColor ? blockPalette(e.calendarColor) : FALLBACK_BLOCK
+    );
   }
 
   return columns;
