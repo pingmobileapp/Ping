@@ -18,22 +18,60 @@ export type AllDayItem = { id: string; title: string; dayKey: string };
 // lane/laneCount are for a WIDENED day only: there, overlapping events sit
 // side by side (lane 0..laneCount-1 within their overlap group) so every
 // title is readable - asked for 2026-10-11, "an easier way to see
-// overlapping events". Narrow days keep the cascade (lanes there read as
-// too gridded, per the Aug 25 change).
+// overlapping events". Since 2026-10-22 every day uses lanes, like Apple
+// Calendar; stackIndex is no longer drawn.
 export type DayColumnEvent = {
   id: string;
   title: string;
+  // Apple-Calendar-style block colors (see blockPalette): a pale tint
+  // fill, a solid stripe down the left edge, and dark text in the same hue.
+  fill: string;
+  stripe: string;
+  // Start time (and location, when there is one) shown under the title
+  // when the block is tall enough.
+  subtitle?: string;
   startMinutes: number;
   endMinutes: number;
-  color?: string;
-  // Dark text on a light block - only starred Discover events set it.
-  textColor?: string;
+  textColor: string;
   stackIndex: number;
   lane: number;
   laneCount: number;
 };
 
 type RawDayEvent = Omit<DayColumnEvent, 'stackIndex' | 'lane' | 'laneCount'>;
+
+// Mixes a #rrggbb color toward white (amount > 0) or black (amount < 0).
+function mixHex(hex: string, amount: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  const target = amount > 0 ? 255 : 0;
+  const a = Math.abs(amount);
+  const ch = (shift: number) => {
+    const c = (n >> shift) & 255;
+    return Math.round(c + (target - c) * a).toString(16).padStart(2, '0');
+  };
+  return `#${ch(16)}${ch(8)}${ch(0)}`;
+}
+
+// The tint / stripe / text trio for one calendar color, matching how Apple
+// Calendar draws a timed event (asked for 2026-10-22 - Pierson's wife keeps
+// Apple Calendar for Week view because of how it reads).
+export function blockPalette(base: string): { fill: string; stripe: string; textColor: string } {
+  return { fill: mixHex(base, 0.8), stripe: base, textColor: mixHex(base, -0.55) };
+}
+
+// One color for every Ping, so they stand out from the phone's own items:
+// the red of the Ping logo, softened a little. (Ping's light blue blended
+// into the blue most people's phone calendars use.)
+const PING_BLOCK = blockPalette('#E5383B');
+// Phone calendar items with no color of their own.
+const FALLBACK_BLOCK = blockPalette('#8E8E93');
+// Starred Discover events - amber, like their Upcoming cards.
+const STARRED_BLOCK = blockPalette('#E0A100');
+
+const timeLabel = (d: Date) =>
+  d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }).replace(':00', '');
 
 const eventsOverlap = (a: RawDayEvent, b: RawDayEvent) => a.endMinutes > b.startMinutes && a.startMinutes < b.endMinutes;
 
@@ -128,11 +166,20 @@ export function buildDayColumns(
   const rawColumns: Record<string, RawDayEvent[]> = {};
   const pingTimedEntries: { title: string; start: Date }[] = [];
 
-  const pushSegment = (seg: { start: Date; end: Date }, id: string, title: string, color: string, textColor?: string) => {
+  const pushSegment = (
+    seg: { start: Date; end: Date },
+    id: string,
+    title: string,
+    palette: { fill: string; stripe: string; textColor: string },
+    trueStart: Date,
+    location?: string | null
+  ) => {
     const dayKey = toDayKey(seg.start);
     const startMinutes = seg.start.getHours() * 60 + seg.start.getMinutes();
     const endMinutes = startMinutes + (seg.end.getTime() - seg.start.getTime()) / 60000;
-    (rawColumns[dayKey] ||= []).push({ id, title, startMinutes, endMinutes, color, textColor });
+    // The real start time, even on a later day's piece of an overnight item.
+    const subtitle = [timeLabel(trueStart), location?.trim()].filter(Boolean).join(' · ');
+    (rawColumns[dayKey] ||= []).push({ id, title, startMinutes, endMinutes, ...palette, subtitle });
   };
 
   for (const p of pings) {
@@ -143,7 +190,7 @@ export function buildDayColumns(
     pingTimedEntries.push({ title: p.title, start });
     for (const seg of splitByDay(start, end)) {
       if (!inRange(seg.start, rangeStart, rangeEnd)) continue;
-      pushSegment(seg, `ping-${p.id}`, p.title, colors.primary);
+      pushSegment(seg, `ping-${p.id}`, p.title, PING_BLOCK, start, p.location);
     }
   }
 
@@ -158,7 +205,14 @@ export function buildDayColumns(
     // first in externalEvents, not the one actually pressed.
     for (const seg of splitByDay(e.startDate, e.endDate)) {
       if (!inRange(seg.start, rangeStart, rangeEnd)) continue;
-      pushSegment(seg, `ext-${hiddenKeyFor(e)}`, e.title, colors.textMuted);
+      pushSegment(
+        seg,
+        `ext-${hiddenKeyFor(e)}`,
+        e.title,
+        e.calendarColor ? blockPalette(e.calendarColor) : FALLBACK_BLOCK,
+        e.startDate,
+        e.location
+      );
     }
   }
 
@@ -171,7 +225,7 @@ export function buildDayColumns(
     const end = rawEnd && rawEnd > start ? rawEnd : new Date(start.getTime() + 60 * 60000);
     for (const seg of splitByDay(start, end)) {
       if (!inRange(seg.start, rangeStart, rangeEnd)) continue;
-      pushSegment(seg, `int-${a.activityKey}`, `★ ${a.title}`, colors.warningPale, colors.textPrimary);
+      pushSegment(seg, `int-${a.activityKey}`, `★ ${a.title}`, STARRED_BLOCK, start);
     }
   }
 
@@ -239,7 +293,14 @@ export function buildMonthDayBars(
     }));
     const timedBars = [...(timed[key] || [])]
       .sort((a, b) => a.startMinutes - b.startMinutes)
-      .map((item) => ({ id: item.id, title: item.title, color: item.color || colors.primary, textColor: item.textColor }));
+      // Month keeps its own solid-bar look (the Apple-style tints are Week
+      // view only, for now).
+      .map((item) => ({
+        id: item.id,
+        title: item.title,
+        color: item.id.startsWith('ping-') ? colors.primary : item.id.startsWith('int-') ? colors.warningPale : colors.textMuted,
+        textColor: item.id.startsWith('int-') ? colors.textPrimary : undefined,
+      }));
     result[key] = [...allDayBars, ...timedBars];
   }
   return result;

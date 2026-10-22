@@ -25,9 +25,6 @@ const DAY_LABEL_ROW_HEIGHT = 36;
 const ALL_DAY_ROW_HEIGHT = 32;
 const NOTES_BAR_HEIGHT = 22;
 const GRID_HEIGHT = 24 * HOUR_BLOCK_HEIGHT;
-// How far each card in a same-time cascade is nudged right of the one
-// behind it - see the stackIndex/stackSize comment where it's used below.
-const STACK_OFFSET = 10;
 // How long the "+ Add Personal Item" pill stays up before it quietly goes
 // away on its own, if it isn't tapped.
 const EMPTY_SLOT_PROMPT_TIMEOUT_MS = 5000;
@@ -73,11 +70,13 @@ const formatClock = (minutes: number) => {
 
 // Where an event block sits inside its day column - shared by the render
 // below and the drag gesture's hit test, so the two can't disagree.
-function blockGeometry(ev: DayColumnEvent, dayWidth: number, focused: boolean) {
-  const sideBySide = focused && ev.laneCount > 1;
-  const laneWidth = (dayWidth - 4) / ev.laneCount;
-  const left = sideBySide ? 2 + ev.lane * laneWidth : 2 + ev.stackIndex * STACK_OFFSET;
-  const width = sideBySide ? laneWidth - 2 : dayWidth - left - 2;
+// Overlapping events always sit side by side in lanes, on every day, the
+// way Apple Calendar draws them (2026-10-22) - no more offset cascade.
+function blockGeometry(ev: DayColumnEvent, dayWidth: number, _focused: boolean) {
+  const sideBySide = ev.laneCount > 1;
+  const laneWidth = (dayWidth - 2) / ev.laneCount;
+  const left = 1 + ev.lane * laneWidth;
+  const width = laneWidth - 1;
   const top = (ev.startMinutes / 60) * HOUR_BLOCK_HEIGHT;
   const height = Math.max(18, ((ev.endMinutes - ev.startMinutes) / 60) * HOUR_BLOCK_HEIGHT);
   return { sideBySide, left, width, top, height };
@@ -120,12 +119,13 @@ const DragGhost = forwardRef<
           top: drag.y,
           width: drag.width,
           height: drag.height,
-          backgroundColor: drag.ev.color || colors.primary,
+          backgroundColor: drag.ev.fill,
+          borderLeftColor: drag.ev.stripe,
         },
         style,
       ]}
     >
-      <Text style={[styles.eventBlockText, drag.ev.textColor ? { color: drag.ev.textColor } : null]} numberOfLines={2}>
+      <Text style={[styles.eventBlockText, { color: drag.ev.textColor }]} numberOfLines={2}>
         {label}
       </Text>
     </Animated.View>
@@ -401,7 +401,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       const dayEvents = eventsByDay[dayKey] || [];
       const xInDay = x - (dayOffsets[dayIndex] ?? 0);
       const focused = dayKey === focusedDayKey;
-      // Later blocks draw on top (and higher stackIndex), so search backwards.
+      // Later blocks draw on top, so search backwards.
       for (let i = dayEvents.length - 1; i >= 0; i--) {
         const ev = dayEvents[i];
         const g = blockGeometry(ev, dayWidths[dayIndex], focused);
@@ -971,19 +971,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                       </View>
                     )}
                     {dayEvents.map((ev, evIndex) => {
-                      // A widened day has room to put overlapping events
-                      // side by side (see lane/laneCount in
-                      // lib/weekTimeline.ts), so every title is readable.
-                      // Same-time events cascade as offset cards rather than
-                      // fully overlapping - each later card in the stack is
-                      // nudged right so the one(s) behind it still show
-                      // their left edge (where they start), and sits on top
-                      // via render order (later siblings win touch priority
-                      // in RN for overlapping absolutely-positioned views).
-                      // The right edge stays fixed for every card rather
-                      // than also pulling in with stackIndex, so it's a
-                      // simple cascade of same-width cards, not a split
-                      // into narrower side-by-side lanes.
+                      // Overlaps sit side by side in lanes (see blockGeometry).
                       const g = blockGeometry(ev, dayWidths[dayIndex], key === focusedDayKey);
                       // The block being dragged stays put, dimmed, while
                       // its ghost follows the finger.
@@ -1001,8 +989,8 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                               height: g.height,
                               left: g.left,
                               width: g.width,
-                              backgroundColor: ev.color || colors.primary,
-                              zIndex: g.sideBySide ? 0 : ev.stackIndex,
+                              backgroundColor: ev.fill,
+                              borderLeftColor: ev.stripe,
                             },
                             pressed && styles.eventBlockPressed,
                             isDragged && styles.eventBlockDragging,
@@ -1020,9 +1008,21 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                           delayLongPress={450}
                           onLongPress={onEventLongPress ? () => onEventLongPress(ev.id) : undefined}
                         >
-                          <Text style={[styles.eventBlockText, ev.textColor ? { color: ev.textColor } : null]} numberOfLines={g.sideBySide ? 3 : 2}>
+                          {/* Title, then the time (and place) when there's room
+                              for a second line - like Apple Calendar. */}
+                          <Text
+                            style={[styles.eventBlockText, { color: ev.textColor }]}
+                            // Narrow columns get one line ending in "…" rather
+                            // than a word broken across lines ("Workda / y").
+                            numberOfLines={g.height >= 44 && g.width >= 80 ? 2 : 1}
+                          >
                             {ev.title}
                           </Text>
+                          {g.height >= 30 && g.width >= 44 && !!ev.subtitle && (
+                            <Text style={[styles.eventBlockSub, { color: ev.textColor }]} numberOfLines={g.height >= 60 ? 2 : 1}>
+                              {ev.subtitle}
+                            </Text>
+                          )}
                         </Pressable>
                       );
                     })}
@@ -1129,27 +1129,36 @@ const styles = StyleSheet.create({
   dayRow: { flexDirection: 'row', height: GRID_HEIGHT },
   eventBlockDragging: { opacity: 0.35 },
   eventBlockPressed: { opacity: 0.7 },
-  dragGhost: { zIndex: 1000, elevation: 12, shadowOpacity: 0.4, shadowRadius: 8, opacity: 0.95 },
+  dragGhost: {
+    zIndex: 1000,
+    elevation: 12,
+    shadowColor: colors.textPrimary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+  },
   hourLine: { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: colors.divider },
   nowLine: { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: colors.danger, flexDirection: 'row', alignItems: 'center' },
   nowDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.danger, marginLeft: -4 },
+  // Apple-Calendar-style block: pale tint fill, a solid stripe down the
+  // left edge (borderLeftColor set per event), flat - no shadow. A 1px
+  // white edge on top/bottom keeps back-to-back events from merging.
   eventBlock: {
     position: 'absolute',
-    borderRadius: 6,
-    padding: 4,
+    borderRadius: 4,
+    borderTopLeftRadius: 0,
+    borderBottomLeftRadius: 0,
+    paddingVertical: 2,
+    paddingLeft: 4,
+    paddingRight: 3,
     overflow: 'hidden',
-    // A visible seam between cascaded cards - without it, two same-color
-    // cards butted up against each other read as one oddly-shaped block
-    // rather than two separate ones.
-    borderWidth: 1,
-    borderColor: colors.background,
-    shadowColor: colors.textPrimary,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.25,
-    shadowRadius: 2,
-    elevation: 2,
+    borderLeftWidth: 3,
+    borderTopWidth: 1,
+    borderBottomWidth: 0,
+    borderTopColor: colors.background,
   },
-  eventBlockText: { color: colors.textOnPrimary, fontSize: 11, fontWeight: '600' },
+  eventBlockText: { fontSize: 11, fontWeight: '600', lineHeight: 13 },
+  eventBlockSub: { fontSize: 10, lineHeight: 12, opacity: 0.85, marginTop: 1 },
   emptySlotPill: {
     position: 'absolute',
     left: 4,

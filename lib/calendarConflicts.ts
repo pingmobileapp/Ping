@@ -76,6 +76,10 @@ export type ExternalEvent = {
   // if none is set. Only the single soonest alarm is represented; Ping
   // only ever writes at most one.
   reminderMinutesBefore: number | null;
+  // The phone calendar's own color (iCloud blue, Family yellow...) - Week
+  // view draws the item in it, the way Apple Calendar does.
+  calendarColor: string | null;
+  location: string | null;
 };
 
 const PING_CALENDAR_TITLE = 'Ping';
@@ -154,6 +158,7 @@ export async function getUpcomingExternalEvents(): Promise<ExternalEvent[]> {
   const writableCalendarIds = new Set(
     calendars.filter((c) => c.allowsModifications).map((c) => c.id)
   );
+  const calendarColors = new Map(calendars.map((c) => [c.id, c.color || null]));
 
   const now = new Date();
   const windowStart = new Date(now.getTime() - LOOKBACK_WINDOW_DAYS * 24 * 60 * 60000);
@@ -179,6 +184,8 @@ export async function getUpcomingExternalEvents(): Promise<ExternalEvent[]> {
       details: stripMarker(e.notes),
       recurrenceRule: e.recurrenceRule ?? null,
       reminderMinutesBefore: alarmsToMinutes(e.alarms),
+      calendarColor: calendarColors.get(e.calendarId) ?? null,
+      location: e.location || null,
     }));
 }
 
