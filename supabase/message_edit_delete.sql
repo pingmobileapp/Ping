@@ -1,4 +1,6 @@
 -- Edit and delete your own chat messages (asked for 2026-10-22, Monty).
+-- Applied to production 2026-10-22 (migrations message_edit_delete +
+-- message_edit_guard_fix).
 -- A delete is "soft": the text is wiped and deleted_at set, so open chats
 -- update over realtime (an UPDATE, which can be filtered by event/group -
 -- DELETE events can't) and reactions on it don't break. The bubble shows
@@ -20,12 +22,6 @@ begin
      or new.created_at is distinct from old.created_at then
     raise exception 'Only a message''s text can be changed';
   end if;
-  if tg_table_name = 'messages' and new.event_id is distinct from old.event_id then
-    raise exception 'Only a message''s text can be changed';
-  end if;
-  if tg_table_name = 'group_messages' and new.group_id is distinct from old.group_id then
-    raise exception 'Only a message''s text can be changed';
-  end if;
   if old.deleted_at is not null then
     raise exception 'This message was deleted';
   end if;
@@ -38,6 +34,37 @@ begin
   return new;
 end;
 $$;
+
+-- Separate per-table checks for "moved to another chat": PL/pgSQL can't
+-- reference new.group_id on messages (or event_id on group_messages) even
+-- behind a table-name check, so one shared function errored on every edit.
+create or replace function public.guard_event_message_move()
+returns trigger language plpgsql as $$
+begin
+  if new.event_id is distinct from old.event_id then
+    raise exception 'Only a message''s text can be changed';
+  end if;
+  return new;
+end;
+$$;
+
+create or replace function public.guard_group_message_move()
+returns trigger language plpgsql as $$
+begin
+  if new.group_id is distinct from old.group_id then
+    raise exception 'Only a message''s text can be changed';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists messages_guard_move on public.messages;
+create trigger messages_guard_move before update on public.messages
+  for each row execute function public.guard_event_message_move();
+
+drop trigger if exists group_messages_guard_move on public.group_messages;
+create trigger group_messages_guard_move before update on public.group_messages
+  for each row execute function public.guard_group_message_move();
 
 drop trigger if exists messages_guard_edit on public.messages;
 create trigger messages_guard_edit before update on public.messages
