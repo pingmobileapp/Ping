@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Modal,
   View,
   Text,
   TextInput,
@@ -12,6 +11,7 @@ import {
   KeyboardAvoidingView,
   Keyboard,
 } from 'react-native';
+import SheetModal from './SheetModal';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Calendar } from 'react-native-calendars';
 import { colors, calendarTheme } from '../lib/theme';
@@ -315,7 +315,7 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <SheetModal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.overlay}>
           <View style={styles.card}>
@@ -486,7 +486,7 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
           </View>
         </View>
       </KeyboardAvoidingView>
-    </Modal>
+    </SheetModal>
   );
 }
 

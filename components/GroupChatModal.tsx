@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
-import { Modal, View, TouchableOpacity, Text, StyleSheet, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, Text, StyleSheet, useWindowDimensions } from 'react-native';
+import SheetModal from './SheetModal';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import ReAnimated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { useRouter } from 'expo-router';
@@ -63,7 +64,7 @@ export default function GroupChatModal({ visible, groupId, groupName, onClose }:
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <SheetModal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       {/* See the matching note in EventDetailModal.tsx - RN's Modal renders
           into its own native root, so react-native-gesture-handler gestures
           inside GroupMessageThread need this wrapper to work at all. */}
@@ -91,7 +92,7 @@ export default function GroupChatModal({ visible, groupId, groupName, onClose }:
         </ReAnimated.View>
       </View>
       </GestureHandlerRootView>
-    </Modal>
+    </SheetModal>
   );
 }
 

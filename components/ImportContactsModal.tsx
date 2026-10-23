@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Modal,
   View,
   Text,
   TextInput,
@@ -12,6 +11,7 @@ import {
   ActivityIndicator,
   Linking,
 } from 'react-native';
+import SheetModal from './SheetModal';
 import * as Contacts from 'expo-contacts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../supabase';
@@ -141,7 +141,7 @@ export default function ImportContactsModal({ visible, onClose, onImported }: Pr
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <SheetModal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -253,7 +253,7 @@ export default function ImportContactsModal({ visible, onClose, onImported }: Pr
         </View>
       </View>
       </KeyboardAvoidingView>
-    </Modal>
+    </SheetModal>
   );
 }
 

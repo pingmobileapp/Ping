@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Modal,
   View,
   Text,
   TextInput,
@@ -11,6 +10,7 @@ import {
   KeyboardAvoidingView,
   Alert,
 } from 'react-native';
+import SheetModal from './SheetModal';
 import { supabase } from '../supabase';
 import { useAuth } from '../lib/AuthContext';
 import { findOrCreateContact, healContactLink, getAlreadyInvitedPhones, normalizePhone } from '../lib/phone';
@@ -218,7 +218,7 @@ export default function ShareInviteModal({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <SheetModal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -323,7 +323,7 @@ export default function ShareInviteModal({
         onDone={() => setQueueVisible(false)}
         onClosed={onInvited}
       />
-    </Modal>
+    </SheetModal>
   );
 }
 

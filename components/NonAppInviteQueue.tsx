@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, View, Text, TouchableOpacity, StyleSheet, AppState } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, AppState } from 'react-native';
+import SheetModal from './SheetModal';
 import { colors } from '../lib/theme';
 import { buildInviteMessage } from '../lib/sms';
 import { openSmsComposer } from '../lib/smsCompose';
@@ -76,7 +77,7 @@ export default function NonAppInviteQueue({
   const handleSkip = () => setIndex((i) => i + 1);
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onDone} onDismiss={onClosed}>
+    <SheetModal visible={visible} animationType="slide" transparent onRequestClose={onDone} onDismiss={onClosed}>
       <View style={styles.overlay}>
         <View style={styles.card}>
           <View style={styles.handle} />
@@ -120,7 +121,7 @@ export default function NonAppInviteQueue({
           )}
         </View>
       </View>
-    </Modal>
+    </SheetModal>
   );
 }
 

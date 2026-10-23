@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Modal,
   View,
   Text,
   TextInput,
@@ -16,6 +15,7 @@ import {
   Image,
   Dimensions,
 } from 'react-native';
+import SheetModal from './SheetModal';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Calendar } from 'react-native-calendars';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -1247,7 +1247,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   if (!event) return null;
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <SheetModal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -1835,7 +1835,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
           setCropModalVisible(false);
         }}
       />
-    </Modal>
+    </SheetModal>
   );
 }
 

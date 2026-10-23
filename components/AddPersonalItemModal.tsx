@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, Alert, KeyboardAvoidingView, Keyboard, Animated, PanResponder, ScrollView, Dimensions } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, Alert, KeyboardAvoidingView, Keyboard, Animated, PanResponder, ScrollView, Dimensions } from 'react-native';
+import SheetModal from './SheetModal';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Calendar } from 'react-native-calendars';
 import { colors, calendarTheme } from '../lib/theme';
@@ -382,7 +383,7 @@ export default function AddPersonalItemModal({ visible, initialDate, initialMinu
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <SheetModal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={styles.overlay}>
         <Animated.View style={[styles.card, { transform: [{ translateY: dragY }] }]}>
@@ -555,7 +556,7 @@ export default function AddPersonalItemModal({ visible, initialDate, initialMinu
         </Animated.View>
       </View>
       </KeyboardAvoidingView>
-    </Modal>
+    </SheetModal>
   );
 }
 

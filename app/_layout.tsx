@@ -16,6 +16,7 @@ import TermsGateScreen from '../components/TermsGateScreen';
 import FindInvitesScreen from '../components/FindInvitesScreen';
 import { useFindInvitesStep } from '../lib/useFindInvitesStep';
 import { colors } from '../lib/theme';
+import { RootSideInsetsContext } from '../components/SheetModal';
 
 function InvitePopupHost() {
   const router = useRouter();
@@ -133,7 +134,9 @@ function SideInsets({ children }: { children: React.ReactNode }) {
   const insets = useSafeAreaInsets();
   return (
     <View style={{ flex: 1, backgroundColor: colors.background, paddingLeft: insets.left, paddingRight: insets.right }}>
-      <SafeAreaInsetsContext.Provider value={{ ...insets, left: 0, right: 0 }}>{children}</SafeAreaInsetsContext.Provider>
+      <RootSideInsetsContext.Provider value={{ left: insets.left, right: insets.right }}>
+        <SafeAreaInsetsContext.Provider value={{ ...insets, left: 0, right: 0 }}>{children}</SafeAreaInsetsContext.Provider>
+      </RootSideInsetsContext.Provider>
     </View>
   );
 }

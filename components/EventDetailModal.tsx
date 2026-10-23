@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, View, TouchableOpacity, Text, Animated, StyleSheet, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, Text, Animated, StyleSheet, useWindowDimensions } from 'react-native';
+import SheetModal from './SheetModal';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import ReAnimated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import EventDetailContent from './EventDetailContent';
@@ -109,7 +110,7 @@ export default function EventDetailModal({ visible, eventId, onClose, startOnMes
   return (
     // Android's back button: from messages, flip back to the details face
     // (same as the "‹ Event Details" link); from details, close.
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={isFlipped ? toggleFlip : handleClose}>
+    <SheetModal visible={visible} animationType="slide" transparent onRequestClose={isFlipped ? toggleFlip : handleClose}>
       {/* RN's Modal renders into its own native root, separate from the
           GestureHandlerRootView wrapping the rest of the app in
           app/_layout.tsx - without this, react-native-gesture-handler
@@ -169,7 +170,7 @@ export default function EventDetailModal({ visible, eventId, onClose, startOnMes
         </ReAnimated.View>
       </View>
       </GestureHandlerRootView>
-    </Modal>
+    </SheetModal>
   );
 }
 
