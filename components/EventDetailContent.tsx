@@ -30,6 +30,7 @@ import { removeEventFromDeviceCalendar, syncAcceptedEventToDeviceCalendar } from
 import { scheduleEventReminder, cancelEventReminder, REMINDER_OPTIONS } from '../lib/eventReminders';
 import { displayName } from '../lib/displayName';
 import { formatEventDate, formatEventTime, isMultiDayEvent } from '../lib/eventDate';
+import { timeInEventZone, zoneLabel } from '../lib/timeZones';
 import { formatStopDay, parseStops } from '../lib/stops';
 import { openInMaps } from '../lib/maps';
 import { DailyWeather, fetchWeatherForEvents } from '../lib/eventWeather';
@@ -83,6 +84,7 @@ type EventDetail = {
   recurrence_id: string | null;
   group_id: string | null;
   stops?: unknown;
+  time_zone?: string | null;
 };
 
 type InviteeRow = {
@@ -948,6 +950,9 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     return acc;
   }, []);
   const timeLabel = formatEventTime(event.event_date, event.is_all_day, event.end_date);
+  // Times above are on the viewer's clock; a Ping set in another zone also
+  // says what that is there ("6:30 PM MST in Arizona").
+  const zoneTime = event.is_all_day ? null : timeInEventZone(new Date(event.event_date), event.time_zone);
 
   // See EventCard.tsx's matching comment - same undocumented-but-commonly-
   // reported scheme, same graceful fallback if it can't be opened.
@@ -1041,6 +1046,11 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
           <View style={{ flexShrink: 1 }}>
             <Text style={styles.meta}>{dateLabel}</Text>
             <Text style={styles.meta}>{timeLabel}</Text>
+            {!!zoneTime && (
+              <Text style={styles.metaSmall}>
+                {zoneTime} in {zoneLabel(event.time_zone!)}
+              </Text>
+            )}
           </View>
           {!!weather && (
             <TouchableOpacity onPress={handleWeatherPress} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -1527,6 +1537,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
             recurrence_id: event.recurrence_id,
             group_id: event.group_id,
             stops: event.stops,
+            time_zone: event.time_zone ?? null,
           } as EditableEvent
         }
         onClose={() => setEditModalVisible(false)}
@@ -1600,6 +1611,7 @@ const styles = StyleSheet.create({
   image: { width: '100%', aspectRatio: EVENT_IMAGE_ASPECT_RATIO, borderRadius: 15 },
   title: { color: colors.textPrimary, fontSize: 26, fontWeight: '700', marginBottom: 8 },
   meta: { color: colors.textSecondary, fontSize: 15, marginBottom: 2 },
+  metaSmall: { color: colors.textSecondary, fontSize: 13, marginBottom: 2 },
   locationLink: { color: colors.primary, textDecorationLine: 'underline' },
   itinerary: { marginTop: 16 },
   itineraryDay: { marginBottom: 12 },

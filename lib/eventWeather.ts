@@ -66,7 +66,7 @@ const WEATHER_ICONS: Record<number, string> = {
 const geocodeCache = new Map<string, { lat: number; lng: number } | null>();
 const forecastCache = new Map<string, Record<string, DailyWeather>>();
 
-async function geocodeEventLocation(location: string): Promise<{ lat: number; lng: number } | null> {
+export async function geocodeEventLocation(location: string): Promise<{ lat: number; lng: number } | null> {
   const key = location.trim().toLowerCase();
   if (!key) return null;
   if (geocodeCache.has(key)) return geocodeCache.get(key)!;

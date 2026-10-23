@@ -287,7 +287,9 @@ export default function AddPersonalItemModal({ visible, initialDate, initialMinu
           // existing series' rule is preserved untouched (futureEvents
           // above is what scopes the rest of this edit instead).
           !isExistingRecurring && recurrence ? toExpoRecurrenceRule(recurrence) : undefined,
-          null
+          null,
+          undefined,
+          isExistingRecurring ? editingEvent.startDate : undefined
         );
         calendarEventId = editingEvent.id;
       } else {

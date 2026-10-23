@@ -1,0 +1,41 @@
+diff --git a/node_modules/expo-calendar/ios/CalendarModule.swift b/node_modules/expo-calendar/ios/CalendarModule.swift
+index ae7d670..9a86802 100644
+--- a/node_modules/expo-calendar/ios/CalendarModule.swift
++++ b/node_modules/expo-calendar/ios/CalendarModule.swift
+@@ -583,24 +583,24 @@ public class CalendarModule: Module {
+       return firstEvent
+     }
+ 
+-    guard let firstEventStart = firstEvent.startDate, firstEventStart.compare(startDate) == .orderedSame else {
++    if let firstEventStart = firstEvent.startDate, firstEventStart.compare(startDate) == .orderedSame {
+       return firstEvent
+     }
+ 
+-    let endDate = startDate.addingTimeInterval(2_592_000)
++    // Ping patch: the occurrence of a repeating event that starts at
++    // startDate. Upstream returned the series' first event for any other
++    // date (its check was inverted), so per-occurrence saves and deletes
++    // hit the wrong day. Not found means nil, never some other occurrence.
+     let events = eventStore.events(
+-      matching: eventStore.predicateForEvents(withStart: startDate, end: endDate, calendars: [firstEvent.calendar])
++      matching: eventStore.predicateForEvents(
++        withStart: startDate.addingTimeInterval(-60),
++        end: startDate.addingTimeInterval(86_400),
++        calendars: [firstEvent.calendar]
++      )
+     )
+-
+-    for event in events {
+-      if event.calendarItemIdentifier != id {
+-        break
+-      }
+-      if let eventStart = event.startDate, eventStart.compare(startDate) == .orderedSame {
+-        return event
+-      }
++    return events.first { event in
++      event.calendarItemIdentifier == id && event.startDate?.compare(startDate) == .orderedSame
+     }
+-    return nil
+   }
+ 
+   private func createPredicate(for calendars: [EKCalendar], start startDate: Date?, end endDate: Date?, status: String?) throws -> NSPredicate {

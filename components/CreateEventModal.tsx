@@ -43,6 +43,8 @@ import ImageCropModal from './ImageCropModal';
 import NonAppInviteQueue, { QueueContact } from './NonAppInviteQueue';
 import RecurrencePicker from './RecurrencePicker';
 import StopsEditor from './StopsEditor';
+import TimeZoneRow from './TimeZoneRow';
+import { deviceTimeZone, instantFromWallClock, timeZoneForLocation } from '../lib/timeZones';
 import { EventStop, cleanStops, shiftStops, stopDays } from '../lib/stops';
 import { useRegisterModal } from '../lib/modalPresence';
 
@@ -94,6 +96,12 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
   const [stops, setStops] = useState<EventStop[]>([]);
   const [isAllDay, setIsAllDay] = useState(false);
   const [recurrence, setRecurrence] = useState<RecurrenceConfig | null>(null);
+  // The zone the times above are typed in (see lib/timeZones.ts). Follows
+  // the location when it's a real place in another zone, until the host
+  // picks one themselves.
+  const [timeZone, setTimeZone] = useState(deviceTimeZone);
+  const [zoneFromLocation, setZoneFromLocation] = useState(false);
+  const zonePickedRef = useRef(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
@@ -442,6 +450,22 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
     return next;
   };
 
+  // A location in another time zone ("Scottsdale, AZ" typed in Utah) means
+  // the times are that place's - unless the host already chose a zone.
+  const followLocationZone = async (loc: string) => {
+    if (zonePickedRef.current) return;
+    const zone = await timeZoneForLocation(loc);
+    if (zonePickedRef.current) return;
+    if (zone) {
+      setTimeZone(zone);
+      setZoneFromLocation(zone !== deviceTimeZone());
+    } else if (!loc.trim()) {
+      // Location cleared - back to the phone's own zone.
+      setTimeZone(deviceTimeZone());
+      setZoneFromLocation(false);
+    }
+  };
+
   const resetForm = () => {
     if (prefill) {
       setTitle(prefill.title);
@@ -462,6 +486,9 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
       setIsAllDay(false);
     }
     setRecurrence(null);
+    setTimeZone(deviceTimeZone());
+    setZoneFromLocation(false);
+    zonePickedRef.current = false;
     setStops([]);
     setMoreOpen(false);
     setAddingContact(false);
@@ -598,8 +625,11 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
           description: description.trim() || null,
           location,
           stops: shiftStops(baseStops, eventDate, occStart),
-          event_date: occStart.toISOString(),
-          end_date: occEnd ? occEnd.toISOString() : null,
+          // The pickers hold the clock in timeZone; saved as the real
+          // moment. All-day Pings are dates, not times - left as they are.
+          event_date: (isAllDay ? occStart : instantFromWallClock(occStart, timeZone)).toISOString(),
+          end_date: occEnd ? (isAllDay ? occEnd : instantFromWallClock(occEnd, timeZone)).toISOString() : null,
+          time_zone: isAllDay ? null : timeZone,
           is_all_day: isAllDay,
           status,
           host_id: session!.user.id,
@@ -952,6 +982,18 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
               </>
             )}
 
+            {!isAllDay && (
+              <TimeZoneRow
+                value={timeZone}
+                fromLocation={zoneFromLocation}
+                onChange={(zone) => {
+                  zonePickedRef.current = true;
+                  setZoneFromLocation(false);
+                  setTimeZone(zone);
+                }}
+              />
+            )}
+
             {showPicker && pickerMode === 'date' && (
               <View style={styles.calendarWrap}>
                 <Calendar
@@ -1018,6 +1060,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
               placeholderTextColor={colors.textMuted}
               value={location}
               onChangeText={setLocation}
+              onEndEditing={() => followLocationZone(location)}
             />
 
             <Text style={styles.label}>Invite</Text>

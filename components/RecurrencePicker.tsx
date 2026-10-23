@@ -24,12 +24,20 @@ const FREQUENCY_LABELS: Record<RecurrenceFrequency, string> = {
   yearly: 'Yearly',
 };
 
+// "Every 2 days" - not frequency minus "ly", which turned daily into "dai".
+const FREQUENCY_UNITS: Record<RecurrenceFrequency, string> = {
+  daily: 'day',
+  weekly: 'week',
+  monthly: 'month',
+  yearly: 'year',
+};
+
 const FREQUENCY_OPTIONS: RecurrenceFrequency[] = ['daily', 'weekly', 'monthly', 'yearly'];
 
 const summarize = (config: RecurrenceConfig): string => {
   const base =
     config.interval > 1
-      ? `Every ${config.interval} ${config.frequency.replace('ly', '')}s`
+      ? `Every ${config.interval} ${FREQUENCY_UNITS[config.frequency]}s`
       : FREQUENCY_LABELS[config.frequency];
   if (config.end.type === 'onDate') {
     return `${base}, until ${config.end.date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
@@ -111,7 +119,7 @@ export default function RecurrencePicker({ value, onChange, readOnlyExisting, ch
             >
               <Text style={styles.stepperButtonText}>+</Text>
             </TouchableOpacity>
-            <Text style={styles.stepperLabel}>{value.frequency.replace('ly', '')}{value.interval > 1 ? 's' : ''}</Text>
+            <Text style={styles.stepperLabel}>{FREQUENCY_UNITS[value.frequency]}{value.interval > 1 ? 's' : ''}</Text>
           </View>
 
           <Text style={styles.endLabel}>Ends</Text>

@@ -40,6 +40,8 @@ import { containsObjectionableContent } from '../lib/contentFilter';
 import { reportContent } from '../lib/moderation';
 import RecurrencePicker from './RecurrencePicker';
 import StopsEditor from './StopsEditor';
+import TimeZoneRow from './TimeZoneRow';
+import { deviceTimeZone, instantFromWallClock, timeZoneForLocation, wallClockIn } from '../lib/timeZones';
 import { EventStop, cleanStops, parseStops, shiftStops, stopDays } from '../lib/stops';
 import ImportContactsModal from './ImportContactsModal';
 import ImageCropModal from './ImageCropModal';
@@ -76,6 +78,8 @@ export type EditableEvent = {
   recurrence_id: string | null;
   group_id: string | null;
   stops?: unknown;
+  // See lib/timeZones.ts - null on Pings made before 1.1.12.
+  time_zone?: string | null;
 };
 
 type Props = {
@@ -98,6 +102,21 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   const [location, setLocation] = useState('');
   const [eventDate, setEventDate] = useState(new Date());
   const [endDate, setEndDate] = useState<Date | null>(null);
+  // The zone the pickers' times are in - see CreateEventModal's.
+  const [timeZone, setTimeZone] = useState(deviceTimeZone);
+  const [zoneFromLocation, setZoneFromLocation] = useState(false);
+  const zonePickedRef = useRef(false);
+  // A picker time, saved as the real moment. All-day Pings are dates.
+  const toInstant = (wall: Date) => (isAllDay ? wall : instantFromWallClock(wall, timeZone));
+  // A new location in another zone ("Scottsdale, AZ") means the times are
+  // that place's - unless the host already chose a zone here.
+  const followLocationZone = async (loc: string) => {
+    if (zonePickedRef.current || !event || loc === (event.location || '')) return;
+    const zone = await timeZoneForLocation(loc);
+    if (!zone || zonePickedRef.current) return;
+    setTimeZone(zone);
+    setZoneFromLocation(zone !== deviceTimeZone());
+  };
   const [isMultiDay, setIsMultiDay] = useState(false);
   const [stops, setStops] = useState<EventStop[]>([]);
   const [isAllDay, setIsAllDay] = useState(false);
@@ -225,11 +244,17 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       setTitle(event.title);
       setDescription(event.description || '');
       setLocation(event.location || '');
-      setEventDate(new Date(event.event_date));
+      // The pickers show the Ping's own clock (see lib/timeZones.ts).
+      const zone = (!event.is_all_day && event.time_zone) || deviceTimeZone();
+      setTimeZone(zone);
+      setZoneFromLocation(false);
+      zonePickedRef.current = false;
+      setEventDate(wallClockIn(new Date(event.event_date), zone));
       setEndDate(
-        event.end_date
-          ? new Date(event.end_date)
-          : new Date(new Date(event.event_date).getTime() + 60 * 60000)
+        wallClockIn(
+          event.end_date ? new Date(event.end_date) : new Date(new Date(event.event_date).getTime() + 60 * 60000),
+          zone
+        )
       );
       // Events saved before this had an explicit end time all have
       // end_date === null - only a real, different-day end_date means it
@@ -718,8 +743,8 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       (title !== event.title ||
         description.trim() !== (event.description || '') ||
         location !== (event.location || '') ||
-        eventDate.getTime() !== timeOf(event.event_date) ||
-        (resolvedEnd ? resolvedEnd.getTime() : null) !== timeOf(event.end_date) ||
+        toInstant(eventDate).getTime() !== timeOf(event.event_date) ||
+        (resolvedEnd ? toInstant(resolvedEnd).getTime() : null) !== timeOf(event.end_date) ||
         isAllDay !== !!event.is_all_day);
 
     if (!changedDetails) {
@@ -779,8 +804,9 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
             description: description.trim() || null,
             location,
             stops: shiftStops(baseStops, eventDate, occ.startDate),
-            event_date: occ.startDate.toISOString(),
-            end_date: occ.endDate ? occ.endDate.toISOString() : null,
+            event_date: toInstant(occ.startDate).toISOString(),
+            end_date: occ.endDate ? toInstant(occ.endDate).toISOString() : null,
+            time_zone: isAllDay ? null : timeZone,
             is_all_day: isAllDay,
             status: finalStatus,
             host_id: session.user.id,
@@ -938,8 +964,9 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
         title,
         description: description.trim() || null,
         location,
-        event_date: eventDate.toISOString(),
-        end_date: finalEndDate ? finalEndDate.toISOString() : null,
+        event_date: toInstant(eventDate).toISOString(),
+        end_date: finalEndDate ? toInstant(finalEndDate).toISOString() : null,
+        time_zone: isAllDay ? null : timeZone,
         is_all_day: isAllDay,
         is_public: isPublic || discoverable,
         discoverable,
@@ -1318,6 +1345,18 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
               </>
             )}
 
+            {!isAllDay && (
+              <TimeZoneRow
+                value={timeZone}
+                fromLocation={zoneFromLocation}
+                onChange={(zone) => {
+                  zonePickedRef.current = true;
+                  setZoneFromLocation(false);
+                  setTimeZone(zone);
+                }}
+              />
+            )}
+
             {showPicker && pickerMode === 'date' && (
               <View style={styles.calendarWrap}>
                 <Calendar
@@ -1424,6 +1463,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
               placeholderTextColor={colors.textMuted}
               value={location}
               onChangeText={setLocation}
+              onEndEditing={() => followLocationZone(location)}
             />
 
             <StopsEditor

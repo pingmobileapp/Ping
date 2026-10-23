@@ -313,8 +313,13 @@ export async function createPersonalCalendarEvent(
 // sent along unchanged. (A drag that sent only new times wiped a real
 // calendar item's title, which then dropped out of Ping entirely -
 // TestFlight 1.1.9, 2026-10-20.)
-async function untouchedFields(eventId: string): Promise<Partial<Calendar.Event>> {
-  const current = await Calendar.getEventAsync(eventId);
+// instanceStartDate picks one occurrence of a repeating item (its start
+// before this change) - see the expo-calendar patch in patches/.
+async function untouchedFields(eventId: string, instanceStartDate?: Date): Promise<Partial<Calendar.Event>> {
+  const current = await Calendar.getEventAsync(
+    eventId,
+    instanceStartDate ? { instanceStartDate: instanceStartDate.toISOString() } : undefined,
+  );
   return {
     location: current.location ?? undefined,
     url: current.url ?? undefined,
@@ -334,11 +339,15 @@ export async function updateCalendarEvent(
   futureEvents?: boolean,
   recurrenceRule?: Calendar.RecurrenceRule,
   reminderMinutesBefore?: number | null,
-  location?: string
+  location?: string,
+  // Which occurrence of a repeating item is being edited: its start BEFORE
+  // the edit. This used to pass the new start, which matched no occurrence
+  // once the occurrence lookup was fixed (patches/expo-calendar+*.patch).
+  instanceStartDate?: Date
 ): Promise<void> {
   const alarms = minutesToAlarms(reminderMinutesBefore);
   const updates: Partial<Calendar.Event> = {
-    ...(await untouchedFields(eventId)),
+    ...(await untouchedFields(eventId, instanceStartDate)),
     title,
     startDate,
     endDate,
@@ -351,7 +360,9 @@ export async function updateCalendarEvent(
   await Calendar.updateEventAsync(
     eventId,
     updates,
-    futureEvents !== undefined ? { futureEvents, instanceStartDate: startDate.toISOString() } : undefined
+    futureEvents !== undefined
+      ? { futureEvents, ...(instanceStartDate ? { instanceStartDate: instanceStartDate.toISOString() } : {}) }
+      : undefined
   );
 }
 
@@ -360,19 +371,32 @@ export async function updateCalendarEvent(
 // repeating item, expo-calendar's occurrence lookup (getEvent in
 // CalendarModule.swift) hands back the series' FIRST occurrence unless the
 // dragged one is that first one, so a drag could move the wrong date.
-export async function moveCalendarEvent(event: ExternalEvent, startDate: Date, endDate: Date): Promise<void> {
-  if (event.recurrenceRule) throw new Error('Repeating calendar items are not moved by drag');
-  const current = await Calendar.getEventAsync(event.id);
+// A repeating item moves just this occurrence, or this one and every one
+// after it (futureEvents) - Apple Calendar's own two choices. Either way
+// it's found by the occurrence's own start (event.startDate), which needs
+// the patched occurrence lookup in patches/expo-calendar+*.patch.
+export async function moveCalendarEvent(
+  event: ExternalEvent,
+  startDate: Date,
+  endDate: Date,
+  futureEvents = false,
+): Promise<void> {
+  const occurrence = event.recurrenceRule ? { instanceStartDate: event.startDate.toISOString() } : undefined;
+  const current = await Calendar.getEventAsync(event.id, occurrence);
   if (!current?.title) throw new Error('Calendar item not found');
-  await Calendar.updateEventAsync(event.id, {
-    ...(await untouchedFields(event.id)),
-    title: current.title,
-    notes: current.notes ?? undefined,
-    allDay: current.allDay,
-    alarms: current.alarms ?? [],
-    startDate,
-    endDate,
-  });
+  await Calendar.updateEventAsync(
+    event.id,
+    {
+      ...(await untouchedFields(event.id, event.recurrenceRule ? event.startDate : undefined)),
+      title: current.title,
+      notes: current.notes ?? undefined,
+      allDay: current.allDay,
+      alarms: current.alarms ?? [],
+      startDate,
+      endDate,
+    },
+    occurrence ? { ...occurrence, futureEvents } : undefined,
+  );
 }
 
 export async function deleteCalendarEvent(

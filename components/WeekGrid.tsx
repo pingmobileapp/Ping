@@ -318,13 +318,19 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       s0.setHours(0, 0, 0, 0);
       return Math.round((t.getTime() - s0.getTime()) / 86400000);
     };
-    // 2-day and day view open on today when today is in the week being
-    // shown, not on that week's Sunday.
+    // Every view opens on today when today is in the week being shown, not
+    // on that week's Sunday - and the 7-day week opens with today widened
+    // at the left edge, the days after it narrow to its right (TestFlight
+    // 1.1.11, 2026-10-22).
     const startIndexFor = (weekStartIdx: number) => {
       const t = todayIndexAt(rangeStart);
-      return daysVisible < 7 && t >= weekStartIdx && t < weekStartIdx + 7 ? t : weekStartIdx;
+      return t >= weekStartIdx && t < weekStartIdx + 7 ? t : weekStartIdx;
     };
-    const [focusedDayKey, setFocusedDayKey] = useState<string | null>(null);
+    const todayFocusFor = (leadIdx: number) =>
+      daysVisible === 7 && leadIdx === todayIndexAt(rangeStart) ? toDayKey(new Date()) : null;
+    const [focusedDayKey, setFocusedDayKey] = useState<string | null>(() =>
+      todayFocusFor(startIndexFor(initialDayIndex)),
+    );
     // While an event is lifted: which day it came from (that column is
     // raised above its neighbors so the block isn't drawn under them),
     // and the "Tue 3:15 PM" it would land on, shown in the block.
@@ -745,8 +751,9 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     // asked for - jumps once, on mount, no animation (a visible slide from
     // the range's edge to the right week on every open would be jarring).
     // Also scrolls vertically to roughly the current time, matching what
-    // Timeline's own scrollToNow did before this replaced it. No day is
-    // focused yet at mount, so every column is still NORMAL_DAY_WIDTH here.
+    // Timeline's own scrollToNow did before this replaced it. The only day
+    // that can be widened at mount is the leading one (today), so every day
+    // before it is still NORMAL_DAY_WIDTH here.
     useEffect(() => {
       const startIdx = startIndexFor(initialDayIndex);
       leadingIndexRef.current = startIdx;
@@ -780,18 +787,14 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       const daysChanged = prevDaysVisibleRef.current !== daysVisible;
       prevDaysVisibleRef.current = daysVisible;
       const lead = leadingIndexRef.current;
-      // Back to the full week: line up on that week's Sunday again.
-      const idx = !daysChanged
-        ? lead
-        : daysVisible === 7
-          ? Math.max(0, lead - (dayKeys[lead]?.getDay() ?? 0))
-          : startIndexFor(lead - (dayKeys[lead]?.getDay() ?? 0));
+      const idx = !daysChanged ? lead : startIndexFor(lead - (dayKeys[lead]?.getDay() ?? 0));
       leadingIndexRef.current = idx;
       const x = idx * NORMAL_DAY_WIDTH;
       realignTimersRef.current.forEach(clearTimeout);
       realigningRef.current = true;
       setRealigning(true);
-      setFocusedDayKey(null);
+      // Only ever the leading day, so x above still holds.
+      setFocusedDayKey(todayFocusFor(idx));
       scrollX.value = x;
       guardX.value = x;
       driver.value = 0;
@@ -874,17 +877,21 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     );
 
     // Today's column, and jumping back to it (the Today button, or the
-    // header's own control). In the 7-day week it lands on the start of
-    // this week, like the week first opens; in 2-day/day view, on today.
+    // header's own control). Lands the way the grid first opens: today at
+    // the left edge, widened in the 7-day week.
     const goToToday = () => {
       const todayIndex = todayIndexAt(rangeStart);
       if (todayIndex < 0 || todayIndex >= dayCount) return;
-      const target = daysVisible === 7 ? todayIndex - new Date().getDay() : todayIndex;
-      const idx = Math.max(0, Math.min(dayCount - 1, target));
-      const x = dayOffsets[idx] ?? 0;
-      leadingIndexRef.current = idx;
+      leadingIndexRef.current = todayIndex;
       driver.value = 0;
-      mainScrollRef.current?.scrollTo({ x, y: 0, animated: true });
+      const todayKey = toDayKey(new Date());
+      if (canWiden && focusedDayKey !== todayKey) {
+        // Scrolled once the widths have changed - see pendingFocusIndexRef.
+        pendingFocusIndexRef.current = todayIndex;
+        setFocusedDayKey(todayKey);
+      } else {
+        mainScrollRef.current?.scrollTo({ x: dayOffsets[todayIndex] ?? 0, y: 0, animated: true });
+      }
       const now = new Date();
       verticalScrollRef.current?.scrollTo({ x: 0, y: Math.max(0, (now.getHours() - 1) * HOUR_BLOCK_HEIGHT), animated: true });
     };

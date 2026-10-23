@@ -1020,8 +1020,8 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
       ids.add(`ping-${p.id}`);
     }
     for (const ext of externalEvents) {
-      // Not repeating ones - see moveCalendarEvent.
-      if (ext.editable && !ext.allDay && !ext.recurrenceRule && sameDay(ext.startDate, ext.endDate)) {
+      // Repeating ones too - dropping one asks which occurrences move.
+      if (ext.editable && !ext.allDay && sameDay(ext.startDate, ext.endDate)) {
         ids.add(`ext-${hiddenKeyFor(ext)}`);
       }
     }
@@ -1044,13 +1044,26 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
       const newEnd = shifted(ext.startDate, ext.endDate);
       const moved = { ...ext, startDate: newStart, endDate: newEnd };
       setExternalEvents((prev) => prev.map((e) => (e === ext ? moved : e)));
-      moveCalendarEvent(ext, newStart, newEnd)
-        .then(() => fetchExternalEvents())
-        .catch((err) => {
-          console.error("Error moving calendar item:", err);
-          setExternalEvents((prev) => prev.map((e) => (e === moved ? ext : e)));
-          Alert.alert("Couldn't move it", "Your phone calendar didn't accept the change.");
-        });
+      const move = (futureEvents: boolean) =>
+        moveCalendarEvent(ext, newStart, newEnd, futureEvents)
+          .then(() => fetchExternalEvents())
+          .catch((err) => {
+            console.error("Error moving calendar item:", err);
+            setExternalEvents((prev) => prev.map((e) => (e === moved ? ext : e)));
+            Alert.alert("Couldn't move it", "Your phone calendar didn't accept the change.");
+          });
+      if (!ext.recurrenceRule) {
+        move(false);
+        return;
+      }
+      // A repeating item: Apple Calendar's own choice. Dragging these was
+      // turned off until the occurrence lookup was patched, and reported
+      // as "dragging doesn't work" (TestFlight 1.1.11, 2026-10-22).
+      Alert.alert(`Move to ${whenLabel}?`, "This is a repeating event.", [
+        { text: "Cancel", style: "cancel", onPress: () => setExternalEvents((prev) => prev.map((e) => (e === moved ? ext : e))) },
+        { text: "This Event Only", onPress: () => move(false) },
+        { text: "All Future Events", onPress: () => move(true) },
+      ]);
       return;
     }
 
