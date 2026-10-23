@@ -108,7 +108,7 @@ export default function CalendarSyncSetting({ userId }: Props) {
         </TouchableOpacity>
       </View>
       <Text style={styles.helper}>
-        Shows your phone's calendar events alongside your Pings, and warns you about conflicts when you're invited
+        Shows your phone's calendar events alongside your events in Ping, and warns you about conflicts when you're invited
         to something. Your calendar stays on your phone - it's never uploaded.
       </Text>
     </View>

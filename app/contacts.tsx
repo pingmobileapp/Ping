@@ -249,7 +249,7 @@ export default function ContactsScreen() {
           contentContainerStyle={{ paddingBottom: 40 }}
           ListEmptyComponent={
             <Text style={styles.empty}>
-              {search ? 'No contacts match.' : 'No contacts yet. Import them when you create a Ping.'}
+              {search ? 'No contacts match.' : 'No contacts yet. Import them when you create an event.'}
             </Text>
           }
         />

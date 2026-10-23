@@ -538,7 +538,7 @@ export default function AddPersonalItemModal({ visible, initialDate, initialMinu
                   onPress={() => onConvertToPing(editingEvent!)}
                   disabled={submitting}
                 >
-                  <Text style={styles.convertButtonText}>Convert to Ping & Invite People</Text>
+                  <Text style={styles.convertButtonText}>Invite People</Text>
                 </TouchableOpacity>
               )}
               {isEditing && (

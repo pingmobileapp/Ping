@@ -14,7 +14,7 @@ export function confirmDeleteGroup(groupId: string, groupName: string): Promise<
   return new Promise((resolve) => {
     Alert.alert(
       `Delete "${groupName}"?`,
-      "The group and its group chat are removed for everyone in it. Your Pings and contacts aren't affected. This can't be undone.",
+      "The group and its group chat are removed for everyone in it. Your events and contacts aren't affected. This can't be undone.",
       [
         { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
         {

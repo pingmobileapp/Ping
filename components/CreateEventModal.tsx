@@ -914,7 +914,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
             contentContainerStyle={{ paddingBottom: 24 }}
             keyboardShouldPersistTaps="handled"
           >
-            <Text style={styles.header}>Create a Ping</Text>
+            <Text style={styles.header}>New Event</Text>
 
             {imageUri ? (
               <TouchableOpacity onPress={handlePhotoTap} activeOpacity={0.85}>

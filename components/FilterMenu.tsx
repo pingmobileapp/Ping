@@ -46,7 +46,7 @@ export default function FilterMenu({ active, onSelect }: Props) {
     <>
       <TouchableOpacity ref={buttonRef} onPress={openMenu}>
         <Text style={[styles.buttonText, !!active && styles.buttonTextActive]}>
-          {active ? 'Pings Only ✓' : 'Filter'}
+          {active ? 'Shared Events ✓' : 'Filter'}
         </Text>
       </TouchableOpacity>
 
@@ -61,7 +61,7 @@ export default function FilterMenu({ active, onSelect }: Props) {
             <View style={styles.menuDivider} />
             <TouchableOpacity style={styles.menuItem} onPress={() => handleSelect('pingsOnly')}>
               <Text style={[styles.menuItemText, !!active && styles.menuItemTextActive]}>
-                {active ? 'Pings Only ✓' : 'Pings Only'}
+                {active ? 'Shared Events ✓' : 'Shared Events'}
               </Text>
             </TouchableOpacity>
           </View>

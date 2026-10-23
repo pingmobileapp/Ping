@@ -1436,7 +1436,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
               groups.length > 0 && (
                 <>
                   <Text style={styles.label}>Tag to a group</Text>
-                  <Text style={styles.helperText}>Shows this Ping in that group's Upcoming section.</Text>
+                  <Text style={styles.helperText}>Shows this event in that group's Upcoming section.</Text>
                   <View style={styles.chipRow}>
                     {groups.map((g) => (
                       <TouchableOpacity

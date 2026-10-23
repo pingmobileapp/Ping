@@ -334,7 +334,7 @@ export default function GroupDetailScreen() {
           </ScrollView>
         ) : (
           <Text style={styles.noEventsText}>
-            No upcoming Pings tagged to this group yet — when you create one and select just this group to invite
+            No upcoming events tagged to this group yet — when you create one and select just this group to invite
             from, it'll show up here.
           </Text>
         )}

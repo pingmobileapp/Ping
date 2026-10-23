@@ -472,11 +472,11 @@ export default function ScheduleReviewModal({ visible, extractedEvents, onClose,
                   disabled={selectedRows.length !== 1 || submitting}
                 >
                   <Text style={[styles.secondaryButtonText, selectedRows.length !== 1 && styles.secondaryButtonTextDisabled]}>
-                    Create Ping instead
+                    Invite People Instead
                   </Text>
                 </TouchableOpacity>
                 {selectedRows.length > 1 && (
-                  <Text style={styles.helperText}>Select exactly one event to turn it into a Ping.</Text>
+                  <Text style={styles.helperText}>Select exactly one event to invite people to it.</Text>
                 )}
                 <TouchableOpacity style={styles.cancelButton} onPress={onClose} disabled={submitting}>
                   <Text style={styles.cancelText}>Cancel</Text>

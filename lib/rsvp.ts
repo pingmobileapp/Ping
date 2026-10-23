@@ -212,7 +212,7 @@ export async function submitSeriesRsvp(opts: SubmitSeriesRsvpOptions): Promise<S
 // that date or every upcoming one. Resolves null if cancelled.
 export function askRsvpScope(upcomingCount: number): Promise<'one' | 'all' | null> {
   return new Promise((resolve) => {
-    Alert.alert('This Ping repeats', 'Respond to just this date, or every upcoming one?', [
+    Alert.alert('This event repeats', 'Respond to just this date, or every upcoming one?', [
       { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
       { text: 'This date only', onPress: () => resolve('one') },
       { text: `All ${upcomingCount} upcoming dates`, onPress: () => resolve('all') },

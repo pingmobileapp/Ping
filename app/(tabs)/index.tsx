@@ -263,17 +263,17 @@ export default function HomeScreen() {
     },
     {
       title: "Upcoming",
-      body: "Everything you're invited to or hosting shows up here. Filter switches between just your Pings and All, which adds your phone's calendar too.",
+      body: "Everything you're invited to or hosting shows up here. Filter switches between just your shared events and All, which adds your phone's calendar too.",
       measure: measureRef(tourRefs.upcoming),
     },
     {
       title: "Add anything",
-      body: "Tap + to create a Ping, add a personal item to your calendar, or scan a photo of a schedule.",
+      body: "Tap + to start a new event, add a personal item to your calendar, or scan a photo of a schedule.",
       measure: measureRef(tourRefs.fab),
     },
     {
-      title: "Send a Ping",
-      body: "Create is the quickest way to invite people: add what, when, and who. Anyone who isn't on Ping yet gets a text invite.",
+      title: "Invite people",
+      body: "Create → New Event is the quickest way to invite people: add what, when, and who. Anyone who isn't on Ping yet gets a text invite.",
       measure: measureRef(tourRefs.create),
     },
     {
@@ -838,7 +838,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   // a Ping in Week view did nothing.
   const showPingHideOption = (event: PingEvent) => {
     Alert.alert(
-      "Hide this Ping?",
+      "Hide this event?",
       "It comes off your calendar and Upcoming list. Your RSVP doesn't change, and you can bring it back from Hidden in your profile menu.",
       [
         { text: "Cancel", style: "cancel" },
@@ -992,7 +992,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
       if (ext.editable) {
         buttons.push({ text: "Edit", onPress: () => setEditingPersonalEvent(ext) });
       }
-      buttons.push({ text: "Convert to Ping", onPress: () => handleConvertToPing(ext) });
+      buttons.push({ text: "Invite People", onPress: () => handleConvertToPing(ext) });
       // Hide lives here, not on a long-press: holding an item in Week view
       // is for dragging it (TestFlight 1.1.12, 2026-10-22). A Ping's Hide is
       // on its event screen's ••• menu.
@@ -1847,7 +1847,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     <>
       {eventsLoadError && (
         <TouchableOpacity style={styles.errorPromptRow} onPress={() => fetchEvents()}>
-          <Text style={styles.errorPromptText}>⚠️ Couldn't load your Pings — tap to retry</Text>
+          <Text style={styles.errorPromptText}>⚠️ Couldn't load your events — tap to retry</Text>
         </TouchableOpacity>
       )}
       {(calendarPermission === "undetermined" ||
@@ -2033,7 +2033,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
           {createMenuAt && (
             <View style={[styles.createMenu, { top: createMenuAt.top, right: createMenuAt.right }]}>
               {[
-                { label: "Create a Ping", hint: "Invite people", run: () => setModalVisible(true) },
+                { label: "New Event", hint: "Invite people", run: () => setModalVisible(true) },
                 { label: "Add Personal Item", hint: "Just for you", run: () => setPersonalItemModalVisible(true) },
                 { label: "Scan a Schedule", hint: "From a photo", run: handleScanSchedule },
               ].map((item, i) => (
@@ -2098,7 +2098,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
               setModalVisible(true);
             }}
           >
-            <Text style={styles.fabMenuItemText}>Create a Ping</Text>
+            <Text style={styles.fabMenuItemText}>New Event</Text>
           </TouchableOpacity>
         </View>
       )}
