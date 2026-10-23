@@ -1173,7 +1173,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                           setEmptySlotPrompt(null);
                         }}
                       >
-                        <Text style={styles.emptySlotPillText}>+ Add Personal Item</Text>
+                        <Text style={styles.emptySlotPillText}>+ New Event</Text>
                       </TouchableOpacity>
                     )}
                   </Pressable>

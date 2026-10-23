@@ -45,6 +45,18 @@ import RecurrencePicker from './RecurrencePicker';
 import StopsEditor from './StopsEditor';
 import TimeZoneRow from './TimeZoneRow';
 import { deviceTimeZone, instantFromWallClock, timeZoneForLocation } from '../lib/timeZones';
+import {
+  createPersonalCalendarEvent,
+  getCalendarPermissionStatus,
+  requestCalendarAccess,
+} from '../lib/calendarConflicts';
+import {
+  REMINDER_OPTIONS,
+  scheduleEventReminder,
+  schedulePersonalItemReminder,
+  setPersonalItemImportant,
+} from '../lib/eventReminders';
+import { toExpoRecurrenceRule } from '../lib/recurrence';
 import { EventStop, cleanStops, shiftStops, stopDays } from '../lib/stops';
 import { useRegisterModal } from '../lib/modalPresence';
 
@@ -82,9 +94,22 @@ type Props = {
     location?: string;
     description?: string;
   } | null;
+  // A minute-of-day to start at (Week view's long-press on an empty slot).
+  initialMinutes?: number | null;
+  // An Important date is saved to the phone calendar, not as a Ping (see
+  // saveImportantDate) - the host refreshes that side instead.
+  onSavedToCalendar?: () => void;
 };
 
-export default function CreateEventModal({ visible, onClose, onCreated, initialDate, prefill }: Props) {
+export default function CreateEventModal({
+  visible,
+  onClose,
+  onCreated,
+  initialDate,
+  prefill,
+  initialMinutes,
+  onSavedToCalendar,
+}: Props) {
   useRegisterModal(visible);
   const { session } = useAuth();
   const [title, setTitle] = useState('');
@@ -96,6 +121,11 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
   const [stops, setStops] = useState<EventStop[]>([]);
   const [isAllDay, setIsAllDay] = useState(false);
   const [recurrence, setRecurrence] = useState<RecurrenceConfig | null>(null);
+  // New Event is the one way to make anything (2026-10-22) - these two came
+  // over from the old Add Personal Item form. The reminder is the host's
+  // own, like "Remind me before" on the event screen.
+  const [reminderMinutes, setReminderMinutes] = useState<number | null>(null);
+  const [isImportantDate, setIsImportantDate] = useState(false);
   // The zone the times above are typed in (see lib/timeZones.ts). Follows
   // the location when it's a real place in another zone, until the host
   // picks one themselves.
@@ -443,10 +473,16 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
   };
 
   const buildInitialEventDate = () => {
-    if (!initialDate) return new Date();
-    const [y, m, d] = initialDate.split('-').map(Number);
     const next = new Date();
-    next.setFullYear(y, m - 1, d);
+    if (initialDate) {
+      const [y, m, d] = initialDate.split('-').map(Number);
+      next.setFullYear(y, m - 1, d);
+    }
+    if (initialMinutes != null) {
+      // Week view's long-press, rounded down to the quarter hour.
+      const quarter = Math.floor(initialMinutes / 15) * 15;
+      next.setHours(Math.floor(quarter / 60), quarter % 60, 0, 0);
+    }
     return next;
   };
 
@@ -486,6 +522,8 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
       setIsAllDay(false);
     }
     setRecurrence(null);
+    setReminderMinutes(null);
+    setIsImportantDate(false);
     setTimeZone(deviceTimeZone());
     setZoneFromLocation(false);
     zonePickedRef.current = false;
@@ -595,6 +633,10 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
     return deduped;
   };
 
+  // Nobody invited yet: it's just yours - one Save button, and Important
+  // date is on offer (see saveImportantDate).
+  const noGuests = resolveInviteeContactIds().length === 0 && selectedCoHostIds.length === 0;
+
   // One occurrence's worth of the full create sequence - event row, host's
   // own accepted-invitee row, items, and (if sent) guest invitees. Used
   // both for a plain one-off event and, in a loop, for each date in a
@@ -681,9 +723,18 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
         rsvp_status: 'accepted',
         invited_via: 'app',
         responded_at: new Date().toISOString(),
+        // First date of a series only: iOS keeps at most 64 pending local
+        // notifications, and a series can be 52 dates. Later dates can be
+        // set from the event screen, as before.
+        reminder_minutes_before: shouldNotify ? reminderMinutes : null,
       },
     ]);
     if (hostInviteError) console.error('Error creating host invitee row:', hostInviteError);
+    if (!hostInviteError && shouldNotify && reminderMinutes !== null) {
+      scheduleEventReminder(session!.user.id, eventRow.id, title, new Date(eventRow.event_date), reminderMinutes).catch(
+        (err) => console.error('Error scheduling reminder:', err)
+      );
+    }
 
     if (selectedCoHostIds.length > 0) {
       // Re-check each co-host's account link right before granting them
@@ -781,6 +832,53 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
     return { eventId: eventRow.id, smsQueueItems };
   };
 
+  // An Important date (birthday, anniversary) repeats every year with no
+  // end, which a Ping series can't (one row per date, capped at 52) - so,
+  // kept to yourself, it's saved to the phone calendar the way the old Add
+  // Personal Item did, with a yearly reminder. Same form either way.
+  const saveImportantDate = async () => {
+    setSubmitting(true);
+    try {
+      const permission = await getCalendarPermissionStatus();
+      const allowed = permission === 'granted' || (permission === 'undetermined' && (await requestCalendarAccess()));
+      if (!allowed) {
+        Alert.alert(
+          'Calendar access needed',
+          'Important dates are saved to your phone calendar so they come back every year. Turn on calendar access for Ping in Settings.'
+        );
+        return;
+      }
+      const start = new Date(eventDate);
+      let end: Date;
+      if (isAllDay) {
+        start.setHours(0, 0, 0, 0);
+        end = new Date(start);
+        end.setDate(end.getDate() + 1);
+      } else {
+        end = resolveEndDate(eventDate, endDate, false, false) ?? new Date(start.getTime() + 60 * 60000);
+      }
+      const id = await createPersonalCalendarEvent(
+        title.trim(),
+        start,
+        end,
+        isAllDay,
+        description.trim() || undefined,
+        toExpoRecurrenceRule({ frequency: 'yearly', interval: 1, end: { type: 'never' } }),
+        null,
+        location.trim() || undefined
+      );
+      await schedulePersonalItemReminder(id, title.trim(), start, reminderMinutes ?? 1440, true);
+      await setPersonalItemImportant(id, true);
+      resetForm();
+      onSavedToCalendar?.();
+    } catch (err) {
+      console.error('Error saving important date:', err);
+      Alert.alert('Error', 'Could not save that to your calendar.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const submit = async (status: 'sent' | 'draft') => {
     // The Send/Save buttons' disabled={submitting} only takes effect on the
     // next render, so a fast double-tap can call submit() twice before that
@@ -793,6 +891,10 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
       return;
     }
     if (!session?.user?.id) return;
+    if (isImportantDate && noGuests) {
+      await saveImportantDate();
+      return;
+    }
 
     setSubmitting(true);
 
@@ -1063,7 +1165,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
               onEndEditing={() => followLocationZone(location)}
             />
 
-            <Text style={styles.label}>Invite</Text>
+            <Text style={styles.label}>Invite (optional)</Text>
 
             <TouchableOpacity style={styles.importRow} onPress={() => setImportVisible(true)}>
               <Text style={styles.importText}>📇 Import from Contacts</Text>
@@ -1196,7 +1298,7 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
                 <Text style={styles.moreOptionsTitle}>{moreOpen ? 'Fewer options ▴' : 'More options ▾'}</Text>
                 {!moreOpen && (
                   <Text style={styles.moreOptionsHint}>
-                    Description, stops along the way, what to bring, repeat, co-hosts{DISCOVER_LISTINGS_ENABLED ? ', Discover' : ''}
+                    Description, stops along the way, important date, repeat, reminder, what to bring, co-hosts{DISCOVER_LISTINGS_ENABLED ? ', Discover' : ''}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -1220,7 +1322,46 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
                 days={stopDays(eventDate, resolveEndDate(eventDate, endDate, isMultiDay, isAllDay))}
               />
 
-              <RecurrencePicker value={recurrence} onChange={setRecurrence} checkboxSize={24} />
+              {noGuests && (
+                <TouchableOpacity
+                  style={styles.publicRow}
+                  onPress={() =>
+                    setIsImportantDate((prev) => {
+                      // A birthday is a day, and is no use without a heads-up.
+                      if (!prev) {
+                        setIsAllDay(true);
+                        setReminderMinutes((mins) => (mins === null ? 1440 : mins));
+                      }
+                      return !prev;
+                    })
+                  }
+                >
+                  <View style={[styles.checkbox, isImportantDate && styles.checkboxChecked]}>
+                    {isImportantDate && <Text style={styles.checkmark}>✓</Text>}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.publicRowTitle}>⭐ Important date</Text>
+                    <Text style={styles.publicRowSubtitle}>A birthday or anniversary - repeats every year and reminds you</Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+
+              {!(isImportantDate && noGuests) && (
+                <RecurrencePicker value={recurrence} onChange={setRecurrence} checkboxSize={24} />
+              )}
+
+              <Text style={styles.label}>Remind me before</Text>
+              <View style={styles.chipRow}>
+                {REMINDER_OPTIONS.map((opt) => (
+                  <TouchableOpacity
+                    key={opt.label}
+                    style={[styles.chip, reminderMinutes === opt.value && styles.chipSelected]}
+                    onPress={() => setReminderMinutes(opt.value)}
+                  >
+                    <Text style={[styles.chipText, reminderMinutes === opt.value && styles.chipTextSelected]}>{opt.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
 
               <TouchableOpacity style={styles.publicRow} onPress={() => setIsPublic(!isPublic)}>
                 <View style={[styles.checkbox, isPublic && styles.checkboxChecked]}>
@@ -1387,6 +1528,19 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
 
           {!showPicker && !keyboardVisible && (
             <View style={styles.footer}>
+              {noGuests ? (
+                // Just yours: nothing to send, and nothing to finish later.
+                <TouchableOpacity
+                  style={[styles.footerButton, styles.sendButton]}
+                  onPress={() => submit('sent')}
+                  disabled={submitting || groupsLoading}
+                >
+                  <Text style={styles.sendButtonText}>
+                    {uploadingImage ? 'Uploading photo...' : submitting ? 'Saving...' : 'Save'}
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+              <>
               <TouchableOpacity style={[styles.footerButton, styles.saveButton]} onPress={() => submit('draft')} disabled={submitting}>
                 <Text style={styles.saveButtonText}>Save for later</Text>
               </TouchableOpacity>
@@ -1399,6 +1553,8 @@ export default function CreateEventModal({ visible, onClose, onCreated, initialD
                   {uploadingImage ? 'Uploading photo...' : submitting ? 'Sending...' : groupsLoading ? 'Loading...' : 'Send'}
                 </Text>
               </TouchableOpacity>
+              </>
+              )}
             </View>
           )}
 

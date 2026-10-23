@@ -268,7 +268,7 @@ export default function HomeScreen() {
     },
     {
       title: "Add anything",
-      body: "Tap + to start a new event, add a personal item to your calendar, or scan a photo of a schedule.",
+      body: "Tap + to start a new event - just for you, or invite people - or scan a photo of a schedule.",
       measure: measureRef(tourRefs.fab),
     },
     {
@@ -1131,17 +1131,16 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   };
 
   // Long-pressing empty grid space in Week view (see WeekGrid's pill,
-  // onEmptySlotLongPress) opens Add Personal Item directly - a quick
-  // reminder for that exact day/time, not a menu of choices, since it can
-  // always be converted to a real Ping afterward if it turns out to need
-  // one (see AddPersonalItemModal's own onConvertToPing). createPrefillDate
+  // onEmptySlotLongPress) opens New Event at that exact day/time - the one
+  // way to make anything since 2026-10-22; with nobody invited it's just
+  // yours. createPrefillDate
   // takes priority over selectedDate (see the modal's initialDate prop
   // below) so this doesn't also change what the Upcoming list is filtered
   // to, the way tapping a day on the Month calendar does.
   const handleEmptySlotLongPress = (dayKey: string, minutes: number) => {
     setCreatePrefillDate(dayKey);
     setCreatePrefillMinutes(minutes);
-    setPersonalItemModalVisible(true);
+    setModalVisible(true);
   };
 
   // Long-pressing a day's header cell in Week view (see WeekGrid's
@@ -2033,8 +2032,9 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
           {createMenuAt && (
             <View style={[styles.createMenu, { top: createMenuAt.top, right: createMenuAt.right }]}>
               {[
-                { label: "New Event", hint: "Invite people", run: () => setModalVisible(true) },
-                { label: "Add Personal Item", hint: "Just for you", run: () => setPersonalItemModalVisible(true) },
+                // One way to make anything: invite people, or nobody and
+                // it's just yours (the separate Add Personal Item is gone).
+                { label: "New Event", hint: "Just you, or invite people", run: () => setModalVisible(true) },
                 { label: "Scan a Schedule", hint: "From a photo", run: handleScanSchedule },
               ].map((item, i) => (
                 <TouchableOpacity
@@ -2079,14 +2079,6 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
           <TouchableOpacity
             onPress={() => {
               setFabMenuVisible(false);
-              setPersonalItemModalVisible(true);
-            }}
-          >
-            <Text style={styles.fabMenuItemText}>Add Personal Item</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => {
-              setFabMenuVisible(false);
               handleScanSchedule();
             }}
           >
@@ -2110,12 +2102,23 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
           setConvertPrefill(null);
           setConvertSource(null);
           setCreatePrefillDate(null);
+          setCreatePrefillMinutes(null);
         }}
         onCreated={(status) => {
           setCreatePrefillDate(null);
+          setCreatePrefillMinutes(null);
           handleCreated(status);
         }}
+        onSavedToCalendar={async () => {
+          setModalVisible(false);
+          setCreatePrefillDate(null);
+          setCreatePrefillMinutes(null);
+          setCalendarPermission("granted");
+          await fetchExternalEvents();
+          refreshImportantItemIds();
+        }}
         initialDate={createPrefillDate ?? selectedDate}
+        initialMinutes={createPrefillMinutes}
         prefill={convertPrefill}
       />
 
