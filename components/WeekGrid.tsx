@@ -484,6 +484,10 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     };
 
     const snapStart = (ev: DayColumnEvent, translationY: number) => {
+      // Less than half a step from where it started is no move at all - an
+      // item at 5:06 that was held, not dragged, would otherwise snap to
+      // 5:00 and ask to be moved (TestFlight 1.1.12).
+      if (Math.abs(translationY) < ((DRAG_SNAP_MINUTES / 60) * HOUR_BLOCK_HEIGHT) / 2) return ev.startMinutes;
       const raw = ev.startMinutes + (translationY / HOUR_BLOCK_HEIGHT) * 60;
       const snapped = Math.round(raw / DRAG_SNAP_MINUTES) * DRAG_SNAP_MINUTES;
       return Math.max(0, Math.min(24 * 60 - DRAG_SNAP_MINUTES, snapped));
@@ -517,8 +521,8 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       const targetKey = toDayKey(dayKeys[target]);
       const newStart = snapStart(hit.ev, translationY);
       if (targetKey === hit.fromDayKey && newStart === hit.ev.startMinutes) {
-        // Held and let go without moving - same as a long-press on
-        // anything else.
+        // Held and let go without moving - whatever the host wired to a
+        // hold, if anything (Home wires nothing since 1.1.13).
         onEventLongPress?.(hit.ev.id);
         return;
       }
@@ -1124,10 +1128,11 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                           // side); tapping an event in the widened day opens
                           // it (TestFlight feedback, build 113). 1.1.2 had
                           // made every tap open straight away, which left
-                          // crowded days unreadable. Hiding and reporting are
-                          // on the event screen's ••• menu; holding an event
-                          // here is a shortcut (a movable one lifts to drag
-                          // instead - see dragGesture).
+                          // crowded days unreadable. Holding an event lifts it
+                          // to drag (see dragGesture); hiding is in the tap
+                          // menu or the event screen's ••• menu, not on a
+                          // hold, which got in the way of dragging
+                          // (TestFlight 1.1.12).
                           onPress={() =>
                             !canWiden || key === focusedDayKey ? onEventPress(ev.id) : handleDayTap(key, dayIndex)
                           }

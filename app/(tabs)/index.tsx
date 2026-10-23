@@ -812,9 +812,9 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     if (next.size === 0) setActiveView((v) => (v === 'hidden' ? null : v));
   };
 
-  // Long-press entry point for hiding a calendar item, shared by Week
-  // view (WeekGrid's onEventLongPress) and the Upcoming list
-  // (ExternalEventRow's onLongPressHide) - a recurring event gets the
+  // Hiding a calendar item, from Week view's tap menu (handleWeekItemPress)
+  // and the Upcoming list's long-press (ExternalEventRow's onLongPressHide)
+  // - a recurring event gets the
   // this-occurrence/whole-series choice; a one-off event just confirms.
   const showHideOptions = (event: ExternalEvent) => {
     if (event.recurrenceRule) {
@@ -993,13 +993,15 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
         buttons.push({ text: "Edit", onPress: () => setEditingPersonalEvent(ext) });
       }
       buttons.push({ text: "Convert to Ping", onPress: () => handleConvertToPing(ext) });
+      // Hide lives here, not on a long-press: holding an item in Week view
+      // is for dragging it (TestFlight 1.1.12, 2026-10-22). A Ping's Hide is
+      // on its event screen's ••• menu.
+      buttons.push({ text: "Hide", onPress: () => showHideOptions(ext) });
       buttons.push({ text: "Cancel", style: "cancel" });
       Alert.alert(ext.title, formatExternalEventTime(ext), buttons);
     }
   };
 
-  // Week view's long-press equivalent of the Upcoming list's hide icon -
-  // offers to hide a phone-calendar item or a Ping.
   // Week view drag-to-move (hold an event, then drag it). Only things this
   // person can actually change: a Ping they host or co-host, or a phone
   // calendar item on a calendar that accepts edits. Never a multi-day one
@@ -1126,17 +1128,6 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
       { text: "Move silently", onPress: () => save(false) },
       { text: "Move & notify", onPress: () => save(true) },
     ]);
-  };
-
-  const handleWeekItemLongPress = (id: string) => {
-    if (id.startsWith("ping-")) {
-      const p = declinedFilteredEvents.find((e) => e.id === id.slice(5));
-      if (p) showPingHideOption(p);
-      return;
-    }
-    if (!id.startsWith("ext-")) return;
-    const ext = externalEvents.find((e) => hiddenKeyFor(e) === id.slice(4));
-    if (ext) showHideOptions(ext);
   };
 
   // Long-pressing empty grid space in Week view (see WeekGrid's pill,
@@ -1982,7 +1973,6 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
               }
               height={landscapeWeek ? landscapeGridHeight : weekGridMaxHeight}
               onEventPress={handleWeekItemPress}
-              onEventLongPress={handleWeekItemLongPress}
               canMoveEvent={canMoveWeekItem}
               onEventMove={handleWeekItemMove}
               onVisibleWeekChange={setVisibleWeekStart}
