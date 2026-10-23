@@ -41,7 +41,7 @@ export default function TermsGateScreen({ userId, mode, onAccepted, onSignOut }:
         <Text style={styles.title}>Account suspended</Text>
         <Text style={styles.bannedText}>
           This account has been suspended for violating Ping's Terms of Use. If you think this is a mistake,
-          contact pierson.willhite@gmail.com.
+          contact hello@hivebuilt.dev.
         </Text>
         <TouchableOpacity style={styles.signOutButton} onPress={onSignOut}>
           <Text style={styles.signOutButtonText}>Sign Out</Text>

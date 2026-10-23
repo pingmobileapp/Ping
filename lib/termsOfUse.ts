@@ -3,7 +3,7 @@
 // this is the actual EULA/terms-of-use content, not just a link to one.
 export const TERMS_OF_USE_TEXT = `Last updated September 1, 2026
 
-Welcome to Ping. By creating an account or using this app, you agree to these Terms of Use.
+Welcome to Ping. Ping is provided by Hivebuilt LLC, Alpine, Utah. By creating an account or using this app, you agree to these Terms of Use.
 
 1. Your Account
 You must provide accurate information when creating an account. You're responsible for everything that happens under your account, and for keeping your login credentials secure.
