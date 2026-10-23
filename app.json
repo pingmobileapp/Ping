@@ -2,7 +2,7 @@
   "expo": {
     "name": "Ping",
     "slug": "ping",
-    "version": "1.1.12",
+    "version": "1.1.13",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "pingapp",
