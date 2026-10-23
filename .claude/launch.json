@@ -4,8 +4,35 @@
     {
       "name": "ping-app-web",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "web"],
+      "runtimeArgs": [
+        "run",
+        "web"
+      ],
       "port": 8081
+    },
+    {
+      "name": "docs-site",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8765",
+        "-d",
+        "docs"
+      ],
+      "port": 8765
+    },
+    {
+      "name": "rvnb-site",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8766",
+        "-d",
+        "/Users/piersonwillhite/Documents/rvnb-website"
+      ],
+      "port": 8766
     }
   ]
 }
