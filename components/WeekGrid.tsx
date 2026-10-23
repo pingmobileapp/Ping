@@ -139,6 +139,49 @@ const DragGhost = forwardRef<
 });
 DragGhost.displayName = 'DragGhost';
 
+// The current time, kept to the minute by its own small timer so the
+// grid itself never redraws for it. Drawn on top of event blocks - under
+// them, an event happening now hid it (TestFlight 1.1.14, 2026-10-23).
+function useMinuteNow() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval> | undefined;
+    const tick = () => setNow(new Date());
+    // Line up with the start of the next minute, then every minute.
+    const timeout = setTimeout(() => {
+      tick();
+      interval = setInterval(tick, 60000);
+    }, 60000 - (Date.now() % 60000));
+    return () => {
+      clearTimeout(timeout);
+      if (interval) clearInterval(interval);
+    };
+  }, []);
+  return now;
+}
+const minutesTop = (d: Date) => ((d.getHours() * 60 + d.getMinutes()) / 60) * HOUR_BLOCK_HEIGHT;
+
+function NowLine() {
+  const now = useMinuteNow();
+  return (
+    <View pointerEvents="none" style={[styles.nowLine, { top: minutesTop(now) }]}>
+      <View style={styles.nowDot} />
+    </View>
+  );
+}
+
+// The time itself in red in the hour column, like Apple Calendar - its
+// background covers whichever hour label it lands on.
+function NowTimeLabel() {
+  const now = useMinuteNow();
+  const h = now.getHours() % 12 === 0 ? 12 : now.getHours() % 12;
+  return (
+    <Text pointerEvents="none" style={[styles.nowTimeLabel, { top: minutesTop(now) - 8 }]}>
+      {`${h}:${pad(now.getMinutes())}`}
+    </Text>
+  );
+}
+
 // "Today" button in the corner left of the day headers (the bottom of the
 // grid is under the Upcoming sheet) - only while today has scrolled out of
 // view. Its own small component watching
@@ -949,7 +992,6 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
 
     const now = new Date();
     const today = toDayKey(now);
-    const nowTop = ((now.getHours() * 60 + now.getMinutes()) / 60) * HOUR_BLOCK_HEIGHT;
 
     return (
       <View
@@ -1084,6 +1126,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                   {formatHour(hour)}
                 </Text>
               ))}
+              {todayIndexAt(rangeStart) >= 0 && todayIndexAt(rangeStart) < dayCount && <NowTimeLabel />}
             </View>
             <Animated.ScrollView
               ref={mainScrollRef}
@@ -1122,11 +1165,6 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                     onPress={() => handleDayTap(key, dayIndex)}
                     onLongPress={(e) => handleColumnLongPress(key, dayEvents, e.nativeEvent.locationY)}
                   >
-                    {key === today && (
-                      <View style={[styles.nowLine, { top: nowTop }]}>
-                        <View style={styles.nowDot} />
-                      </View>
-                    )}
                     {dayEvents.map((ev, evIndex) => {
                       // Overlaps sit side by side in lanes (see blockGeometry).
                       const g = blockGeometry(ev, dayWidths[dayIndex], key === focusedDayKey);
@@ -1194,6 +1232,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                         </Pressable>
                       );
                     })}
+                    {key === today && <NowLine />}
                     {emptySlotPrompt?.dayKey === key && (
                       <TouchableOpacity
                         style={[styles.emptySlotPill, { top: emptySlotPrompt.top }]}
@@ -1327,8 +1366,31 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
   },
   hourLine: { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: colors.divider },
-  nowLine: { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: colors.danger, flexDirection: 'row', alignItems: 'center' },
-  nowDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.danger, marginLeft: -4 },
+  nowLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 2,
+    backgroundColor: colors.danger,
+    flexDirection: 'row',
+    alignItems: 'center',
+    zIndex: 20,
+    elevation: 20,
+  },
+  // Fully inside the column (a negative margin left half of it clipped).
+  nowDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.danger },
+  nowTimeLabel: {
+    position: 'absolute',
+    left: 0,
+    right: 4,
+    textAlign: 'right',
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.danger,
+    backgroundColor: colors.background,
+    paddingVertical: 2,
+    lineHeight: 12,
+  },
   // Apple-Calendar-style block: pale tint fill, a solid stripe down the
   // left edge (borderLeftColor set per event), flat - no shadow. A 1px
   // white edge on top/bottom keeps back-to-back events from merging.
