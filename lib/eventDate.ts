@@ -54,15 +54,16 @@ export function formatEventTime(eventDate: string, isAllDay?: boolean | null, en
 
 // Week view's header title - "Aug 23 – 29" within one month, "Aug 30 – Sep 5"
 // across a month boundary. weekStart is always the Sunday of the visible week.
-export function formatWeekRangeLabel(weekStart: Date): string {
-  const end = new Date(weekStart);
-  end.setDate(end.getDate() + 6);
-  const sameMonth = weekStart.getMonth() === end.getMonth() && weekStart.getFullYear() === end.getFullYear();
-  const startLabel = weekStart.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  const endLabel = end.toLocaleDateString(
-    undefined,
-    sameMonth ? { day: 'numeric' } : { month: 'short', day: 'numeric' }
-  );
+// Week view's title: the days actually on screen, starting from the first
+// one - Week opens on today, not Sunday (1.1.12), so a Sunday-to-Saturday
+// label could name days that aren't showing. One day reads "Thu, Oct 29".
+export function formatDayRangeLabel(firstDay: Date, days: number): string {
+  if (days <= 1) return firstDay.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const end = new Date(firstDay);
+  end.setDate(end.getDate() + days - 1);
+  const sameMonth = firstDay.getMonth() === end.getMonth() && firstDay.getFullYear() === end.getFullYear();
+  const startLabel = firstDay.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const endLabel = end.toLocaleDateString(undefined, sameMonth ? { day: 'numeric' } : { month: 'short', day: 'numeric' });
   return `${startLabel} – ${endLabel}`;
 }
 

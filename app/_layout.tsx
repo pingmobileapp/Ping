@@ -3,6 +3,7 @@ import { View, ActivityIndicator } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaInsetsContext, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '../lib/AuthContext';
 import { NotificationsProvider, useNotificationsContext } from '../lib/NotificationsContext';
 import { useAccountGate } from '../lib/useAccountGate';
@@ -124,15 +125,30 @@ function RootNavigation() {
   );
 }
 
+// Keeps every screen clear of a side inset - a phone turned sideways (the
+// notch), and the iPhone Duo, which keeps a system rail down one edge even
+// upright (2026-10-22). Screens below see no side insets, so none of them
+// pads twice; top and bottom are still theirs to handle.
+function SideInsets({ children }: { children: React.ReactNode }) {
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.background, paddingLeft: insets.left, paddingRight: insets.right }}>
+      <SafeAreaInsetsContext.Provider value={{ ...insets, left: 0, right: 0 }}>{children}</SafeAreaInsetsContext.Provider>
+    </View>
+  );
+}
+
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       {/* Ping's screens are always light, so the clock/battery icons must
           always be dark - Android otherwise draws them white on white. */}
       <StatusBar style="dark" />
-      <AuthProvider>
-        <RootNavigation />
-      </AuthProvider>
+      <SideInsets>
+        <AuthProvider>
+          <RootNavigation />
+        </AuthProvider>
+      </SideInsets>
     </GestureHandlerRootView>
   );
 }

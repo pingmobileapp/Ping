@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  LayoutAnimation,
   LayoutChangeEvent,
   Modal,
   Pressable,
@@ -22,6 +23,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { isTwoPaneSize, tabBarBandStyle } from "../../components/ResponsiveContainer";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   Extrapolation,
@@ -52,7 +54,7 @@ import WeekGrid, { DaysVisible, WeekGridHandle } from "../../components/WeekGrid
 import { useAuth } from "../../lib/AuthContext";
 import { useNotificationsContext } from "../../lib/NotificationsContext";
 import { colors } from "../../lib/theme";
-import { formatWeekRangeLabel } from "../../lib/eventDate";
+import { formatDayRangeLabel } from "../../lib/eventDate";
 import { buildDayColumns, buildAllDayColumns, buildMonthDayBars, MonthDayBar } from "../../lib/weekTimeline";
 import { externalItemDuplicatesPing } from "../../lib/eventDedup";
 import {
@@ -93,6 +95,13 @@ const toDateKey = (date: Date) => {
 // grid (MonthGrid or WeekGrid) down to just this many px from the top,
 // leaving the title + nav arrows peeking above it.
 const MIN_TOP_INSET = 52;
+// Two-pane Home (see twoPane): the space between the calendar and Upcoming.
+// 40pt is the iPhone Duo's fold band, so nothing sits on the crease.
+const TWO_PANE_GAP = 40;
+const TWO_PANE_SIDE_MARGIN = 12;
+// Upcoming slid away to the right (see upcomingTucked): the strip left at
+// the edge, holding the handle that brings it back.
+const TUCKED_STRIP = 28;
 const HANDLE_HEIGHT = 28;
 // How much room to leave above the FAB when the handle is parked at its
 // lowest resting position.
@@ -187,6 +196,8 @@ export default function HomeScreen() {
     return r;
   };
   const [visibleWeekStart, setVisibleWeekStart] = useState(() => startOfWeek(new Date()));
+  // The first day Week view has on screen - its title (see formatDayRangeLabel).
+  const [visibleFirstDay, setVisibleFirstDay] = useState(() => new Date());
   // Where WeekGrid's pre-rendered day range is centered - set once when
   // entering Week mode, NOT updated by scrolling (visibleWeekStart is the
   // one that tracks scroll position, for the header title). Keeping these
@@ -202,8 +213,22 @@ export default function HomeScreen() {
   // multitasking, so it rotates freely as before), and its short side is
   // 600pt+, so it never gets this phone-only landscape layout.
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-  const landscapeWeek = viewMode === "week" && windowWidth > windowHeight && Math.min(windowWidth, windowHeight) < 600;
+  // Calendar on the left, Upcoming on the right, split down the middle -
+  // the iPhone Duo opened up (the gap lands on its fold) and iPad. See
+  // isTwoPaneSize. Folded, or a regular phone, it's the usual one column.
+  const twoPane = isTwoPaneSize(windowWidth, windowHeight);
+  const landscapeWeek =
+    !twoPane && viewMode === "week" && windowWidth > windowHeight && Math.min(windowWidth, windowHeight) < 600;
+  // Either way the calendar fills its whole area - no Upcoming sheet to
+  // drag over it.
+  const gridFillsArea = landscapeWeek || twoPane;
   const insets = useSafeAreaInsets();
+  // Measured (see handleContentLayout): the app's root keeps clear of side
+  // insets, so the window width alone would be too wide.
+  const [contentWidth, setContentWidth] = useState<number | null>(null);
+  const paneWidth = Math.max(0, ((contentWidth ?? windowWidth) - TWO_PANE_SIDE_MARGIN * 2 - TWO_PANE_GAP) / 2);
+  // Upcoming slid away: the calendar takes all but the handle's strip.
+  const tuckedCalendarWidth = Math.max(0, (contentWidth ?? windowWidth) - TWO_PANE_SIDE_MARGIN * 2 - TUCKED_STRIP);
 
   // New-user tour (components/AppTour.tsx, lib/appTour.ts). Each ref marks
   // something the tour points at; it's measured live when that step shows.
@@ -332,8 +357,10 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     }, [viewMode]),
   );
   useEffect(() => {
-    navigation.setOptions({ tabBarStyle: landscapeWeek ? { display: "none" } : undefined });
-  }, [navigation, landscapeWeek]);
+    navigation.setOptions({
+      tabBarStyle: landscapeWeek ? { display: "none" } : tabBarBandStyle(windowWidth, windowHeight),
+    });
+  }, [navigation, landscapeWeek, windowWidth, windowHeight]);
   const weekGridRef = useRef<WeekGridHandle>(null);
   const onSelectMonth = () => setViewMode("month");
   // Shared by the header's Week toggle and tapping a day in Month view -
@@ -367,6 +394,35 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     AsyncStorage.setItem("home.weekDaysVisible", String(next)).catch(() => {});
   };
   const weekLabel = daysVisible === 7 ? "Week" : daysVisible === 2 ? "2 Days" : "Day";
+
+  // Two-pane Home only: Upcoming slid off to the right so the calendar gets
+  // the whole width - tap or swipe the handle on the divider (2026-10-22).
+  // Remembered on this device, like daysVisible.
+  const [upcomingTucked, setUpcomingTucked] = useState(false);
+  useEffect(() => {
+    AsyncStorage.getItem("home.upcomingTucked")
+      .then((v) => setUpcomingTucked(v === "1"))
+      .catch(() => {});
+  }, []);
+  const setTucked = (next: boolean) => {
+    if (next === upcomingTucked) return;
+    // The panes resize natively - no per-frame JS while the grid relayouts.
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setUpcomingTucked(next);
+    AsyncStorage.setItem("home.upcomingTucked", next ? "1" : "0").catch(() => {});
+  };
+  const paneHandleGesture = Gesture.Exclusive(
+    Gesture.Pan()
+      .runOnJS(true)
+      .activeOffsetX([-12, 12])
+      .onEnd((e) => {
+        if (e.translationX > 30) setTucked(true);
+        else if (e.translationX < -30) setTucked(false);
+      }),
+    Gesture.Tap()
+      .runOnJS(true)
+      .onEnd(() => setTucked(!upcomingTucked)),
+  );
 
   const onSelectWeek = () => {
     if (viewMode === "week") {
@@ -1572,7 +1628,11 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   // screen's whole content area) instead: a fixed default size, then
   // however much room is left before crowding the FAB.
   const WEEK_DEFAULT_HOURS = 6;
-  const weekGridBaseHeight = WEEK_DEFAULT_HOURS * 60;
+  // ...or about half the screen when that's less: the folded iPhone Duo is
+  // short enough (678pt) that 6 hours left Upcoming showing only its title.
+  const weekGridBaseHeight = ready
+    ? Math.min(WEEK_DEFAULT_HOURS * 60, Math.round(totalHeight! * 0.5))
+    : WEEK_DEFAULT_HOURS * 60;
   const weekBottomLimit = ready
     ? Math.max(0, totalHeight! - MIN_TOP_INSET - weekGridBaseHeight - FAB_CLEARANCE)
     : 0;
@@ -1618,6 +1678,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   // the drag handle with no room to move after turning the phone back.
   const handleContentLayout = (e: LayoutChangeEvent) => {
     setLiveContentHeight(e.nativeEvent.layout.height);
+    setContentWidth(e.nativeEvent.layout.width);
     setTotalHeight(e.nativeEvent.layout.height);
   };
 
@@ -1889,7 +1950,8 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
       collapsable={false}
       style={[
         styles.container,
-        landscapeWeek && { paddingTop: 4, paddingLeft: insets.left, paddingRight: insets.right, paddingBottom: insets.bottom },
+        // Side insets are handled for every screen at the app's root.
+        landscapeWeek && { paddingTop: 4, paddingBottom: insets.bottom },
       ]}
     >
       {!landscapeWeek && (
@@ -1918,11 +1980,14 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
         </View>
       )}
 
-      <View style={styles.contentArea} onLayout={handleContentLayout}>
-        <View style={styles.calendarWrapper}>
+      <View
+        style={[styles.contentArea, twoPane && styles.contentAreaTwoPane]}
+        onLayout={handleContentLayout}
+      >
+        <View style={[styles.calendarWrapper, twoPane && { width: upcomingTucked ? tuckedCalendarWidth : paneWidth }]}>
           <View style={styles.calendarHeaderRow} ref={tourRefs.calendar} collapsable={false}>
             <CalendarHeaderRow
-              title={viewMode === "month" ? monthLabel : formatWeekRangeLabel(visibleWeekStart)}
+              title={viewMode === "month" ? monthLabel : formatDayRangeLabel(visibleFirstDay, daysVisible)}
               onPrev={() => (viewMode === "month" ? changeMonth(-1) : weekGridRef.current?.scrollByDays(-daysVisible))}
               onNext={() => (viewMode === "month" ? changeMonth(1) : weekGridRef.current?.scrollByDays(daysVisible))}
               viewMode={viewMode}
@@ -1941,11 +2006,11 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
               monthDayBars={monthDayBars}
               onDayPress={onDayPress}
               onVisibleMonthChange={onVisibleMonthChange}
-              height={monthGridMaxHeight}
+              height={twoPane ? landscapeGridHeight : monthGridMaxHeight}
               dragY={dragY}
-              visibleHeight={monthGridBaseHeight}
-              maxExtraHeight={monthBottomLimit}
-              defaultExpansion={monthDefaultExpansion}
+              visibleHeight={twoPane ? landscapeGridHeight : monthGridBaseHeight}
+              maxExtraHeight={twoPane ? 0 : monthBottomLimit}
+              defaultExpansion={twoPane ? 0 : monthDefaultExpansion}
             />
           ) : (
             <WeekGrid
@@ -1964,28 +2029,63 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
                   <DayNoteChecklist
                     dayKey={expandedNoteDay}
                     body={dayNotes[expandedNoteDay] ?? ""}
-                    maxHeight={Math.max(200, (landscapeWeek ? landscapeGridHeight : weekGridBaseHeight) - 70)}
+                    maxHeight={Math.max(200, (gridFillsArea ? landscapeGridHeight : weekGridBaseHeight) - 70)}
                     onChange={(body) => handleDayNoteChange(expandedNoteDay, body)}
                     onClose={closeDayNote}
                   />
                 ) : null
               }
-              height={landscapeWeek ? landscapeGridHeight : weekGridMaxHeight}
+              height={gridFillsArea ? landscapeGridHeight : weekGridMaxHeight}
+              initialWidth={twoPane ? (upcomingTucked ? tuckedCalendarWidth : paneWidth) : undefined}
               onEventPress={handleWeekItemPress}
               canMoveEvent={canMoveWeekItem}
               onEventMove={handleWeekItemMove}
               onVisibleWeekChange={setVisibleWeekStart}
+              onVisibleDayChange={setVisibleFirstDay}
               onEmptySlotLongPress={handleEmptySlotLongPress}
               onDateHeaderLongPress={handleDateHeaderLongPress}
               dragY={dragY}
-              visibleHeight={landscapeWeek ? landscapeGridHeight : weekGridBaseHeight}
-              maxExtraHeight={landscapeWeek ? 0 : weekBottomLimit}
-              defaultExpansion={landscapeWeek ? 0 : weekDefaultExpansion}
+              visibleHeight={gridFillsArea ? landscapeGridHeight : weekGridBaseHeight}
+              maxExtraHeight={gridFillsArea ? 0 : weekBottomLimit}
+              defaultExpansion={gridFillsArea ? 0 : weekDefaultExpansion}
             />
           )}
         </View>
 
-        {!landscapeWeek && (
+        {twoPane && (
+          <>
+            <GestureDetector gesture={paneHandleGesture}>
+              <View
+                style={[styles.paneDivider, upcomingTucked && { width: TUCKED_STRIP }]}
+                accessibilityRole="button"
+                accessibilityLabel={upcomingTucked ? "Show Upcoming" : "Hide Upcoming"}
+              >
+                <View style={styles.paneDividerLine} />
+                <View style={styles.paneHandle}>
+                  <Text style={styles.paneHandleChevron}>{upcomingTucked ? "‹" : "›"}</Text>
+                </View>
+              </View>
+            </GestureDetector>
+            {!upcomingTucked && (
+            <View style={styles.upcomingPane}>
+              {renderListHeader("Upcoming")}
+              {upcomingBanners}
+              <FlatList
+                style={{ flex: 1 }}
+                data={upcomingListItems}
+                keyExtractor={(item) => item.key}
+                extraData={myRsvpByEvent}
+                refreshControl={<RefreshControl refreshing={loading} onRefresh={handleRefresh} tintColor={colors.primary} />}
+                renderItem={renderUpcomingItem}
+                ListEmptyComponent={upcomingEmptyComponent}
+                contentContainerStyle={{ paddingVertical: 12, paddingBottom: 120 }}
+              />
+            </View>
+            )}
+          </>
+        )}
+
+        {!gridFillsArea && (
           <>
           <Animated.View style={[styles.cardsSheet, ready && animatedCardsSheetStyle]}>
             <View style={styles.handleSpacer} />
@@ -2220,6 +2320,24 @@ const styles = StyleSheet.create({
   createMenuLabel: { color: colors.textPrimary, fontSize: 16, fontWeight: "600" },
   createMenuHint: { color: colors.textSecondary, fontSize: 12, marginTop: 1 },
   contentArea: { flex: 1, position: "relative", overflow: "hidden" },
+  contentAreaTwoPane: { flexDirection: "row", paddingHorizontal: TWO_PANE_SIDE_MARGIN },
+  // A hairline down the middle of the gap between the two panes - on the
+  // iPhone Duo it sits on the fold.
+  paneDivider: { width: TWO_PANE_GAP, alignItems: "center", justifyContent: "center" },
+  paneDividerLine: { position: "absolute", top: 0, bottom: 0, width: 1, backgroundColor: colors.divider },
+  // The grab tab on the divider that slides Upcoming away and back.
+  paneHandle: {
+    width: 22,
+    height: 64,
+    borderRadius: 11,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.divider,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  paneHandleChevron: { color: colors.textSecondary, fontSize: 20, fontWeight: "600", marginTop: -2 },
+  upcomingPane: { flex: 1 },
   calendarWrapper: {},
   // Fixed to MIN_TOP_INSET so it's exactly the height that stays visible
   // when the Upcoming sheet is dragged all the way up, in both modes - see

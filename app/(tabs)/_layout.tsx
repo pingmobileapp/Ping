@@ -1,12 +1,15 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
+import { useWindowDimensions } from 'react-native';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
-import ResponsiveContainer from '@/components/ResponsiveContainer';
+import ResponsiveContainer, { tabBarBandStyle } from '@/components/ResponsiveContainer';
 
 export default function TabLayout() {
+  const { width, height } = useWindowDimensions();
+  const tabBarStyle = tabBarBandStyle(width, height);
   return (
     <ResponsiveContainer>
       <Tabs
@@ -19,6 +22,7 @@ export default function TabLayout() {
           tabBarInactiveTintColor: Colors.light.tabIconDefault,
           headerShown: false,
           tabBarButton: HapticTab,
+          ...(tabBarStyle ? { tabBarStyle } : {}),
         }}>
         <Tabs.Screen
           name="index"

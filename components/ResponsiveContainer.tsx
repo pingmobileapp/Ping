@@ -21,21 +21,44 @@ const MAX_CONTENT_WIDTH = 700;
 // capped.
 const isCapped = (width: number, height: number) => width > MAX_CONTENT_WIDTH && Math.min(width, height) >= 600;
 
+// Wide enough for Home to put the calendar and Upcoming side by side: the
+// iPhone Duo opened up (951 x 669pt, the fold down the middle - 2026-10-22)
+// and iPad. Home then uses the whole width itself, so the cap below steps
+// aside; Groups and Discover keep their own centered column (CappedColumn).
+export const TWO_PANE_MIN_WIDTH = 800;
+export const isTwoPaneSize = (width: number, height: number) => width >= TWO_PANE_MIN_WIDTH && height >= 560;
+
+// The tab bar on a two-pane-wide window: its three tabs in a centered band
+// the width of the usual capped column, not spread to the far edges.
+export const tabBarBandStyle = (width: number, height: number) =>
+  isTwoPaneSize(width, height) ? { paddingHorizontal: Math.max(0, (width - MAX_CONTENT_WIDTH) / 2) } : undefined;
+
 // The width screens inside this container actually get - lets a screen size
 // itself correctly on its very first render, before any onLayout measurement.
 export const contentWidthFor = (width: number, height: number) =>
-  isCapped(width, height) ? MAX_CONTENT_WIDTH : width;
+  isCapped(width, height) && !isTwoPaneSize(width, height) ? MAX_CONTENT_WIDTH : width;
+
+const CappedBox = ({ children }: { children: React.ReactNode }) => (
+  <View style={{ flex: 1, backgroundColor: colors.background, alignItems: 'center' }}>
+    <View style={{ flex: 1, width: '100%', maxWidth: MAX_CONTENT_WIDTH }}>{children}</View>
+  </View>
+);
 
 export default function ResponsiveContainer({ children }: { children: React.ReactNode }) {
   const { width, height } = useWindowDimensions();
 
-  if (!isCapped(width, height)) {
+  if (!isCapped(width, height) || isTwoPaneSize(width, height)) {
     return <>{children}</>;
   }
 
-  return (
-    <View style={{ flex: 1, backgroundColor: colors.background, alignItems: 'center' }}>
-      <View style={{ flex: 1, width: '100%', maxWidth: MAX_CONTENT_WIDTH }}>{children}</View>
-    </View>
-  );
+  return <CappedBox>{children}</CappedBox>;
+}
+
+// For a single-column screen (Groups, Discover) on a two-pane-wide window,
+// where ResponsiveContainer has stepped aside for Home - keeps it the same
+// centered column it gets everywhere else that's tablet-wide.
+export function CappedColumn({ children }: { children: React.ReactNode }) {
+  const { width, height } = useWindowDimensions();
+  if (!isTwoPaneSize(width, height)) return <>{children}</>;
+  return <CappedBox>{children}</CappedBox>;
 }

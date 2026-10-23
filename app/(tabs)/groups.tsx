@@ -16,6 +16,7 @@ import { supabase } from '../../supabase';
 import { useAuth } from '../../lib/AuthContext';
 import { useNotificationsContext } from '../../lib/NotificationsContext';
 import { colors } from '../../lib/theme';
+import { CappedColumn } from '../../components/ResponsiveContainer';
 import { canPromptRename, confirmDeleteGroup, promptRenameGroup } from '../../lib/groups';
 
 type Group = {
@@ -155,6 +156,7 @@ export default function GroupsScreen() {
         : [];
 
   return (
+    <CappedColumn>
     <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -237,6 +239,7 @@ export default function GroupsScreen() {
       )}
     </View>
     </KeyboardAvoidingView>
+    </CappedColumn>
   );
 }
 

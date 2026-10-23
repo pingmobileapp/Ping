@@ -182,6 +182,10 @@ function TodayPill({
 
 type Props = {
   daysVisible?: DaysVisible;
+  // The grid's width before it's measured, when the host already knows it
+  // (Home's two-pane layout gives it half the window) - otherwise it's
+  // worked out from the window, which would be the whole width.
+  initialWidth?: number;
   rangeStart: Date;
   dayCount: number;
   // How many days into the range the initially-visible week starts - the
@@ -215,6 +219,9 @@ type Props = {
   canMoveEvent?: (id: string) => boolean;
   onEventMove?: (id: string, dayKey: string, startMinutes: number) => void;
   onVisibleWeekChange: (weekStart: Date) => void;
+  // The first day on screen, whenever it changes - for a title that names
+  // the days actually showing.
+  onVisibleDayChange?: (firstDay: Date) => void;
   // Long-pressing empty space in a day column (not on top of an existing
   // event - see isFreeSlot) shows a pill right where the press landed;
   // tapping it calls this with the day and the exact minutes-since-midnight
@@ -265,6 +272,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
   (
     {
       daysVisible = 7,
+      initialWidth,
       rangeStart,
       dayCount,
       initialDayIndex,
@@ -280,6 +288,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       canMoveEvent,
       onEventMove,
       onVisibleWeekChange,
+      onVisibleDayChange,
       onEmptySlotLongPress,
       onDateHeaderLongPress,
       dragY,
@@ -296,6 +305,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     // starting from the full window width and then shrinking to the capped
     // width threw the initial scroll off by weeks.
     const [gridWidth, setGridWidth] = useState(() => {
+      if (initialWidth) return initialWidth;
       const { width, height } = Dimensions.get('window');
       return contentWidthFor(width, height);
     });
@@ -853,18 +863,23 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       setFocusedDayKey((prev) => (prev === dayKey ? null : dayKey));
     };
 
-    // Reports which week is leading the viewport back up to the header
-    // title (app/(tabs)/index.tsx) - only when it actually changes, not on
-    // every pixel of scroll. Uses NORMAL_DAY_WIDTH rather than the true
-    // (variable) dayOffsets - this only drives a text label, and being off
-    // by at most one day for the moment a focused column is scrolled near
-    // isn't worth threading the real offsets into a UI-thread reaction for.
+    // Reports which day (and week) is leading the viewport back up to the
+    // header title (app/(tabs)/index.tsx) - only when it actually changes,
+    // not on every pixel of scroll. Uses the real dayOffsets: once the title
+    // named the first day on screen, a widened day earlier in the range put
+    // it days off (Oct 31 over a Thu 29 view, 2026-10-22).
     const lastReportedWeekKey = useRef<string | null>(null);
+    const lastReportedDayKey = useRef<string | null>(null);
     const reportVisibleWeek = (dayIndex: number) => {
       if (realigningRef.current) return;
       const clamped = Math.max(0, Math.min(dayCount - 1, dayIndex));
       const day = new Date(rangeStart);
       day.setDate(day.getDate() + clamped);
+      const dayKey = toDayKey(day);
+      if (dayKey !== lastReportedDayKey.current) {
+        lastReportedDayKey.current = dayKey;
+        onVisibleDayChange?.(day);
+      }
       const weekStart = startOfWeek(day);
       const key = toDayKey(weekStart);
       if (key !== lastReportedWeekKey.current) {
@@ -873,8 +888,22 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
         setRenderCenter(clamped);
       }
     };
+    const dayOffsetsSV = useSharedValue<number[]>([]);
+    useEffect(() => {
+      dayOffsetsSV.value = dayOffsets;
+    }, [dayOffsets, dayOffsetsSV]);
     useAnimatedReaction(
-      () => Math.round(scrollX.value / NORMAL_DAY_WIDTH),
+      () => {
+        const offsets = dayOffsetsSV.value;
+        const x = scrollX.value;
+        if (offsets.length === 0) return Math.round(x / NORMAL_DAY_WIDTH);
+        let best = 0;
+        for (let i = 1; i < offsets.length; i++) {
+          if (Math.abs(offsets[i] - x) < Math.abs(offsets[best] - x)) best = i;
+          else if (offsets[i] > x) break;
+        }
+        return best;
+      },
       (dayIndex) => {
         runOnJS(reportVisibleWeek)(dayIndex);
       },

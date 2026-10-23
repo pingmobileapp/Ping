@@ -17,6 +17,7 @@ import { colors } from '../../lib/theme';
 import { useAuth } from '../../lib/AuthContext';
 import { useMyDisplayName } from '../../lib/displayName';
 import TicketModal from '../../components/TicketModal';
+import { CappedColumn } from '../../components/ResponsiveContainer';
 import {
   Activity,
   ActivityCategory,
@@ -381,6 +382,7 @@ export default function DiscoverScreen() {
   };
 
   return (
+    <CappedColumn>
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Discover</Text>
@@ -662,6 +664,7 @@ export default function DiscoverScreen() {
         buyerName={myName}
       />
     </View>
+    </CappedColumn>
   );
 }
 
