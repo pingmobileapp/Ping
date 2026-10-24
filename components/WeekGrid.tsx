@@ -171,12 +171,35 @@ function NowLine() {
 }
 
 // The time itself in red in the hour column, like Apple Calendar - its
-// background covers whichever hour label it lands on.
-function NowTimeLabel() {
+// background covers whichever hour label it lands on. Only while today is
+// on screen; on another week it read like a time on those days.
+function NowTimeLabel({
+  scrollX,
+  dayWidth,
+  todayIndex,
+  daysVisible,
+}: {
+  scrollX: SharedValue<number>;
+  dayWidth: number;
+  todayIndex: number;
+  daysVisible: number;
+}) {
   const now = useMinuteNow();
+  const [onScreen, setOnScreen] = useState(true);
+  useAnimatedReaction(
+    () => {
+      const first = Math.round(scrollX.value / dayWidth);
+      return todayIndex >= first && todayIndex <= first + daysVisible - 1;
+    },
+    (visible, prev) => {
+      if (visible !== prev) runOnJS(setOnScreen)(visible);
+    },
+    [dayWidth, todayIndex, daysVisible],
+  );
+  if (!onScreen) return null;
   const h = now.getHours() % 12 === 0 ? 12 : now.getHours() % 12;
   return (
-    <Text pointerEvents="none" style={[styles.nowTimeLabel, { top: minutesTop(now) - 8 }]}>
+    <Text pointerEvents="none" style={[styles.nowTimeLabel, { top: minutesTop(now) - 12 }]}>
       {`${h}:${pad(now.getMinutes())}`}
     </Text>
   );
@@ -1126,7 +1149,14 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
                   {formatHour(hour)}
                 </Text>
               ))}
-              {todayIndexAt(rangeStart) >= 0 && todayIndexAt(rangeStart) < dayCount && <NowTimeLabel />}
+              {todayIndexAt(rangeStart) >= 0 && todayIndexAt(rangeStart) < dayCount && (
+                <NowTimeLabel
+                  scrollX={scrollX}
+                  dayWidth={NORMAL_DAY_WIDTH}
+                  todayIndex={todayIndexAt(rangeStart)}
+                  daysVisible={daysVisible}
+                />
+              )}
             </View>
             <Animated.ScrollView
               ref={mainScrollRef}
@@ -1374,8 +1404,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.danger,
     flexDirection: 'row',
     alignItems: 'center',
+    // zIndex only - Android's elevation would also draw a drop shadow,
+    // a gray smear under the line.
     zIndex: 20,
-    elevation: 20,
   },
   // Fully inside the column (a negative margin left half of it clipped).
   nowDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.danger },
@@ -1388,7 +1419,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.danger,
     backgroundColor: colors.background,
-    paddingVertical: 2,
+    // Tall enough to cover an hour label up to ~12 minutes away.
+    paddingVertical: 6,
     lineHeight: 12,
   },
   // Apple-Calendar-style block: pale tint fill, a solid stripe down the
