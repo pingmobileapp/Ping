@@ -40,6 +40,7 @@ import { reportContent, blockUser } from '../lib/moderation';
 import { getHiddenEventIds, hiddenPingKey, hideEvent, unhideEvent } from '../lib/hiddenEvents';
 import { toListingActivity, activityKey, fetchInterestedKeys, toggleInterest } from '../lib/discoverActivities';
 import TicketModal from './TicketModal';
+import BringItemAdder from './BringItemAdder';
 
 // Matches a US phone number in free-form text, with or without a leading
 // +1/1, and with dashes/dots/spaces/parens or none at all - descriptions
@@ -140,9 +141,6 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
   const [weather, setWeather] = useState<DailyWeather>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
-  const [newItemName, setNewItemName] = useState('');
-  const [newItemQty, setNewItemQty] = useState('1');
-  const [newItemAllowCustom, setNewItemAllowCustom] = useState(false);
   const [addingItem, setAddingItem] = useState(false);
   const [customDraftByItem, setCustomDraftByItem] = useState<Record<string, string>>({});
   const [shareModalVisible, setShareModalVisible] = useState(false);
@@ -798,16 +796,13 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     );
   };
 
-  const handleAddItem = async () => {
-    if (!newItemName.trim()) return;
-    const qty = parseInt(newItemQty, 10) || 1;
-
+  const handleAddItem = async (name: string, qty: number, allowCustom: boolean) => {
     const { error } = await supabase.from('items').insert([
       {
         event_id: eventId,
-        name: newItemName.trim(),
+        name,
         quantity_needed: qty,
-        allow_custom: newItemAllowCustom,
+        allow_custom: allowCustom,
       },
     ]);
 
@@ -817,9 +812,6 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
       return;
     }
 
-    setNewItemName('');
-    setNewItemQty('1');
-    setNewItemAllowCustom(false);
     Keyboard.dismiss();
     await fetchData();
   };
@@ -836,7 +828,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
   const handleClaimError = async (item: ItemRow, error: { code?: string; message?: string } | null) => {
     if (!error) return true;
     if (error.message?.includes('item_full')) {
-      Alert.alert('Already taken', `Someone else just claimed "${item.name}".`);
+      Alert.alert('Already covered', `Someone else just signed up for "${item.name}".`);
     } else if (error.code !== '23505') {
       // 23505 is the one-claim-per-person index: a repeat tap whose first
       // write already landed, so the refetch below shows the right state.
@@ -913,7 +905,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     if (!(await handleClaimError(item, error))) return;
 
     if (nextQty > prevQty && !isHost && event && allHostIds.length > 0) {
-      await notify(allHostIds, 'Item claimed', `${myName()} claimed "${item.name}" for ${event.title}`, {
+      await notify(allHostIds, 'Someone is bringing something', `${myName()} is bringing "${item.name}" to ${event.title}`, {
         eventId,
         type: 'item_claimed',
       });
@@ -1348,6 +1340,9 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
               return (
                 <View key={item.id} style={styles.customItemBlock}>
                   <Text style={styles.itemName}>{item.name}</Text>
+                  {!myClaim && (
+                    <Text style={styles.itemMeta}>Tell everyone what you're bringing</Text>
+                  )}
 
                   {item.item_claims.length > 0 && (
                     <View style={{ marginTop: 6, gap: 4 }}>
@@ -1371,7 +1366,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
                       <TextInput
                         onFocus={markItemInputFocused}
                         style={[styles.input, { flex: 1 }]}
-                        placeholder="What are you bringing?"
+                        placeholder='e.g. "Mac & cheese"'
                         placeholderTextColor={colors.textMuted}
                         value={customDraftByItem[item.id] || ''}
                         onChangeText={(text) =>
@@ -1379,7 +1374,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
                         }
                       />
                       <TouchableOpacity style={styles.addItemButton} onPress={() => handleAddCustomClaim(item)}>
-                        <Text style={styles.addItemButtonText}>Add</Text>
+                        <Text style={styles.addItemButtonText}>I'll bring it</Text>
                       </TouchableOpacity>
                     </View>
                   )}
@@ -1401,7 +1396,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
                 <View style={{ flex: 1 }}>
                   <Text style={styles.itemName}>{item.name}</Text>
                   <Text style={styles.itemMeta} numberOfLines={2}>
-                    {claimedTotal}/{item.quantity_needed} claimed
+                    {claimedTotal}/{item.quantity_needed} covered
                     {item.item_claims.length > 0 ? ` · ${claimantsLabel(item.item_claims)}` : ''}
                   </Text>
                 </View>
@@ -1426,7 +1421,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
                     onPress={() => handleClaim(item, 1)}
                     disabled={isFull}
                   >
-                    <Text style={styles.claimButtonText}>{isFull ? 'Full' : 'Claim'}</Text>
+                    <Text style={styles.claimButtonText}>{isFull ? 'Covered' : "I'll bring it"}</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -1439,44 +1434,15 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
                 {items.length === 0 && (
                   <Text style={styles.emptyText}>No items added yet.</Text>
                 )}
-                <TouchableOpacity
-                  style={styles.customToggleRow}
-                  onPress={() => setNewItemAllowCustom((v) => !v)}
-                >
-                  <View style={[styles.checkbox, newItemAllowCustom && styles.checkboxChecked]}>
-                    {newItemAllowCustom && <Text style={styles.checkmark}>✓</Text>}
-                  </View>
-                  <Text style={styles.customToggleText}>
-                    {'Let each person write in what they’re bringing (e.g. "Side dish")'}
-                  </Text>
-                </TouchableOpacity>
-
-                <View style={styles.addItemRow}>
-                  <TextInput
-                    onFocus={markItemInputFocused}
-                    style={[styles.input, { flex: 2 }]}
-                    placeholder="Item (e.g. Chips)"
-                    placeholderTextColor={colors.textMuted}
-                    value={newItemName}
-                    onChangeText={setNewItemName}
-                  />
-                  <TextInput
-                    onFocus={markItemInputFocused}
-                    style={[styles.input, { flex: 1, textAlign: 'center' }]}
-                    placeholder="Qty"
-                    placeholderTextColor={colors.textMuted}
-                    keyboardType="number-pad"
-                    value={newItemQty}
-                    onChangeText={setNewItemQty}
-                  />
-                  <TouchableOpacity style={styles.addItemButton} onPress={handleAddItem}>
-                    <Text style={styles.addItemButtonText}>Add</Text>
-                  </TouchableOpacity>
-                </View>
+                <BringItemAdder
+                  onAdd={handleAddItem}
+                  existingNames={items.map((it) => it.name)}
+                  onInputFocus={markItemInputFocused}
+                />
               </>
             ) : (
               <TouchableOpacity onPress={() => setAddingItem(true)}>
-                <Text style={styles.addNewLinkText}>+ Add something to bring</Text>
+                <Text style={styles.addNewLinkText}>🍽️  Ask guests to bring something</Text>
               </TouchableOpacity>
             )
           )}

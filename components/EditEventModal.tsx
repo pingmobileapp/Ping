@@ -41,6 +41,7 @@ import { reportContent } from '../lib/moderation';
 import RecurrencePicker from './RecurrencePicker';
 import StopsEditor from './StopsEditor';
 import TimeZoneRow from './TimeZoneRow';
+import BringItemAdder, { bringItemSummary } from './BringItemAdder';
 import { deviceTimeZone, instantFromWallClock, timeZoneForLocation, wallClockIn } from '../lib/timeZones';
 import { EventStop, cleanStops, parseStops, shiftStops, stopDays } from '../lib/stops';
 import ImportContactsModal from './ImportContactsModal';
@@ -173,9 +174,6 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   const [coHosts, setCoHosts] = useState<{ userId: string; name: string }[]>([]);
 
   const [items, setItems] = useState<{ id: string; name: string; qty: string; allowCustom: boolean }[]>([]);
-  const [newItemName, setNewItemName] = useState('');
-  const [newItemQty, setNewItemQty] = useState('1');
-  const [newItemAllowCustom, setNewItemAllowCustom] = useState(false);
 
   // Only ever set (and only ever shown - see the RecurrencePicker below)
   // when the event isn't already part of a series - this is "turn this
@@ -413,17 +411,17 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   // Unlike CreateEventModal, the event already exists here, so items are
   // written straight to the database as they're added/removed rather than
   // queued locally until save.
-  const handleAddItem = async () => {
-    if (!newItemName.trim() || !event) return;
+  const handleAddItem = async (name: string, qty: number, allowCustom: boolean) => {
+    if (!event) return;
 
     const { data, error } = await supabase
       .from('items')
       .insert([
         {
           event_id: event.id,
-          name: newItemName.trim(),
-          quantity_needed: parseInt(newItemQty, 10) || 1,
-          allow_custom: newItemAllowCustom,
+          name,
+          quantity_needed: qty,
+          allow_custom: allowCustom,
         },
       ])
       .select()
@@ -439,9 +437,6 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       ...prev,
       { id: data.id, name: data.name, qty: String(data.quantity_needed), allowCustom: data.allow_custom },
     ]);
-    setNewItemName('');
-    setNewItemQty('1');
-    setNewItemAllowCustom(false);
     Keyboard.dismiss();
   };
 
@@ -1692,52 +1687,21 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
                 )}
 
                 <Text style={styles.label}>What to bring</Text>
-                <Text style={styles.helperText}>Guests can claim these once they get the invite.</Text>
+                <Text style={styles.bringHelper}>Guests see this list on the invite and sign up.</Text>
 
                 {items.map((it) => (
                   <View key={it.id} style={styles.itemRow}>
-                    <Text style={styles.itemRowText}>
-                      {it.name}
-                      {it.allowCustom ? ' — guests describe' : parseInt(it.qty, 10) > 1 ? ` (x${it.qty})` : ''}
-                    </Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.itemRowText}>{it.name}</Text>
+                      <Text style={styles.itemRowSub}>{bringItemSummary(it.allowCustom, parseInt(it.qty, 10) || 1)}</Text>
+                    </View>
                     <TouchableOpacity onPress={() => removeItem(it.id)}>
                       <Text style={styles.itemRemoveText}>Remove</Text>
                     </TouchableOpacity>
                   </View>
                 ))}
 
-                <TouchableOpacity
-                  style={styles.customToggleRow}
-                  onPress={() => setNewItemAllowCustom((v) => !v)}
-                >
-                  <View style={[styles.checkbox, newItemAllowCustom && styles.checkboxChecked]}>
-                    {newItemAllowCustom && <Text style={styles.checkmark}>✓</Text>}
-                  </View>
-                  <Text style={styles.customToggleText}>
-                    {'Let each person write in what they’re bringing (e.g. "Side dish")'}
-                  </Text>
-                </TouchableOpacity>
-
-                <View style={styles.addContactRow}>
-                  <TextInput
-                    style={[styles.input, { flex: 2 }]}
-                    placeholder="Item (e.g. Chips)"
-                    placeholderTextColor={colors.textMuted}
-                    value={newItemName}
-                    onChangeText={setNewItemName}
-                  />
-                  <TextInput
-                    style={[styles.input, { flex: 1, textAlign: 'center' }]}
-                    placeholder="Qty"
-                    placeholderTextColor={colors.textMuted}
-                    keyboardType="number-pad"
-                    value={newItemQty}
-                    onChangeText={setNewItemQty}
-                  />
-                  <TouchableOpacity style={styles.addContactButton} onPress={handleAddItem}>
-                    <Text style={styles.addContactButtonText}>Add</Text>
-                  </TouchableOpacity>
-                </View>
+                <BringItemAdder onAdd={handleAddItem} existingNames={items.map((it) => it.name)} />
               </>
           </ScrollView>
 
@@ -1875,6 +1839,8 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.divider,
   },
   itemRowText: { color: colors.textPrimary, fontSize: 15 },
+  itemRowSub: { color: colors.textSecondary, fontSize: 12, marginTop: 2 },
+  bringHelper: { color: colors.textSecondary, fontSize: 13 },
   itemRemoveText: { color: colors.danger, fontSize: 13, fontWeight: '600' },
   customToggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 },
   customToggleText: { color: colors.textSecondary, fontSize: 13, flex: 1 },

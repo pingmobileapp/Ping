@@ -30,7 +30,6 @@ import { pickEventImage } from '../lib/imagePicker';
 import { colors, cardFrameGradient, calendarTheme, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
 import { notify } from '../lib/notify';
 import { RecurrenceConfig, generateOccurrences } from '../lib/recurrence';
-import { suggestItems } from '../lib/itemSuggestions';
 import { ActivityCategory, CATEGORY_LABELS } from '../lib/discoverActivities';
 import { fetchConnectStatus, ConnectAccountState } from '../lib/stripeConnect';
 import { DISCOVER_LISTINGS_ENABLED } from '../lib/features';
@@ -44,6 +43,7 @@ import NonAppInviteQueue, { QueueContact } from './NonAppInviteQueue';
 import RecurrencePicker from './RecurrencePicker';
 import StopsEditor from './StopsEditor';
 import TimeZoneRow from './TimeZoneRow';
+import BringItemAdder, { bringItemSummary } from './BringItemAdder';
 import { deviceTimeZone, instantFromWallClock, timeZoneForLocation } from '../lib/timeZones';
 import {
   createPersonalCalendarEvent,
@@ -187,11 +187,8 @@ export default function CreateEventModal({
   const [pendingFinishStatus, setPendingFinishStatus] = useState<'sent' | 'draft' | null>(null);
 
   const [items, setItems] = useState<{ name: string; qty: string; allowCustom: boolean }[]>([]);
-  const [newItemName, setNewItemName] = useState('');
-  const [newItemQty, setNewItemQty] = useState('1');
-  const [newItemAllowCustom, setNewItemAllowCustom] = useState(false);
-  const [suggestedItems, setSuggestedItems] = useState<string[]>([]);
-  const [suggestingItems, setSuggestingItems] = useState(false);
+  // "What to bring" sits under Invite, closed until the host asks for it.
+  const [bringOpen, setBringOpen] = useState(false);
   // Anything filled in behind "More options" keeps that section open, so a
   // value is never tucked away out of sight.
   const hasExtras =
@@ -200,7 +197,6 @@ export default function CreateEventModal({
     isPublic ||
     discoverable ||
     selectedCoHostIds.length > 0 ||
-    items.length > 0 ||
     stops.length > 0;
   const showMore = moreOpen || hasExtras;
 
@@ -431,41 +427,9 @@ export default function CreateEventModal({
     setSelectedContactIds((prev) => Array.from(new Set([...prev, ...imported.map((c) => c.id)])));
   };
 
-  const handleAddItem = () => {
-    if (!newItemName.trim()) return;
-    setItems((prev) => [
-      ...prev,
-      { name: newItemName.trim(), qty: newItemQty.trim() || '1', allowCustom: newItemAllowCustom },
-    ]);
-    setNewItemName('');
-    setNewItemQty('1');
-    setNewItemAllowCustom(false);
+  const handleAddItem = (name: string, qty: number, allowCustom: boolean) => {
+    setItems((prev) => [...prev, { name, qty: String(qty), allowCustom }]);
     Keyboard.dismiss();
-  };
-
-  const handleSuggestItems = async () => {
-    if (!title.trim() || !session?.user?.id) {
-      Alert.alert('Add a title first', 'Suggestions are based on the event title.');
-      return;
-    }
-    setSuggestingItems(true);
-    try {
-      const suggestions = await suggestItems(supabase, session.user.id, title.trim());
-      // Drop anything already added, so tapping a suggestion never creates
-      // a duplicate item.
-      const existingNames = new Set(items.map((it) => it.name.toLowerCase()));
-      setSuggestedItems(suggestions.filter((s) => !existingNames.has(s.toLowerCase())));
-    } catch (err) {
-      console.error('Error suggesting items:', err);
-      Alert.alert('Error', 'Could not get suggestions right now.');
-    } finally {
-      setSuggestingItems(false);
-    }
-  };
-
-  const addSuggestedItem = (name: string) => {
-    setItems((prev) => [...prev, { name, qty: '1', allowCustom: false }]);
-    setSuggestedItems((prev) => prev.filter((s) => s !== name));
   };
 
   const removeItem = (index: number) => {
@@ -530,7 +494,6 @@ export default function CreateEventModal({
     setStops([]);
     setMoreOpen(false);
     setAddingContact(false);
-    setSuggestedItems([]);
     setSelectedContactIds([]);
     setSelectedCoHostIds([]);
     setSelectedGroupIds([]);
@@ -543,6 +506,7 @@ export default function CreateEventModal({
     setImageUri(null);
     setOriginalImageUri(null);
     setItems([]);
+    setBringOpen(false);
     setShowAllContacts(false);
   };
 
@@ -1288,6 +1252,39 @@ export default function CreateEventModal({
             )}
 
 
+            {/* What to bring - its own step, not tucked under More
+                options: a host couldn't find how to let guests say which
+                side dish they're bringing (2026-10-24). */}
+            {!bringOpen && items.length === 0 ? (
+              <TouchableOpacity style={styles.bringButton} onPress={() => setBringOpen(true)}>
+                <Text style={styles.bringButtonTitle}>🍽️  Ask people to bring something</Text>
+                <Text style={styles.bringButtonHint}>Potluck dishes, drinks, supplies</Text>
+              </TouchableOpacity>
+            ) : (
+              <>
+                <View style={styles.whatToBringHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.label}>What to bring</Text>
+                    <Text style={styles.bringHelper}>Guests see this list on the invite and sign up.</Text>
+                  </View>
+                </View>
+
+                {items.map((it, idx) => (
+                  <View key={idx} style={styles.itemRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.itemRowText}>{it.name}</Text>
+                      <Text style={styles.itemRowSub}>{bringItemSummary(it.allowCustom, parseInt(it.qty, 10) || 1)}</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => removeItem(idx)}>
+                      <Text style={styles.itemRemoveText}>Remove</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+
+                <BringItemAdder onAdd={handleAddItem} existingNames={items.map((it) => it.name)} />
+              </>
+            )}
+
             {/* Only the essentials - what, when, where, who - show up front.
                 Everything else is one tap away, and opens on its own when
                 any of it is already filled in (a converted calendar item, a
@@ -1298,7 +1295,7 @@ export default function CreateEventModal({
                 <Text style={styles.moreOptionsTitle}>{moreOpen ? 'Fewer options ▴' : 'More options ▾'}</Text>
                 {!moreOpen && (
                   <Text style={styles.moreOptionsHint}>
-                    Description, stops along the way, important date, repeat, reminder, what to bring, co-hosts{DISCOVER_LISTINGS_ENABLED ? ', Discover' : ''}
+                    Description, stops along the way, important date, repeat, reminder, co-hosts{DISCOVER_LISTINGS_ENABLED ? ', Discover' : ''}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -1458,70 +1455,6 @@ export default function CreateEventModal({
                 </>
               )}
 
-              <View style={styles.whatToBringHeader}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>What to bring</Text>
-                  <Text style={styles.helperText}>Guests can claim these once they get the invite.</Text>
-                </View>
-                <TouchableOpacity style={styles.suggestButton} onPress={handleSuggestItems} disabled={suggestingItems}>
-                  <Text style={styles.suggestButtonText}>{suggestingItems ? 'Thinking…' : '✨ Suggest'}</Text>
-                </TouchableOpacity>
-              </View>
-
-              {suggestedItems.length > 0 && (
-                <View style={styles.chipRow}>
-                  {suggestedItems.map((name) => (
-                    <TouchableOpacity key={name} style={styles.chip} onPress={() => addSuggestedItem(name)}>
-                      <Text style={styles.chipText}>+ {name}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
-
-              {items.map((it, idx) => (
-                <View key={idx} style={styles.itemRow}>
-                  <Text style={styles.itemRowText}>
-                    {it.name}
-                    {it.allowCustom ? ' — guests describe' : parseInt(it.qty, 10) > 1 ? ` (x${it.qty})` : ''}
-                  </Text>
-                  <TouchableOpacity onPress={() => removeItem(idx)}>
-                    <Text style={styles.itemRemoveText}>Remove</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
-
-              <TouchableOpacity
-                style={styles.customToggleRow}
-                onPress={() => setNewItemAllowCustom((v) => !v)}
-              >
-                <View style={[styles.checkbox, newItemAllowCustom && styles.checkboxChecked]}>
-                  {newItemAllowCustom && <Text style={styles.checkmark}>✓</Text>}
-                </View>
-                <Text style={styles.customToggleText}>
-                  {'Let each person write in what they’re bringing (e.g. "Side dish")'}
-                </Text>
-              </TouchableOpacity>
-
-              <View style={styles.addContactRow}>
-                <TextInput
-                  style={[styles.input, { flex: 2 }]}
-                  placeholder="Item (e.g. Chips)"
-                  placeholderTextColor={colors.textMuted}
-                  value={newItemName}
-                  onChangeText={setNewItemName}
-                />
-                <TextInput
-                  style={[styles.input, { flex: 1, textAlign: 'center' }]}
-                  placeholder="Qty"
-                  placeholderTextColor={colors.textMuted}
-                  keyboardType="number-pad"
-                  value={newItemQty}
-                  onChangeText={setNewItemQty}
-                />
-                <TouchableOpacity style={styles.addContactButton} onPress={handleAddItem}>
-                  <Text style={styles.addContactButtonText}>Add</Text>
-                </TouchableOpacity>
-              </View>
               </>
             )}
           </ScrollView>
@@ -1651,14 +1584,6 @@ const styles = StyleSheet.create({
   },
   moreOptionsTitle: { color: colors.primary, fontSize: 16, fontWeight: '700' },
   moreOptionsHint: { color: colors.textSecondary, fontSize: 13, marginTop: 3 },
-  suggestButton: {
-    marginTop: 14,
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  suggestButtonText: { color: colors.primary, fontSize: 13, fontWeight: '700' },
   sublabel: { color: colors.textSecondary, fontSize: 13, marginTop: 8, marginBottom: 6 },
   addSomeoneText: { color: colors.textSecondary, fontSize: 14, fontWeight: '500', marginTop: 12, textDecorationLine: 'underline' },
   seeAllText: { color: colors.primary, fontSize: 13, fontWeight: '600', marginTop: 8 },
@@ -1704,6 +1629,19 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.divider,
   },
   itemRowText: { color: colors.textPrimary, fontSize: 15 },
+  itemRowSub: { color: colors.textSecondary, fontSize: 12, marginTop: 2 },
+  bringHelper: { color: colors.textSecondary, fontSize: 13 },
+  bringButton: {
+    marginTop: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: colors.surface,
+  },
+  bringButtonTitle: { color: colors.primary, fontSize: 16, fontWeight: '700' },
+  bringButtonHint: { color: colors.textSecondary, fontSize: 13, marginTop: 2 },
   itemRemoveText: { color: colors.danger, fontSize: 13, fontWeight: '600' },
   customToggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 },
   customToggleText: { color: colors.textSecondary, fontSize: 13, flex: 1 },
