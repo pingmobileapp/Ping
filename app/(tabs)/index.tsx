@@ -381,13 +381,6 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   // Tapping "Week" while already in Week cycles through them; remembered
   // on this phone.
   const [daysVisible, setDaysVisible] = useState<DaysVisible>(7);
-  useEffect(() => {
-    AsyncStorage.getItem("home.weekDaysVisible")
-      .then((v) => {
-        if (v === "2" || v === "1") setDaysVisible(Number(v) as DaysVisible);
-      })
-      .catch(() => {});
-  }, []);
   const cycleDaysVisible = () => {
     const next: DaysVisible = daysVisible === 7 ? 2 : daysVisible === 2 ? 1 : 7;
     setDaysVisible(next);
@@ -399,10 +392,20 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   // the whole width - tap or swipe the handle on the divider (2026-10-22).
   // Remembered on this device, like daysVisible.
   const [upcomingTucked, setUpcomingTucked] = useState(false);
+  // Week view isn't drawn until both remembered settings above have loaded.
+  // Drawing it at the default full-week width first, then switching to the
+  // remembered 2 Days a moment later, could leave it scrolled to the old
+  // offset at the new width - on iPad it opened on Oct 4-5 instead of
+  // today (2026-10-24).
+  const [viewPrefsLoaded, setViewPrefsLoaded] = useState(false);
   useEffect(() => {
-    AsyncStorage.getItem("home.upcomingTucked")
-      .then((v) => setUpcomingTucked(v === "1"))
-      .catch(() => {});
+    AsyncStorage.multiGet(["home.weekDaysVisible", "home.upcomingTucked"])
+      .then(([[, days], [, tucked]]) => {
+        if (days === "2" || days === "1") setDaysVisible(Number(days) as DaysVisible);
+        setUpcomingTucked(tucked === "1");
+      })
+      .catch(() => {})
+      .finally(() => setViewPrefsLoaded(true));
   }, []);
   const setTucked = (next: boolean) => {
     if (next === upcomingTucked) return;
@@ -2012,7 +2015,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
               maxExtraHeight={twoPane ? 0 : monthBottomLimit}
               defaultExpansion={twoPane ? 0 : monthDefaultExpansion}
             />
-          ) : (
+          ) : !viewPrefsLoaded ? null : (
             <WeekGrid
               ref={weekGridRef}
               daysVisible={daysVisible}
