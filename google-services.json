@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "187774605777",
+    "project_id": "ping-ed230",
+    "storage_bucket": "ping-ed230.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:187774605777:android:36f2535fd46d2eb10868f0",
+        "android_client_info": {
+          "package_name": "com.pingmobileapp.ping"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAChDM5wRoSdUd9GKqymbC94wQsZ7fp4-s"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
