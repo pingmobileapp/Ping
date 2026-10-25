@@ -830,8 +830,10 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     if (error.message?.includes('item_full')) {
       Alert.alert('Already covered', `Someone else just signed up for "${item.name}".`);
     } else if (error.code !== '23505') {
-      // 23505 is the one-claim-per-person index: a repeat tap whose first
-      // write already landed, so the refetch below shows the right state.
+      // 23505 is a repeat: the same specific item twice, or the same text
+      // twice on a write-in list (supabase/item_claims_open_lists.sql) -
+      // usually a double tap whose first write landed, so the refetch below
+      // shows the right state.
       console.error('Error saving claim:', error);
     }
     await fetchData();
@@ -859,11 +861,10 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     await fetchData();
   };
 
-  const handleRemoveCustomClaim = async (item: ItemRow) => {
-    const myClaim = item.item_claims.find((c) => c.invitee_id === myInvitee?.id);
-    if (!myClaim) return;
-
-    const { error } = await supabase.from('item_claims').delete().eq('id', myClaim.id);
+  // A write-in list can hold several things from one person - this removes
+  // just the one tapped.
+  const handleRemoveCustomClaim = async (claimId: string) => {
+    const { error } = await supabase.from('item_claims').delete().eq('id', claimId);
     if (error) console.error('Error removing claim:', error);
     await fetchData();
   };
@@ -1336,48 +1337,57 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
 
           {items.map((item) => {
             if (item.allow_custom) {
-              const myClaim = item.item_claims.find((c) => c.invitee_id === myInvitee?.id);
+              // An open list: everyone adds what they're bringing, as many
+              // things as they like, and can take back their own (2026-10-24).
               return (
                 <View key={item.id} style={styles.customItemBlock}>
                   <Text style={styles.itemName}>{item.name}</Text>
-                  {!myClaim && (
-                    <Text style={styles.itemMeta}>Tell everyone what you're bringing</Text>
-                  )}
+                  <Text style={styles.itemMeta}>
+                    {item.item_claims.length === 0
+                      ? 'Nothing yet - add what you\'re bringing'
+                      : 'Add what you\'re bringing - as many things as you like'}
+                  </Text>
 
                   {item.item_claims.length > 0 && (
-                    <View style={{ marginTop: 6, gap: 4 }}>
-                      {item.item_claims.map((c) => (
-                        <Text key={c.id} style={styles.customClaimText}>
-                          • {c.note} <Text style={styles.customClaimAuthor}>— {claimantName(c)}</Text>
-                        </Text>
-                      ))}
+                    <View style={{ marginTop: 8, gap: 6 }}>
+                      {item.item_claims.map((c) => {
+                        const mine = c.invitee_id === myInvitee?.id;
+                        return (
+                          <View key={c.id} style={styles.customClaimRow}>
+                            <Text style={[styles.customClaimText, { flex: 1 }]}>
+                              • {c.note}{' '}
+                              <Text style={styles.customClaimAuthor}>— {mine ? 'You' : claimantName(c)}</Text>
+                            </Text>
+                            {mine && (
+                              <TouchableOpacity onPress={() => handleRemoveCustomClaim(c.id)} hitSlop={8}>
+                                <Text style={styles.itemRemoveText}>Remove</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        );
+                      })}
                     </View>
                   )}
 
-                  {myClaim ? (
-                    <View style={styles.customClaimRow}>
-                      <Text style={styles.itemMeta}>You’re bringing: {myClaim.note}</Text>
-                      <TouchableOpacity onPress={() => handleRemoveCustomClaim(item)}>
-                        <Text style={styles.itemRemoveText}>Remove</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <View style={styles.addItemRow}>
-                      <TextInput
-                        onFocus={markItemInputFocused}
-                        style={[styles.input, { flex: 1 }]}
-                        placeholder='e.g. "Mac & cheese"'
-                        placeholderTextColor={colors.textMuted}
-                        value={customDraftByItem[item.id] || ''}
-                        onChangeText={(text) =>
-                          setCustomDraftByItem((prev) => ({ ...prev, [item.id]: text }))
-                        }
-                      />
-                      <TouchableOpacity style={styles.addItemButton} onPress={() => handleAddCustomClaim(item)}>
-                        <Text style={styles.addItemButtonText}>I'll bring it</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
+                  <View style={styles.addItemRow}>
+                    <TextInput
+                      onFocus={markItemInputFocused}
+                      style={[styles.input, { flex: 1 }]}
+                      placeholder={
+                        item.item_claims.some((c) => c.invitee_id === myInvitee?.id)
+                          ? 'Add something else'
+                          : 'e.g. "Mac & cheese"'
+                      }
+                      placeholderTextColor={colors.textMuted}
+                      value={customDraftByItem[item.id] || ''}
+                      onChangeText={(text) => setCustomDraftByItem((prev) => ({ ...prev, [item.id]: text }))}
+                      returnKeyType="done"
+                      onSubmitEditing={() => handleAddCustomClaim(item)}
+                    />
+                    <TouchableOpacity style={styles.addItemButton} onPress={() => handleAddCustomClaim(item)}>
+                      <Text style={styles.addItemButtonText}>Add</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               );
             }
@@ -1436,7 +1446,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
                 )}
                 <BringItemAdder
                   onAdd={handleAddItem}
-                  existingNames={items.map((it) => it.name)}
+                  hasOpenList={items.some((it) => it.allow_custom)}
                   onInputFocus={markItemInputFocused}
                 />
               </>

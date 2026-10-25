@@ -1701,7 +1701,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
                   </View>
                 ))}
 
-                <BringItemAdder onAdd={handleAddItem} existingNames={items.map((it) => it.name)} />
+                <BringItemAdder onAdd={handleAddItem} hasOpenList={items.some((it) => it.allowCustom)} />
               </>
           </ScrollView>
 

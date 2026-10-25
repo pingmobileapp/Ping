@@ -3,41 +3,40 @@ import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-nativ
 import { colors } from '../lib/theme';
 
 // The host's "add something to bring" controls - shared by New Event, Edit,
-// and the event screen. Asked for 2026-10-24 after a host couldn't work out
-// how to let guests say which side dish they're bringing: that used to be a
-// small checkbox above the item box that only applied if ticked *before*
-// typing. Now the two kinds are a plain choice with examples, and the common
-// potluck categories are one tap.
+// and the event screen. Two plain choices (2026-10-24):
+// - Guests add what they're bringing: one tap, nothing to name. Each guest
+//   adds as many things as they like ("Pickles", "Watermelon"). A host had
+//   made four "Side" categories just so they could list four dishes.
+// - A specific item: "Chips x 2", guests tap to take one.
 
-type Mode = 'choose' | 'specific';
+type Mode = 'open' | 'specific';
 
-// One tap adds each as a "guests choose" item.
-const POTLUCK_PRESETS = ['Side dish', 'Dessert', 'Appetizer', 'Drinks'];
+// The name of the open list - what guests see as its heading.
+export const OPEN_LIST_NAME = "Anything you'd like to bring";
 
 // How an item on the host's list reads, so it's clear how guests sign up.
 export function bringItemSummary(allowCustom: boolean, qty: number): string {
-  if (allowCustom) return 'Guests write in what they bring';
+  if (allowCustom) return "Guests add what they're bringing";
   return qty > 1 ? `${qty} needed` : '1 needed';
 }
 
 type Props = {
   onAdd: (name: string, qty: number, allowCustom: boolean) => void | Promise<void>;
-  // Names already on the list, so presets that are already added are hidden.
-  existingNames?: string[];
+  // Whether the event already has a write-in list (any allow_custom item),
+  // so the open-list button shows it's on instead of adding a second.
+  hasOpenList?: boolean;
   onInputFocus?: () => void;
 };
 
-export default function BringItemAdder({ onAdd, existingNames = [], onInputFocus }: Props) {
-  const [mode, setMode] = useState<Mode>('choose');
+export default function BringItemAdder({ onAdd, hasOpenList = false, onInputFocus }: Props) {
+  const [mode, setMode] = useState<Mode>(hasOpenList ? 'specific' : 'open');
   const [name, setName] = useState('');
   const [qty, setQty] = useState(1);
-  const taken = new Set(existingNames.map((n) => n.trim().toLowerCase()));
-  const presets = POTLUCK_PRESETS.filter((p) => !taken.has(p.toLowerCase()));
 
   const add = async () => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    await onAdd(trimmed, mode === 'specific' ? qty : 1, mode === 'choose');
+    await onAdd(trimmed, qty, false);
     setName('');
     setQty(1);
   };
@@ -47,13 +46,13 @@ export default function BringItemAdder({ onAdd, existingNames = [], onInputFocus
       <Text style={styles.question}>How should guests sign up?</Text>
       <View style={styles.modeRow}>
         <TouchableOpacity
-          style={[styles.modeCard, mode === 'choose' && styles.modeCardOn]}
-          onPress={() => setMode('choose')}
+          style={[styles.modeCard, mode === 'open' && styles.modeCardOn]}
+          onPress={() => setMode('open')}
           accessibilityRole="radio"
-          accessibilityState={{ selected: mode === 'choose' }}
+          accessibilityState={{ selected: mode === 'open' }}
         >
-          <Text style={[styles.modeTitle, mode === 'choose' && styles.modeTitleOn]}>Guests choose</Text>
-          <Text style={styles.modeExample}>{'Side dish → each guest writes "Mac & cheese"'}</Text>
+          <Text style={[styles.modeTitle, mode === 'open' && styles.modeTitleOn]}>Guests say what they'll bring</Text>
+          <Text style={styles.modeExample}>{'Each guest adds their own, like "Pickles"'}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.modeCard, mode === 'specific' && styles.modeCardOn]}
@@ -66,28 +65,26 @@ export default function BringItemAdder({ onAdd, existingNames = [], onInputFocus
         </TouchableOpacity>
       </View>
 
-      {mode === 'choose' && presets.length > 0 && (
-        <View style={styles.presetRow}>
-          {presets.map((p) => (
-            <TouchableOpacity key={p} style={styles.preset} onPress={() => onAdd(p, 1, true)}>
-              <Text style={styles.presetText}>+ {p}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
-
-      <View style={styles.inputRow}>
-        <TextInput
-          style={styles.input}
-          placeholder={mode === 'choose' ? 'Or type your own, like "Salad"' : 'Item, like "Chips"'}
-          placeholderTextColor={colors.textMuted}
-          value={name}
-          onChangeText={setName}
-          onFocus={onInputFocus}
-          returnKeyType="done"
-          onSubmitEditing={add}
-        />
-        {mode === 'specific' && (
+      {mode === 'open' ? (
+        hasOpenList ? (
+          <Text style={styles.openOn}>✓ Guests can add what they're bringing</Text>
+        ) : (
+          <TouchableOpacity style={styles.openButton} onPress={() => onAdd(OPEN_LIST_NAME, 1, true)}>
+            <Text style={styles.openButtonText}>Let guests add what they're bringing</Text>
+          </TouchableOpacity>
+        )
+      ) : (
+        <View style={styles.inputRow}>
+          <TextInput
+            style={styles.input}
+            placeholder='Item, like "Chips"'
+            placeholderTextColor={colors.textMuted}
+            value={name}
+            onChangeText={setName}
+            onFocus={onInputFocus}
+            returnKeyType="done"
+            onSubmitEditing={add}
+          />
           <View style={styles.stepper}>
             <TouchableOpacity
               style={styles.stepButton}
@@ -105,22 +102,27 @@ export default function BringItemAdder({ onAdd, existingNames = [], onInputFocus
               <Text style={styles.stepText}>+</Text>
             </TouchableOpacity>
           </View>
-        )}
-        <TouchableOpacity
-          style={[styles.addButton, !name.trim() && styles.addButtonOff]}
-          onPress={add}
-          disabled={!name.trim()}
-        >
-          <Text style={styles.addButtonText}>Add</Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={[styles.addButton, !name.trim() && styles.addButtonOff]}
+            onPress={add}
+            disabled={!name.trim()}
+          >
+            <Text style={styles.addButtonText}>Add</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   wrap: { marginTop: 10 },
-  question: { color: colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 8 },
+  question: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
   modeRow: { flexDirection: 'row', gap: 10 },
   modeCard: {
     flex: 1,
@@ -130,20 +132,37 @@ const styles = StyleSheet.create({
     padding: 10,
     backgroundColor: colors.surface,
   },
-  modeCardOn: { borderColor: colors.primary, backgroundColor: colors.background },
+  modeCardOn: {
+    borderColor: colors.primary,
+    backgroundColor: colors.background,
+  },
   modeTitle: { color: colors.textPrimary, fontSize: 15, fontWeight: '700' },
   modeTitleOn: { color: colors.primary },
   modeExample: { color: colors.textSecondary, fontSize: 12, marginTop: 3 },
-  presetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
-  preset: {
-    borderWidth: 1,
-    borderColor: colors.primary,
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+  openButton: {
+    marginTop: 12,
+    backgroundColor: colors.primary,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
   },
-  presetText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
-  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 },
+  openButtonText: {
+    color: colors.textOnPrimary,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  openOn: {
+    marginTop: 12,
+    color: colors.textSecondary,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+  },
   input: {
     flex: 1,
     backgroundColor: colors.surface,
@@ -165,9 +184,29 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  stepText: { color: colors.textPrimary, fontSize: 18, fontWeight: '600', marginTop: -2 },
-  stepValue: { color: colors.textPrimary, fontSize: 15, fontWeight: '700', minWidth: 18, textAlign: 'center' },
-  addButton: { backgroundColor: colors.primary, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
+  stepText: {
+    color: colors.textPrimary,
+    fontSize: 18,
+    fontWeight: '600',
+    marginTop: -2,
+  },
+  stepValue: {
+    color: colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '700',
+    minWidth: 18,
+    textAlign: 'center',
+  },
+  addButton: {
+    backgroundColor: colors.primary,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
   addButtonOff: { opacity: 0.5 },
-  addButtonText: { color: colors.textOnPrimary, fontSize: 15, fontWeight: '700' },
+  addButtonText: {
+    color: colors.textOnPrimary,
+    fontSize: 15,
+    fontWeight: '700',
+  },
 });

@@ -1281,7 +1281,7 @@ export default function CreateEventModal({
                   </View>
                 ))}
 
-                <BringItemAdder onAdd={handleAddItem} existingNames={items.map((it) => it.name)} />
+                <BringItemAdder onAdd={handleAddItem} hasOpenList={items.some((it) => it.allowCustom)} />
               </>
             )}
 
