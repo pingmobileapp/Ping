@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { rejectUnlessCron } from '../_shared/cron.ts';
 import { getRegion, swapExamples, type Region } from '../_shared/regions.ts';
 import { crawlerModel, noteUsage } from '../_shared/anthropic.ts';
 import { ESPN_COLLEGE_PATHS, espnGames } from '../_shared/schedules.ts';
@@ -386,6 +387,8 @@ declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | unde
 // only the longer overall function limit applies - cron doesn't read the
 // response anyway. Utah runs are untouched: same request, same response.
 serve(async (req) => {
+  const denied = await rejectUnlessCron(req);
+  if (denied) return denied;
   const text = await req.text();
   const again = () => new Request(req.url, { method: 'POST', body: text });
   let regionId: unknown;

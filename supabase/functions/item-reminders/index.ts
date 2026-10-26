@@ -1,5 +1,6 @@
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { rejectUnlessCron } from '../_shared/cron.ts';
 
 // Runs once a day (see supabase/item_reminders_cron.sql) and notifies
 // everyone who claimed a "what to bring" item for an event happening
@@ -15,6 +16,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // they set a personal reminder, with content specific to what they
 // individually claimed.
 serve(async (req) => {
+  const denied = await rejectUnlessCron(req);
+  if (denied) return denied;
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
