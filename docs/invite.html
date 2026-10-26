@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light" />
+<!-- Safari on iPhone shows its own "Open / Get" banner for the app. -->
+<meta name="apple-itunes-app" content="app-id=6799301780" />
 <title>You're invited — Ping</title>
 <!-- Static page (GitHub Pages) - link-preview crawlers (iMessage, RCS,
      etc.) only read this raw HTML, they never run the JS below that fills
@@ -18,16 +21,26 @@
 <meta name="twitter:description" content="Tap to see the event details and RSVP." />
 <meta name="twitter:image" content="https://pingmobileapp.github.io/Ping/ping-icon.png" />
 <style>
+  html { background: #FFFFFF; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     max-width: 480px;
     margin: 0 auto;
     padding: 48px 20px 80px;
     color: #2B2B2B;
+    background: #FFFFFF;
     line-height: 1.6;
     text-align: center;
   }
-  .eyebrow { color: #6B6B6B; font-size: 14px; margin-bottom: 4px; }
+  .app-bar {
+    display: flex; align-items: center; gap: 12px; text-align: left; text-decoration: none; color: #2B2B2B;
+    border: 1px solid #E8DCC8; border-radius: 14px; padding: 10px 12px; margin: -24px 0 24px; background: #FFFFFF;
+  }
+  .app-bar img { width: 44px; height: 44px; border-radius: 10px; flex: 0 0 44px; }
+  .app-bar-text { flex: 1; min-width: 0; }
+  .app-name { font-size: 16px; font-weight: 700; line-height: 1.3; }
+  .app-sub { font-size: 13px; color: #6B6B6B; line-height: 1.3; }
+  .app-get { background: #5DADE2; color: #FFFFFF; font-weight: 700; font-size: 14px; padding: 7px 16px; border-radius: 999px; }
   h1 { font-size: 26px; margin: 0 0 20px; }
   .card {
     background: #FFF8EC;
@@ -86,10 +99,44 @@
   .itinerary-stop { border-left: 2px solid #E8DCC8; padding-left: 12px; margin: 0 0 8px; font-size: 15px; }
   .itinerary-stop a { color: #2E86C1; }
   .itinerary-group { margin-bottom: 12px; }
+  .row a { color: #2E86C1; text-decoration: none; }
+  .note { margin-top: 12px; padding-top: 12px; border-top: 1px solid #E8DCC8; font-size: 15px; white-space: pre-wrap; }
+  .going { margin-top: 12px; font-size: 14px; color: #6B6B6B; }
+  .bring { text-align: left; margin-top: 28px; }
+  .bring-title { font-size: 18px; font-weight: 700; margin: 0 0 4px; text-align: center; }
+  .bring-sub { color: #6B6B6B; font-size: 14px; margin: 0 0 14px; text-align: center; }
+  .bring-item { border: 1px solid #E8DCC8; border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; background: #FFFFFF; }
+  .bring-head { display: flex; align-items: center; gap: 10px; }
+  .bring-name { flex: 1; font-size: 16px; font-weight: 600; }
+  .bring-meta { color: #6B6B6B; font-size: 13px; font-weight: 400; }
+  .bring-btn {
+    border: none; border-radius: 10px; background: #5DADE2; color: #FFFFFF; font-weight: 700; font-size: 14px;
+    padding: 9px 14px; cursor: pointer; font-family: inherit; white-space: nowrap;
+  }
+  .bring-btn.quiet { background: #FFF8EC; color: #2B2B2B; border: 1px solid #E8DCC8; }
+  .bring-btn:disabled { opacity: 0.6; cursor: default; }
+  .bring-entry { display: flex; align-items: center; gap: 8px; font-size: 15px; margin-top: 8px; }
+  .bring-entry span { flex: 1; }
+  .bring-entry .you { color: #6B6B6B; font-size: 13px; }
+  .bring-remove { border: none; background: none; color: #C0392B; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; padding: 0; }
+  .bring-add { display: flex; gap: 8px; margin-top: 10px; }
+  .bring-add input {
+    flex: 1; min-width: 0; border: 1px solid #E8DCC8; border-radius: 10px; padding: 10px 12px; font-size: 16px;
+    background: #FFF8EC; font-family: inherit; color: #2B2B2B;
+  }
+  .bring-msg { font-size: 14px; min-height: 20px; text-align: center; }
+  .bring-msg.error { color: #C0392B; }
 </style>
 </head>
 <body>
-  <div class="eyebrow">Ping</div>
+  <a class="app-bar" id="app-bar" href="https://apps.apple.com/app/id6799301780">
+    <img src="ping-icon.png" alt="" />
+    <div class="app-bar-text">
+      <div class="app-name">Ping - Event Planner</div>
+      <div class="app-sub" id="app-sub">Free on the App Store</div>
+    </div>
+    <span class="app-get" id="app-get">Get</span>
+  </a>
   <div id="content">
     <p class="error">Loading your invite…</p>
   </div>
@@ -107,8 +154,23 @@
     const APP_STORE_URL = IS_ANDROID
       ? 'https://play.google.com/store/apps/details?id=com.pingmobileapp.ping'
       : 'https://apps.apple.com/app/id6799301780';
+    // The bar at the top: the app's store name, tappable to download.
+    (function setUpAppBar() {
+      const bar = document.getElementById('app-bar');
+      const sub = document.getElementById('app-sub');
+      const get = document.getElementById('app-get');
+      if (IS_ANDROID && !PLAY_STORE_LIVE) {
+        bar.removeAttribute('href');
+        sub.textContent = 'Android app coming soon';
+        get.remove();
+      } else {
+        bar.href = APP_STORE_URL;
+        sub.textContent = IS_ANDROID ? 'Free on Google Play' : 'Free on the App Store';
+      }
+    })();
     const FUNCTION_URL = 'https://rmooxzkinakbyhvxcivv.supabase.co/functions/v1/invite-info';
     const RSVP_URL = 'https://rmooxzkinakbyhvxcivv.supabase.co/functions/v1/invite-rsvp';
+    const BRING_URL = 'https://rmooxzkinakbyhvxcivv.supabase.co/functions/v1/invite-bring';
 
     function escapeHtml(str) {
       const div = document.createElement('div');
@@ -230,6 +292,7 @@
             info.rsvpStatus = body.status;
             show(body.status);
             msg.textContent = thanks[body.status];
+            refreshBring();
           } catch (err) {
             msg.className = 'rsvp-msg error';
             msg.textContent = err.message;
@@ -240,14 +303,129 @@
       );
     }
 
+    // What to bring, the same two kinds as the app: specific items ("Chips,
+    // 2 needed" - tap to take one) and the open list, where each guest adds
+    // what they're bringing. Shows what's coming, never who's bringing it.
+    function bringHtml(info) {
+      if (!info.items || info.items.length === 0) return '';
+      const declined = info.rsvpStatus === 'declined';
+      const canEdit = !info.isPast && !declined;
+      const rows = info.items.map((item) => {
+        if (item.allowCustom) {
+          const entries = item.entries.map((e) => `
+            <div class="bring-entry">
+              <span>• ${escapeHtml(e.note)}${e.mine ? ' <span class="you">(you)</span>' : ''}</span>
+              ${e.mine && !info.isPast ? `<button class="bring-remove" data-act="remove" data-claim="${e.id}">Remove</button>` : ''}
+            </div>`).join('');
+          const mineCount = item.entries.filter((e) => e.mine).length;
+          return `
+            <div class="bring-item">
+              <div class="bring-name">${escapeHtml(item.name)}
+                <div class="bring-meta">${item.entries.length === 0 ? 'Nothing yet. Be the first!' : 'Add as many things as you like'}</div>
+              </div>
+              ${entries}
+              ${canEdit ? `
+                <form class="bring-add" data-item="${item.id}">
+                  <input name="note" maxlength="80" placeholder="${mineCount ? 'Add something else' : 'e.g. Mac and cheese'}" autocomplete="off" />
+                  <button class="bring-btn" type="submit">Add</button>
+                </form>` : ''}
+            </div>`;
+        }
+        const left = Math.max(0, item.needed - item.covered);
+        const meta = item.mine > 0
+          ? (item.needed > 1 ? `You're bringing ${item.mine} · ${item.covered} of ${item.needed} covered` : "You're bringing this")
+          : left === 0 ? 'Covered' : item.needed > 1 ? `${left} of ${item.needed} still needed` : 'Still needed';
+        let button = '';
+        if (canEdit && left > 0) {
+          button = `<button class="bring-btn" data-act="claim" data-item="${item.id}">${item.mine > 0 ? 'Bring 1 more' : "I'll bring it"}</button>`;
+        }
+        if (!info.isPast && item.mine > 0) {
+          button += ` <button class="bring-btn quiet" data-act="unclaim" data-item="${item.id}">Undo</button>`;
+        }
+        return `
+          <div class="bring-item">
+            <div class="bring-head">
+              <div class="bring-name">${escapeHtml(item.name)}<div class="bring-meta">${meta}</div></div>
+              ${button}
+            </div>
+          </div>`;
+      }).join('');
+      return `
+        <p class="bring-title">What to bring</p>
+        <p class="bring-sub">${declined ? "You said you can't make it, so there's nothing to bring." : `${escapeHtml(info.hostName)} would love some help.`}</p>
+        ${rows}
+        <p class="bring-msg" id="bring-msg"></p>`;
+    }
+
+    async function fetchInfo() {
+      const res = await fetch(`${FUNCTION_URL}?i=${encodeURIComponent(inviteeId)}`);
+      if (!res.ok) throw new Error('not found');
+      return res.json();
+    }
+
+    // Redraws only the What to bring section, so the RSVP buttons and
+    // anything typed elsewhere stay put.
+    async function refreshBring(message, isError) {
+      const box = document.getElementById('bring');
+      if (!box) return;
+      try {
+        const info = await fetchInfo();
+        box.innerHTML = bringHtml(info);
+      } catch (_) { /* keep what's on screen */ }
+      const msg = document.getElementById('bring-msg');
+      if (msg && message) {
+        msg.className = 'bring-msg' + (isError ? ' error' : '');
+        msg.textContent = message;
+      }
+    }
+
+    async function bringAction(payload) {
+      const msg = document.getElementById('bring-msg');
+      if (msg) { msg.className = 'bring-msg'; msg.textContent = 'Saving…'; }
+      const res = await fetch(BRING_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ i: inviteeId, ...payload }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) return null;
+      const reasons = {
+        full: 'Someone just took the last one.',
+        duplicate: "You've already added that.",
+        declined: "You said you can't make it. Change your answer above to bring something.",
+        past: 'This event has already happened.',
+      };
+      return reasons[body.error] || "Couldn't save that. Check your connection and try again.";
+    }
+
+    function wireBring() {
+      const box = document.getElementById('bring');
+      if (!box) return;
+      box.addEventListener('click', async (e) => {
+        const btn = e.target.closest('button[data-act]');
+        if (!btn) return;
+        btn.disabled = true;
+        const act = btn.dataset.act;
+        const err = await bringAction(act === 'remove' ? { action: act, claimId: btn.dataset.claim } : { action: act, itemId: btn.dataset.item });
+        await refreshBring(err || (act === 'claim' ? 'Thanks! The host will see it.' : ''), !!err);
+      });
+      box.addEventListener('submit', async (e) => {
+        const form = e.target.closest('form.bring-add');
+        if (!form) return;
+        e.preventDefault();
+        const input = form.querySelector('input');
+        const note = input.value.trim();
+        if (!note) return;
+        form.querySelector('button').disabled = true;
+        const err = await bringAction({ action: 'add', itemId: form.dataset.item, note });
+        await refreshBring(err || 'Added! The host will see it.', !!err);
+      });
+    }
+
     if (!inviteeId) {
       content.innerHTML = '<p class="error">This invite link looks incomplete.</p>';
     } else {
-      fetch(`${FUNCTION_URL}?i=${encodeURIComponent(inviteeId)}`)
-        .then((res) => {
-          if (!res.ok) throw new Error('not found');
-          return res.json();
-        })
+      fetchInfo()
         .then((info) => {
           const date = new Date(info.eventDate);
           const end = info.endDate ? new Date(info.endDate) : null;
@@ -259,6 +437,10 @@
             ? dateLabel
             : `${dateLabel} · ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
           const host = escapeHtml(info.hostName);
+          const goingLine = [
+            info.goingCount ? `${info.goingCount} going` : '',
+            info.maybeCount ? `${info.maybeCount} maybe` : '',
+          ].filter(Boolean).join(' · ');
           // Paid events are bought in the app, so the page only offers
           // Maybe / Can't go there; past events can't be answered at all.
           const canGo = !info.isPaid && !info.isFull;
@@ -284,10 +466,13 @@
               ${info.imageUrl ? `<img class="card-image" src="${escapeHtml(info.imageUrl)}" alt="" />` : ''}
               <div class="row"><strong>${escapeHtml(info.eventTitle)}</strong></div>
               <div class="row">${escapeHtml(whenLabel)}</div>
-              ${info.location ? `<div class="row">${escapeHtml(info.location)}</div>` : ''}
+              ${info.location ? `<div class="row"><a href="${escapeHtml(mapsUrl(info.location))}">📍 ${escapeHtml(info.location)}</a></div>` : ''}
+              ${goingLine ? `<div class="going">${goingLine}</div>` : ''}
+              ${info.description ? `<div class="note">${escapeHtml(info.description)}</div>` : ''}
               ${itineraryHtml(info.stops, isMultiDay)}
             </div>
             ${rsvpBlock}
+            <div class="bring" id="bring">${bringHtml(info)}</div>
             <div class="app-pitch">
               <p class="steps-title">Want reminders and the group chat?</p>
               <ol class="steps">
@@ -302,6 +487,7 @@
             </div>
           `;
           if (!info.isPast) wireRsvp(info);
+          wireBring();
         })
         .catch(() => {
           content.innerHTML = '<p class="error">This invite couldn\'t be found. It may have been canceled.</p>';

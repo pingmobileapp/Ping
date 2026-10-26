@@ -4,7 +4,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 // Called from docs/invite.html — a fully public, unauthenticated page
 // (the person receiving the text has no Supabase session). Deliberately
 // returns only what's needed to show a single event: never the guest
-// list, never other invitees' info.
+// list, never other invitees' info. Counts and the What to bring list are
+// fine (2026-10-25): the list says what's coming, never who's bringing it,
+// except this invitee's own entries.
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -33,7 +35,7 @@ serve(async (req) => {
 
     const { data: invitee, error } = await supabase
       .from('invitees')
-      .select('rsvp_status, events(title, location, event_date, end_date, is_all_day, host_id, image_url, stops, status, price_cents, capacity, accepted_count)')
+      .select('id, event_id, rsvp_status, events(title, description, location, event_date, end_date, is_all_day, host_id, image_url, stops, status, price_cents, capacity, accepted_count)')
       .eq('id', inviteeId)
       .maybeSingle();
 
@@ -55,9 +57,48 @@ serve(async (req) => {
       hostName = host?.full_name || hostName;
     }
 
+    const countStatus = async (status: string) => {
+      const { count } = await supabase
+        .from('invitees')
+        .select('id', { count: 'exact', head: true })
+        .eq('event_id', invitee.event_id)
+        .eq('rsvp_status', status);
+      return count ?? 0;
+    };
+    const [goingCount, maybeCount] = await Promise.all([countStatus('accepted'), countStatus('interested')]);
+
+    const { data: itemRows } = await supabase
+      .from('items')
+      .select('id, name, quantity_needed, allow_custom, created_at, item_claims(id, invitee_id, quantity, note)')
+      .eq('event_id', invitee.event_id)
+      .order('created_at', { ascending: true });
+    const items = (itemRows || []).map((item: any) => {
+      const claims = item.item_claims || [];
+      const mine = claims.filter((c: any) => c.invitee_id === invitee.id);
+      return {
+        id: item.id,
+        name: item.name,
+        allowCustom: !!item.allow_custom,
+        needed: item.quantity_needed,
+        covered: claims.reduce((sum: number, c: any) => sum + (c.quantity || 0), 0),
+        mine: mine.reduce((sum: number, c: any) => sum + (c.quantity || 0), 0),
+        // Write-in lists: what everyone's bringing (text only), flagging
+        // this invitee's own so the page can offer Remove.
+        entries: item.allow_custom
+          ? claims
+              .filter((c: any) => c.note)
+              .map((c: any) => ({ id: c.id, note: c.note, mine: c.invitee_id === invitee.id }))
+          : [],
+      };
+    });
+
     return new Response(
       JSON.stringify({
         eventTitle: event.title,
+        description: event.description || null,
+        goingCount,
+        maybeCount,
+        items,
         location: event.location,
         eventDate: event.event_date,
         endDate: event.end_date || null,
