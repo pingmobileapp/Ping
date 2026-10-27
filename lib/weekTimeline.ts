@@ -67,6 +67,10 @@ export function blockPalette(base: string): { fill: string; stripe: string; text
 // the red of the Ping logo, softened a little. (Ping's light blue blended
 // into the blue most people's phone calendars use.)
 const PING_BLOCK = blockPalette('#E5383B');
+// An event with nobody else on it is your own plan, not a shared Ping -
+// it takes Ping's blue, which sits with the phone calendar's own items.
+const PERSONAL_BLOCK = blockPalette('#5DADE2');
+const pingPalette = (p: PingEvent) => (p.personal ? PERSONAL_BLOCK : PING_BLOCK);
 // Phone calendar items with no color of their own.
 const FALLBACK_BLOCK = blockPalette('#8E8E93');
 // Starred Discover events - amber, like their Upcoming cards.
@@ -193,7 +197,7 @@ export function buildDayColumns(
     pingTimedEntries.push({ title: p.title, start });
     for (const seg of splitByDay(start, end)) {
       if (!inRange(seg.start, rangeStart, rangeEnd)) continue;
-      pushSegment(seg, `ping-${p.id}`, p.title, PING_BLOCK, start, p.location, !!p.recurrence_id);
+      pushSegment(seg, `ping-${p.id}`, p.title, pingPalette(p), start, p.location, !!p.recurrence_id);
     }
   }
 
@@ -328,7 +332,7 @@ export function buildAllDayColumns(
     // at least overlap the rendered range somewhere.
     if ((end ?? start) < rangeStart || start >= rangeEnd) continue;
     pingAllDayEntries.push({ title: p.title, start });
-    pushAllDayAcrossSpan(columns, `ping-${p.id}`, p.title, start, end, rangeStart, rangeEnd, PING_BLOCK);
+    pushAllDayAcrossSpan(columns, `ping-${p.id}`, p.title, start, end, rangeStart, rangeEnd, pingPalette(p));
   }
 
   for (const e of external) {

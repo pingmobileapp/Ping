@@ -24,6 +24,9 @@ export type PingEvent = {
   // and its itinerary stops, which move with it).
   host_id?: string | null;
   stops?: unknown;
+  // Set by Home: you host it and nobody else is on it, so Week view draws
+  // it in the personal color rather than Ping red.
+  personal?: boolean;
 };
 
 type RsvpStatus = 'pending' | 'accepted' | 'interested' | 'declined';

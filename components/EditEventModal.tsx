@@ -30,6 +30,7 @@ import { colors, cardFrameGradient, calendarTheme, EVENT_IMAGE_ASPECT_RATIO } fr
 import { isMultiDayEvent, resolveEndDate } from '../lib/eventDate';
 import { displayName } from '../lib/displayName';
 import { notify } from '../lib/notify';
+import { alertUnreachable, confirmDeleteEvent, deleteEvent } from '../lib/deleteEvent';
 import { RecurrenceConfig, generateOccurrences } from '../lib/recurrence';
 import { ActivityCategory, CATEGORY_LABELS } from '../lib/discoverActivities';
 import { fetchConnectStatus, ConnectAccountState } from '../lib/stripeConnect';
@@ -1119,98 +1120,12 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   const handleDeleteEvent = async (shouldNotify: boolean, applyToFuture: boolean) => {
     if (!event) return;
     setSubmitting(true);
-
-    // Everything below used to run as one unguarded chain of awaits — if
-    // any single step threw (a network blip, an RLS rejection), the catch
-    // block below didn't exist yet, so setSubmitting(false) never ran and
-    // the modal was stuck showing its "deleting" state forever, which reads
-    // as the whole app freezing on delete. That catch alone isn't enough
-    // for a step that never resolves OR rejects (a genuinely stuck request
-    // rather than a fast failure) - a real family-testing report of exactly
-    // this (frozen, no crash log, had to force-quit) had no error to catch
-    // in the first place. Racing the whole sequence against a timeout means
-    // it fails loudly instead of hanging forever either way.
-    const TIMEOUT_MS = 15000;
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('Timed out deleting event')), TIMEOUT_MS)
-    );
-
-    // Invitees with no linked account never receive the push notification
-    // below - the host is the only way they'd ever hear this was canceled,
-    // so this is collected up front (before the invitees rows are gone)
-    // and surfaced after the delete succeeds, rather than letting them
-    // silently never find out.
-    let unreachableNames: string[] = [];
-
     try {
-      await Promise.race([
-        (async () => {
-          // "This and following events" needs every sibling occurrence's
-          // id up front - everything below (notify/cascade-delete) then
-          // operates across all of them instead of just event.id.
-          let eventIds = [event.id];
-          if (applyToFuture && event.recurrence_id) {
-            const { data: siblingRows } = await supabase
-              .from('events')
-              .select('id')
-              .eq('recurrence_id', event.recurrence_id)
-              .gte('event_date', event.event_date);
-            if (siblingRows && siblingRows.length > 0) eventIds = siblingRows.map((r) => r.id);
-          }
-
-          if (shouldNotify) {
-            // Only the current occurrence's invitees are notified/checked
-            // for reachability, same "once, not per occurrence" reasoning
-            // as CreateEventModal's batch-create - a family doesn't need a
-            // separate cancellation notice for each of 10 canceled weeks.
-            const { data: allInvitees } = await supabase
-              .from('invitees')
-              .select('user_id, invited_via, contacts(name, phone)')
-              .eq('event_id', event.id);
-            const recipientIds = (allInvitees || [])
-              .map((i) => i.user_id)
-              .filter((id): id is string => !!id && id !== session?.user?.id);
-            if (recipientIds.length > 0) {
-              await notify(
-                recipientIds,
-                'Event canceled',
-                applyToFuture ? `"${title}" and its remaining repeats have been canceled.` : `"${title}" has been canceled.`,
-                { eventId: event.id, type: 'event_canceled' }
-              );
-            }
-            unreachableNames = (allInvitees || [])
-              .filter((i: any) => !i.user_id && i.invited_via === 'sms' && i.contacts?.phone)
-              .map((i: any) => i.contacts?.name || 'Guest');
-          }
-
-          // Cascade delete configuration on the DB side is unknown, so
-          // clean up dependents manually rather than risk a foreign-key
-          // failure.
-          const { data: eventItems } = await supabase.from('items').select('id').in('event_id', eventIds);
-          const itemIds = (eventItems || []).map((i) => i.id);
-          if (itemIds.length > 0) {
-            await supabase.from('item_claims').delete().in('item_id', itemIds);
-          }
-          await supabase.from('items').delete().in('event_id', eventIds);
-          await supabase.from('messages').delete().in('event_id', eventIds);
-          await supabase.from('invitees').delete().in('event_id', eventIds);
-          await supabase.from('event_hosts').delete().in('event_id', eventIds);
-
-          const { error } = await supabase.from('events').delete().in('id', eventIds);
-          if (error) throw error;
-        })(),
-        timeout,
-      ]);
-
-      if (unreachableNames.length > 0) {
-        Alert.alert(
-          "Some guests won't be notified",
-          `${unreachableNames.join(', ')} won't get an automatic notice since they don't have Ping — you'll need to text them yourself to let them know it was canceled.`,
-          [{ text: 'OK', onPress: onDeleted }]
-        );
-      } else {
-        onDeleted();
-      }
+      const unreachableNames = await deleteEvent(
+        { ...event, title },
+        { notifyGuests: shouldNotify, applyToFuture, myUserId: session?.user?.id }
+      );
+      alertUnreachable(unreachableNames, onDeleted);
     } catch (err) {
       console.error('Error deleting event:', err);
       Alert.alert('Error', 'Could not delete this event. Check your connection and try again.');
@@ -1220,23 +1135,10 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   };
 
   const confirmDelete = () => {
-    if (event?.recurrence_id) {
-      Alert.alert('Delete which events?', undefined, [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'This event only', style: 'destructive', onPress: () => confirmDeleteNotify(false) },
-        { text: 'This and following events', style: 'destructive', onPress: () => confirmDeleteNotify(true) },
-      ]);
-      return;
-    }
-    confirmDeleteNotify(false);
-  };
-
-  const confirmDeleteNotify = (applyToFuture: boolean) => {
-    Alert.alert('Delete this event?', 'This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete silently', style: 'destructive', onPress: () => handleDeleteEvent(false, applyToFuture) },
-      { text: 'Notify & delete', style: 'destructive', onPress: () => handleDeleteEvent(true, applyToFuture) },
-    ]);
+    if (!event) return;
+    confirmDeleteEvent(event, session?.user?.id, ({ notifyGuests, applyToFuture }) =>
+      handleDeleteEvent(notifyGuests, applyToFuture)
+    );
   };
 
   if (!event) return null;

@@ -679,9 +679,13 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     // view, so tapping a past day on the calendar can still reach that
     // day's event (and its conversation) instead of it never having been
     // loaded at all.
+    // invitees(count) tells an event with guests from one that's just
+    // you (your own invitee row is the only one) - Week view colors those
+    // as personal, not as a red Ping (TestFlight feedback 73). Only
+    // trusted for events you host, where you can see every guest row.
     const { data, error } = await supabase
       .from("events")
-      .select("*")
+      .select("*, invitees(count)")
       .in("id", invitedEventIds)
       .order("event_date", { ascending: true });
 
@@ -690,7 +694,12 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
       setEventsLoadError(true);
       return;
     }
-    setEvents(data as PingEvent[]);
+    setEvents(
+      (data || []).map(({ invitees, ...ev }: any) => ({
+        ...ev,
+        personal: ev.host_id === session.user.id && (invitees?.[0]?.count ?? 0) <= 1,
+      })) as PingEvent[],
+    );
     setEventsLoadError(false);
     supabase
       .from("event_hosts")

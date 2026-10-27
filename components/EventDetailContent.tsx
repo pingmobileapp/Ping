@@ -25,6 +25,7 @@ import PhotoViewerModal from './PhotoViewerModal';
 import Avatar from './Avatar';
 import { colors, cardFrameGradient, EVENT_IMAGE_ASPECT_RATIO } from '../lib/theme';
 import { notify } from '../lib/notify';
+import { alertUnreachable, confirmDeleteEvent, deleteEvent } from '../lib/deleteEvent';
 import { submitRsvp, RsvpStatus, findMySeriesInvites, submitSeriesRsvp, askRsvpScope, showRsvpError } from '../lib/rsvp';
 import { removeEventFromDeviceCalendar, syncAcceptedEventToDeviceCalendar } from '../lib/pingCalendarSync';
 import { scheduleEventReminder, cancelEventReminder, REMINDER_OPTIONS } from '../lib/eventReminders';
@@ -489,7 +490,25 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
   // Everything that isn't the event's main action lives behind one visible
   // ••• button, instead of a long-press nobody knows about: hiding it from
   // your own calendar (previously long-press only, and only in some views),
-  // and, for guests, reporting it.
+  // for hosts deleting it (TestFlight feedback 72 - it was only at the
+  // bottom of Edit), and for guests reporting it.
+  const handleDeleteFromMenu = () => {
+    if (!event) return;
+    const myUserId = session?.user?.id;
+    confirmDeleteEvent(event, myUserId, async (choice) => {
+      setUpdating(true);
+      try {
+        const unreachableNames = await deleteEvent(event, { ...choice, myUserId });
+        alertUnreachable(unreachableNames, onClose);
+      } catch (err) {
+        console.error('Error deleting event:', err);
+        Alert.alert('Error', 'Could not delete this event. Check your connection and try again.');
+      } finally {
+        setUpdating(false);
+      }
+    });
+  };
+
   const handleMoreMenu = () => {
     if (!event) return;
     const toggleHidden = async () => {
@@ -506,7 +525,8 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
     const options: { label: string; destructive?: boolean; run: () => void }[] = [
       { label: hiddenForMe ? 'Unhide' : 'Hide from my calendar', run: toggleHidden },
     ];
-    if (!isHost) options.push({ label: 'Report', destructive: true, run: handleReportEvent });
+    if (isHost) options.push({ label: 'Delete Event', destructive: true, run: handleDeleteFromMenu });
+    else options.push({ label: 'Report', destructive: true, run: handleReportEvent });
 
     if (Platform.OS === 'ios') {
       ActionSheetIOS.showActionSheetWithOptions(
