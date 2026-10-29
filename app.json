@@ -105,6 +105,12 @@
         "projectId": "689a0b22-ce0c-4255-b361-8222f77688e6"
       }
     },
-    "owner": "pingmobileapp"
+    "owner": "pingmobileapp",
+    "updates": {
+      "url": "https://u.expo.dev/689a0b22-ce0c-4255-b361-8222f77688e6"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    }
   }
 }
