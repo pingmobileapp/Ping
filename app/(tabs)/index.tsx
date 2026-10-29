@@ -80,7 +80,7 @@ import {
   removeInterestByKey,
 } from "../../lib/discoverActivities";
 import { pickEventImage } from "../../lib/imagePicker";
-import { extractScheduleEvents, ExtractedEvent } from "../../lib/scheduleImport";
+import { extractScheduleEvents, ExtractedEvent, ScanError } from "../../lib/scheduleImport";
 import { dismissProfilePrompt, useProfilePhone } from "../../lib/useProfilePhone";
 import { supabase } from "../../supabase";
 
@@ -963,7 +963,12 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     } catch (err) {
       setScanningSchedule(false);
       console.error("Error scanning schedule:", err);
-      Alert.alert("Error", "Something went wrong reading that photo. Try again.");
+      Alert.alert(
+        "Couldn't read that photo",
+        err instanceof ScanError
+          ? err.message
+          : "Ping couldn't open that photo. If it's in iCloud, open it in Photos first so it downloads, then try again.",
+      );
     }
   };
 
