@@ -68,11 +68,17 @@ export default function ShareInviteModal({
   // linked to - that covers you, in your own group), so picking a group
   // only adds the people still missing.
   const [alreadyOnEvent, setAlreadyOnEvent] = useState<Set<string>>(new Set());
+  // The groups you actually tapped. A group used to look picked whenever
+  // all its people happened to be selected, so picking Willhite Family lit
+  // up every smaller group inside it too, and tapping one of those then
+  // unselected its people (TestFlight feedback 77).
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (visible && session?.user?.id) {
       loadContacts();
       setSelectedIds([]);
+      setSelectedGroupIds([]);
     }
   }, [visible, session?.user?.id]);
 
@@ -124,22 +130,28 @@ export default function ShareInviteModal({
   const groupInvitable = (g: SelectableGroup) =>
     g.members.map((m) => m.contactId).filter((cid) => !alreadyOnEvent.has(cid));
 
-  const groupSelected = (g: SelectableGroup) => {
-    const ids = groupInvitable(g);
-    return ids.length > 0 && ids.every((cid) => selectedIds.includes(cid));
-  };
+  const groupSelected = (g: SelectableGroup) => selectedGroupIds.includes(g.id);
 
-  // Picks (or un-picks) everyone in the group who isn't on the event yet;
-  // they show as selected below, so anyone can still be tapped off.
+  // Picks everyone in the group who isn't on the event yet; they show as
+  // selected below, so anyone can still be tapped off. Un-picking a group
+  // leaves anyone who's also in another group you still have picked.
   const toggleGroup = (g: SelectableGroup) => {
     const ids = groupInvitable(g);
+    if (groupSelected(g)) {
+      const remaining = selectedGroupIds.filter((gid) => gid !== g.id);
+      const keep = new Set(
+        groups.filter((other) => remaining.includes(other.id)).flatMap((other) => groupInvitable(other))
+      );
+      setSelectedGroupIds(remaining);
+      setSelectedIds((prev) => prev.filter((cid) => !ids.includes(cid) || keep.has(cid)));
+      return;
+    }
     if (ids.length === 0) {
       Alert.alert('Already invited', `Everyone in ${g.name} is already on this event.`);
       return;
     }
-    setSelectedIds((prev) =>
-      groupSelected(g) ? prev.filter((cid) => !ids.includes(cid)) : Array.from(new Set([...prev, ...ids]))
-    );
+    setSelectedGroupIds((prev) => [...prev, g.id]);
+    setSelectedIds((prev) => Array.from(new Set([...prev, ...ids])));
   };
 
   const toggle = (id: string) => {
