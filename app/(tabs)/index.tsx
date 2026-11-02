@@ -205,6 +205,7 @@ export default function HomeScreen() {
   // the visible week changed, WeekGrid would re-derive a new range (and
   // reset its scroll position) on every scroll event.
   const [weekGridAnchor, setWeekGridAnchor] = useState(() => startOfWeek(new Date()));
+  const [weekGridPickedDay, setWeekGridPickedDay] = useState<Date | null>(null);
 
   // Turning a phone sideways in Week view shows just the week, full screen,
   // with wider day columns. Every other screen (and Month view) stays
@@ -367,10 +368,14 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   // switching viewMode remounts WeekGrid fresh (see the Month/Week ternary
   // below), which is what makes this anchor actually take effect via
   // WeekGrid's own mount-effect initial-scroll positioning.
-  const goToWeekFor = (anchor: Date) => {
+  // picked: the anchor is a day the user chose (tapped in Month, or the
+  // selected day) - 2 Days and Day open on it, not on its week's Sunday
+  // (TestFlight feedback 78).
+  const goToWeekFor = (anchor: Date, picked = false) => {
     const anchorWeekStart = startOfWeek(anchor);
     setVisibleWeekStart(anchorWeekStart);
     setWeekGridAnchor(anchorWeekStart);
+    setWeekGridPickedDay(picked ? anchor : null);
     setViewMode("week");
   };
   // Strongest signal of "what the user's looking at" first: an explicitly
@@ -442,7 +447,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
           visibleMonth.getMonth() === today.getMonth()
         ? today
         : visibleMonth;
-    goToWeekFor(anchor);
+    goToWeekFor(anchor, !!selectedDate);
   };
   // Pings Only by default - All (with phone-calendar items) is one tap away
   // in Filter. Drafts/Declined/Hidden/Important Dates are views opened from
@@ -1622,7 +1627,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     // A day is easiest to actually look at in Week view - Month is for
     // orientation/picking a day, not reading it in detail.
     const [y, m, d] = dateKey.split("-").map(Number);
-    goToWeekFor(new Date(y, m - 1, d));
+    goToWeekFor(new Date(y, m - 1, d), true);
   };
 
   const handleRefresh = useCallback(async () => {
@@ -2036,6 +2041,11 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
               rangeStart={weekGridRangeStart}
               dayCount={WEEK_GRID_DAY_COUNT}
               initialDayIndex={WEEK_GRID_LOOKBACK_DAYS}
+              pickedDayIndex={
+                weekGridPickedDay
+                  ? Math.round((weekGridPickedDay.getTime() - weekGridRangeStart.getTime()) / 86400000)
+                  : null
+              }
               eventsByDay={weekDayColumns}
               allDayByDay={weekAllDayColumns}
               notesByDay={dayNotes}

@@ -260,6 +260,10 @@ type Props = {
   // showing the very start of the range instead of the week the user
   // actually asked for.
   initialDayIndex: number;
+  // A day the user picked (tapped in Month view) - 2 Days and Day open on
+  // it instead of on the week's Sunday. The 7-day week still opens on the
+  // week, as before.
+  pickedDayIndex?: number | null;
   eventsByDay: Record<string, DayColumnEvent[]>;
   allDayByDay: Record<string, AllDayItem[]>;
   // Each day's note (see lib/dayNotes.ts), shown as a slim bar above that
@@ -342,6 +346,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       rangeStart,
       dayCount,
       initialDayIndex,
+      pickedDayIndex,
       eventsByDay,
       allDayByDay,
       notesByDay,
@@ -835,7 +840,8 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     // that can be widened at mount is the leading one (today), so every day
     // before it is still NORMAL_DAY_WIDTH here.
     useEffect(() => {
-      const startIdx = startIndexFor(initialDayIndex);
+      const startIdx =
+        daysVisible < 7 && pickedDayIndex != null ? pickedDayIndex : startIndexFor(initialDayIndex);
       leadingIndexRef.current = startIdx;
       const x = startIdx * NORMAL_DAY_WIDTH;
       scrollX.value = x;
