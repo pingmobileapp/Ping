@@ -22,7 +22,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Crypto from 'expo-crypto';
 import { supabase } from '../supabase';
 import { useAuth } from '../lib/AuthContext';
-import { findOrCreateContact, healContactLink, getAlreadyInvitedPhones, normalizePhone } from '../lib/phone';
+import { findOrCreateContact, healContactLink, getAlreadyInvitedPhones, normalizePhone, dropAccountsAlreadyInvited } from '../lib/phone';
 import { loadMemberGroups } from '../lib/sharedGroups';
 import { uploadEventImage, uploadEventImageFull } from '../lib/imageUpload';
 import { pickEventImage } from '../lib/imagePicker';
@@ -1057,7 +1057,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
             return contact ? healContactLink(supabase, contact) : contact;
           })
         );
-        const rows = toInvite.map((cid, i) => {
+        const rows = await dropAccountsAlreadyInvited(supabase, event.id, toInvite.map((cid, i) => {
           const contact = healedContacts[i];
           return {
             event_id: event.id,
@@ -1066,11 +1066,10 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
             rsvp_status: 'pending',
             invited_via: contact?.linked_user_id ? 'app' : contact?.phone ? 'sms' : 'email',
           };
-        });
-        const { data: insertedInvitees, error: inviteeError } = await supabase
-          .from('invitees')
-          .insert(rows)
-          .select();
+        }));
+        const { data: insertedInvitees, error: inviteeError } = rows.length
+          ? await supabase.from('invitees').insert(rows).select()
+          : { data: [], error: null };
         if (inviteeError) {
           console.error('Error creating invitees:', inviteeError);
         } else {

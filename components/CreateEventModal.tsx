@@ -23,7 +23,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Crypto from 'expo-crypto';
 import { supabase } from '../supabase';
 import { useAuth } from '../lib/AuthContext';
-import { findOrCreateContact, healContactLink } from '../lib/phone';
+import { findOrCreateContact, healContactLink, dropAccountsAlreadyInvited } from '../lib/phone';
 import { loadMemberGroups } from '../lib/sharedGroups';
 import { uploadEventImage, uploadEventImageFull } from '../lib/imageUpload';
 import { pickEventImage } from '../lib/imagePicker';
@@ -758,22 +758,31 @@ export default function CreateEventModal({
             return contact ? healContactLink(supabase, contact) : contact;
           })
         );
-        const rows = contactIds.map((cid, i) => {
-          const contact = healedContacts[i];
-          return {
-            event_id: eventRow.id,
-            contact_id: cid,
-            user_id: contact?.linked_user_id || null,
-            rsvp_status: 'pending',
-            invited_via: contact?.linked_user_id ? 'app' : contact?.phone ? 'sms' : 'email',
-          };
-        });
-        const { data: insertedInvitees, error: inviteeError } = await supabase
-          .from('invitees')
-          .insert(rows)
-          .select();
+        const rows = await dropAccountsAlreadyInvited(
+          supabase,
+          eventRow.id,
+          contactIds.map((cid, i) => {
+            const contact = healedContacts[i];
+            return {
+              event_id: eventRow.id,
+              contact_id: cid,
+              user_id: contact?.linked_user_id || null,
+              rsvp_status: 'pending',
+              invited_via: contact?.linked_user_id ? 'app' : contact?.phone ? 'sms' : 'email',
+            };
+          })
+        );
+        const { data: insertedInvitees, error: inviteeError } = rows.length
+          ? await supabase.from('invitees').insert(rows).select()
+          : { data: [], error: null };
         if (inviteeError) {
+          // Used to be console-only, so the event looked sent while nobody
+          // was invited.
           console.error('Error creating invitees:', inviteeError);
+          Alert.alert(
+            "Invites didn't go out",
+            `"${title}" was created, but inviting guests failed. Open it and use Invite others to try again.`
+          );
         } else if (shouldNotify) {
           const notifiableUserIds = rows.map((r) => r.user_id).filter(Boolean);
           await notify(

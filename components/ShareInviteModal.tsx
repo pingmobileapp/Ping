@@ -13,7 +13,7 @@ import {
 import SheetModal from './SheetModal';
 import { supabase } from '../supabase';
 import { useAuth } from '../lib/AuthContext';
-import { findOrCreateContact, healContactLink, getAlreadyInvitedPhones, normalizePhone } from '../lib/phone';
+import { findOrCreateContact, healContactLink, getAlreadyInvitedPhones, normalizePhone, dropAccountsAlreadyInvited } from '../lib/phone';
 import { colors } from '../lib/theme';
 import { notify } from '../lib/notify';
 import ImportContactsModal from './ImportContactsModal';
@@ -163,7 +163,7 @@ export default function ShareInviteModal({
         return contact ? healContactLink(supabase, contact) : contact;
       })
     );
-    const rows = toInvite.map((cid, i) => {
+    const rows = await dropAccountsAlreadyInvited(supabase, eventId, toInvite.map((cid, i) => {
       const contact = healedContacts[i];
       return {
         event_id: eventId,
@@ -172,9 +172,11 @@ export default function ShareInviteModal({
         rsvp_status: 'pending',
         invited_via: contact?.linked_user_id ? 'app' : contact?.phone ? 'sms' : 'email',
       };
-    });
+    }));
 
-    const { data: insertedInvitees, error } = await supabase.from('invitees').insert(rows).select();
+    const { data: insertedInvitees, error } = rows.length
+      ? await supabase.from('invitees').insert(rows).select()
+      : { data: [], error: null };
     setSubmitting(false);
 
     if (error) {

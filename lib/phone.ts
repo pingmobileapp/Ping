@@ -114,3 +114,22 @@ export async function getAlreadyInvitedPhones(
   });
   return phones;
 }
+
+// invitees is unique on (event_id, user_id), and one duplicate fails the
+// whole batch insert - nobody gets invited (TestFlight feedback 74/75: the
+// host was in their own group, linked to their own account). Drops rows for
+// anyone already on the event, or twice in the batch.
+export async function dropAccountsAlreadyInvited<T extends { user_id: string | null }>(
+  supabase: SupabaseClient,
+  eventId: string,
+  rows: T[]
+): Promise<T[]> {
+  const { data } = await supabase.from('invitees').select('user_id').eq('event_id', eventId);
+  const onEvent = new Set((data || []).map((r: any) => r.user_id).filter(Boolean));
+  return rows.filter((r) => {
+    if (!r.user_id) return true;
+    if (onEvent.has(r.user_id)) return false;
+    onEvent.add(r.user_id);
+    return true;
+  });
+}
