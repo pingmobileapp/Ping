@@ -2036,6 +2036,9 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
             />
           ) : !viewPrefsLoaded ? null : (
             <WeekGrid
+              // A new anchor is a new range - opened fresh on it, the same
+              // as switching in from Month.
+              key={weekGridAnchor.getTime()}
               ref={weekGridRef}
               daysVisible={daysVisible}
               rangeStart={weekGridRangeStart}
@@ -2046,6 +2049,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
                   ? Math.round((weekGridPickedDay.getTime() - weekGridRangeStart.getTime()) / 86400000)
                   : null
               }
+              onTodayOutOfRange={() => goToWeekFor(new Date())}
               eventsByDay={weekDayColumns}
               allDayByDay={weekAllDayColumns}
               notesByDay={dayNotes}

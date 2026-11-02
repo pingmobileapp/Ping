@@ -264,6 +264,10 @@ type Props = {
   // it instead of on the week's Sunday. The 7-day week still opens on the
   // week, as before.
   pickedDayIndex?: number | null;
+  // Today isn't in the loaded range (it only reaches 3 weeks back from the
+  // week opened, so opening on a day far ahead leaves it out) - Home
+  // reloads the range around today instead (TestFlight feedback 79).
+  onTodayOutOfRange?: () => void;
   eventsByDay: Record<string, DayColumnEvent[]>;
   allDayByDay: Record<string, AllDayItem[]>;
   // Each day's note (see lib/dayNotes.ts), shown as a slim bar above that
@@ -347,6 +351,7 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
       dayCount,
       initialDayIndex,
       pickedDayIndex,
+      onTodayOutOfRange,
       eventsByDay,
       allDayByDay,
       notesByDay,
@@ -986,7 +991,10 @@ const WeekGrid = forwardRef<WeekGridHandle, Props>(
     // the left edge, widened in the 7-day week.
     const goToToday = () => {
       const todayIndex = todayIndexAt(rangeStart);
-      if (todayIndex < 0 || todayIndex >= dayCount) return;
+      if (todayIndex < 0 || todayIndex >= dayCount) {
+        onTodayOutOfRange?.();
+        return;
+      }
       leadingIndexRef.current = todayIndex;
       driver.value = 0;
       const todayKey = toDayKey(new Date());
