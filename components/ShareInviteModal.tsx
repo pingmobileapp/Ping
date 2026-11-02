@@ -19,6 +19,7 @@ import { notify } from '../lib/notify';
 import ImportContactsModal from './ImportContactsModal';
 import NonAppInviteQueue, { QueueContact } from './NonAppInviteQueue';
 import { useRegisterModal } from '../lib/modalPresence';
+import { loadMemberGroups, SelectableGroup } from '../lib/sharedGroups';
 
 type Contact = {
   id: string;
@@ -60,6 +61,13 @@ export default function ShareInviteModal({
   const [importVisible, setImportVisible] = useState(false);
   const [queueContacts, setQueueContacts] = useState<QueueContact[]>([]);
   const [queueVisible, setQueueVisible] = useState(false);
+  // Groups weren't offered here at all - adding a family group to an
+  // existing event meant tapping 15 names (TestFlight feedback 76).
+  const [groups, setGroups] = useState<SelectableGroup[]>([]);
+  // Contacts already on this event (by contact, or by the account they're
+  // linked to - that covers you, in your own group), so picking a group
+  // only adds the people still missing.
+  const [alreadyOnEvent, setAlreadyOnEvent] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (visible && session?.user?.id) {
@@ -78,6 +86,60 @@ export default function ShareInviteModal({
 
     if (error) console.error('Error loading contacts:', error);
     setContacts(data || []);
+
+    const [{ data: groupsData, error: groupsError }, { data: inviteeRows }] = await Promise.all([
+      supabase
+        .from('groups')
+        .select('id, name, group_members(contact_id, contacts(name))')
+        .eq('owner_id', session!.user.id)
+        .order('name'),
+      supabase.from('invitees').select('contact_id, user_id').eq('event_id', eventId),
+    ]);
+    if (groupsError) console.error('Error loading groups:', groupsError);
+    const ownedGroups: SelectableGroup[] = (groupsData || []).map((g: any) => ({
+      id: g.id,
+      name: g.name,
+      members: (g.group_members || []).map((m: any) => ({ contactId: m.contact_id, name: m.contacts?.name || 'Unknown' })),
+    }));
+    setGroups(ownedGroups);
+
+    // Groups someone else shared with you - see the matching comment in
+    // CreateEventModal.
+    const { groups: memberGroups, newContacts } = await loadMemberGroups(supabase, session!.user.id, data || []);
+    if (memberGroups.length > 0) setGroups([...ownedGroups, ...memberGroups]);
+    const allContacts = [...(data || []), ...newContacts];
+    if (newContacts.length > 0) setContacts([...allContacts].sort((a, b) => a.name.localeCompare(b.name)));
+
+    const invitedContactIds = new Set((inviteeRows || []).map((r: any) => r.contact_id).filter(Boolean));
+    const invitedUserIds = new Set((inviteeRows || []).map((r: any) => r.user_id).filter(Boolean));
+    setAlreadyOnEvent(
+      new Set(
+        allContacts
+          .filter((c) => invitedContactIds.has(c.id) || (c.linked_user_id && invitedUserIds.has(c.linked_user_id)))
+          .map((c) => c.id)
+      )
+    );
+  };
+
+  const groupInvitable = (g: SelectableGroup) =>
+    g.members.map((m) => m.contactId).filter((cid) => !alreadyOnEvent.has(cid));
+
+  const groupSelected = (g: SelectableGroup) => {
+    const ids = groupInvitable(g);
+    return ids.length > 0 && ids.every((cid) => selectedIds.includes(cid));
+  };
+
+  // Picks (or un-picks) everyone in the group who isn't on the event yet;
+  // they show as selected below, so anyone can still be tapped off.
+  const toggleGroup = (g: SelectableGroup) => {
+    const ids = groupInvitable(g);
+    if (ids.length === 0) {
+      Alert.alert('Already invited', `Everyone in ${g.name} is already on this event.`);
+      return;
+    }
+    setSelectedIds((prev) =>
+      groupSelected(g) ? prev.filter((cid) => !ids.includes(cid)) : Array.from(new Set([...prev, ...ids]))
+    );
   };
 
   const toggle = (id: string) => {
@@ -236,6 +298,23 @@ export default function ShareInviteModal({
           </TouchableOpacity>
 
           <ScrollView contentContainerStyle={{ paddingBottom: 12 }} keyboardShouldPersistTaps="handled">
+            {groups.length > 0 && (
+              <>
+                <Text style={styles.sublabel}>Groups</Text>
+                <View style={styles.chipRow}>
+                  {groups.map((g) => (
+                    <TouchableOpacity
+                      key={g.id}
+                      style={[styles.chip, groupSelected(g) && styles.chipSelected]}
+                      onPress={() => toggleGroup(g)}
+                    >
+                      <Text style={[styles.chipText, groupSelected(g) && styles.chipTextSelected]}>{g.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <Text style={styles.sublabel}>People</Text>
+              </>
+            )}
             <View style={styles.chipRow}>
               {contacts.map((c) => (
                 <TouchableOpacity
@@ -338,6 +417,7 @@ const styles = StyleSheet.create({
   importRow: { backgroundColor: colors.surfaceAlt, borderRadius: 10, paddingVertical: 10, alignItems: 'center', marginBottom: 10 },
   importText: { color: colors.primary, fontWeight: '600', fontSize: 14 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  sublabel: { color: colors.textSecondary, fontSize: 13, marginTop: 8, marginBottom: 6 },
   chip: {
     borderWidth: 1,
     borderColor: colors.border,
