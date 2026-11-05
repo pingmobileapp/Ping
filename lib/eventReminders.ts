@@ -21,6 +21,10 @@ export const REMINDER_OPTIONS: { label: string; value: number | null }[] = [
 // turns the logo red) once it's actually due.
 const identifierFor = (eventId: string) => `event-reminder-${eventId}`;
 
+// Saved on each one-time reminder so syncRemindersToEventTimes can tell
+// when the event has since moved.
+type ReminderData = { startsAt: string; minutesBefore: number };
+
 async function ensurePermission() {
   const { status } = await Notifications.getPermissionsAsync();
   if (status === 'granted') return true;
@@ -42,7 +46,13 @@ const labelFor = (minutesBefore: number) =>
 // function's own comment). Returns whether it actually got scheduled, so a
 // caller that also needs to persist something can skip that when it's a
 // no-op (already past, or permission denied).
-async function scheduleLocalNotification(identifier: string, title: string, body: string, fireDate: Date): Promise<boolean> {
+async function scheduleLocalNotification(
+  identifier: string,
+  title: string,
+  body: string,
+  fireDate: Date,
+  data?: ReminderData
+): Promise<boolean> {
   if (fireDate.getTime() <= Date.now()) return false;
   if (!(await ensurePermission())) return false;
 
@@ -55,7 +65,7 @@ async function scheduleLocalNotification(identifier: string, title: string, body
 
   await Notifications.scheduleNotificationAsync({
     identifier,
-    content: { title, body },
+    content: { title, body, ...(data ? { data } : {}) },
     trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: fireDate },
   });
   return true;
@@ -76,7 +86,10 @@ export async function scheduleEventReminder(
 
   const fireDate = new Date(eventDate.getTime() - minutesBefore * 60000);
   const body = `Starting in ${labelFor(minutesBefore)}`;
-  const scheduled = await scheduleLocalNotification(identifierFor(eventId), eventTitle, body, fireDate);
+  const scheduled = await scheduleLocalNotification(identifierFor(eventId), eventTitle, body, fireDate, {
+    startsAt: eventDate.toISOString(),
+    minutesBefore,
+  });
   if (!scheduled) return;
 
   const { error } = await supabase.from('notifications').insert({
@@ -245,7 +258,10 @@ export async function schedulePersonalItemReminder(
     await scheduleYearlyLocalNotification(personalItemIdentifierFor(itemId), `🎉 ${itemTitle}`, body, fireDate);
   } else {
     const body = `Starting in ${labelFor(minutesBefore)}`;
-    await scheduleLocalNotification(personalItemIdentifierFor(itemId), itemTitle, body, fireDate);
+    await scheduleLocalNotification(personalItemIdentifierFor(itemId), itemTitle, body, fireDate, {
+      startsAt: itemDate.toISOString(),
+      minutesBefore,
+    });
   }
 
   const map = await getPersonalReminderMap();
@@ -271,4 +287,76 @@ export async function cancelPersonalItemReminder(itemId: string) {
 export async function forgetPersonalItem(itemId: string) {
   await cancelPersonalItemReminder(itemId);
   await setPersonalItemImportant(itemId, false);
+}
+
+// Reminders are scheduled for a fixed time, so one set before an event
+// moved (a Week-view drag, an edit, or the host moving a Ping) still went
+// off at the old time (TestFlight 1.1.18, 2026-11-05). Home calls this
+// whenever its events load: every one-time reminder whose event now starts
+// at a different time, or has a new title, is scheduled again - or just
+// dropped if the new time has already passed. Events not passed in (not
+// loaded, or a repeating item) are left alone. Yearly "important date"
+// reminders are left alone too; their own edit form reschedules them.
+// One run at a time: Home can call this again before the last run has
+// finished, and two runs moving the same reminder would each save a bell row.
+let syncQueue: Promise<void> = Promise.resolve();
+export function syncRemindersToEventTimes(
+  userId: string,
+  pings: { id: string; title: string; event_date: string }[],
+  personalItems: { id: string; title: string; startDate: Date }[]
+): Promise<void> {
+  syncQueue = syncQueue.then(() => syncReminders(userId, pings, personalItems));
+  return syncQueue;
+}
+
+async function syncReminders(
+  userId: string,
+  pings: { id: string; title: string; event_date: string }[],
+  personalItems: { id: string; title: string; startDate: Date }[]
+) {
+  let scheduled: Notifications.NotificationRequest[];
+  try {
+    scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  } catch (err) {
+    console.error('Error reading scheduled reminders:', err);
+    return;
+  }
+  const pingsById = new Map(pings.map((p) => [p.id, p]));
+  const itemsById = new Map(personalItems.map((i) => [i.id, i]));
+
+  for (const n of scheduled) {
+    const { title, body } = n.content;
+    // Only one-time reminders say "Starting in ..." (see labelFor above).
+    if (!body?.startsWith('Starting in ')) continue;
+    const data = n.content.data as Partial<ReminderData> | undefined;
+    // Reminders set before 1.1.19 have no data: read the lead time back
+    // from the body, and treat the start time as unknown (always resync).
+    const minutesBefore = data?.minutesBefore ?? minutesFromLabel(body.slice('Starting in '.length));
+    if (minutesBefore == null) continue;
+
+    try {
+      if (n.identifier.startsWith('event-reminder-')) {
+        const ping = pingsById.get(n.identifier.slice('event-reminder-'.length));
+        if (!ping) continue;
+        const start = new Date(ping.event_date);
+        if (data?.startsAt && new Date(data.startsAt).getTime() === start.getTime() && title === ping.title) continue;
+        await scheduleEventReminder(userId, ping.id, ping.title, start, minutesBefore);
+      } else if (n.identifier.startsWith('personal-item-reminder-')) {
+        const item = itemsById.get(n.identifier.slice('personal-item-reminder-'.length));
+        if (!item) continue;
+        if (data?.startsAt && new Date(data.startsAt).getTime() === item.startDate.getTime() && title === item.title) continue;
+        await schedulePersonalItemReminder(item.id, item.title, item.startDate, minutesBefore);
+      }
+    } catch (err) {
+      console.error('Error moving reminder:', n.identifier, err);
+    }
+  }
+}
+
+// The reverse of labelFor.
+function minutesFromLabel(label: string): number | null {
+  const m = label.match(/^(\d+) (minute|hour|day)s?$/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return m[2] === 'day' ? n * 1440 : m[2] === 'hour' ? n * 60 : n;
 }

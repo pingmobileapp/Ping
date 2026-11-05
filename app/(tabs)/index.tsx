@@ -54,7 +54,7 @@ import WeekGrid, { DaysVisible, WeekGridHandle } from "../../components/WeekGrid
 import { useAuth } from "../../lib/AuthContext";
 import { useNotificationsContext } from "../../lib/NotificationsContext";
 import { colors } from "../../lib/theme";
-import { formatDayRangeLabel } from "../../lib/eventDate";
+import { formatDayRangeLabel, formatEventTime } from "../../lib/eventDate";
 import { buildDayColumns, buildAllDayColumns, buildMonthDayBars, MonthDayBar } from "../../lib/weekTimeline";
 import { externalItemDuplicatesPing } from "../../lib/eventDedup";
 import {
@@ -70,7 +70,7 @@ import { notify } from "../../lib/notify";
 import { parseStops, shiftStops } from "../../lib/stops";
 import { refreshSyncedCopy } from "../../lib/pingCalendarSync";
 import { getHiddenEventIds, hideEvent, hiddenKeyFor, hiddenPingKey, isHidden, onHiddenEventsChange, unhideEvent } from "../../lib/hiddenEvents";
-import { getAllImportantItemIds } from "../../lib/eventReminders";
+import { getAllImportantItemIds, syncRemindersToEventTimes } from "../../lib/eventReminders";
 import { fetchDayNotes, saveDayNote } from "../../lib/dayNotes";
 import { DailyWeather, fetchWeatherForEvents } from "../../lib/eventWeather";
 import InterestedActivityCard from "../../components/InterestedActivityCard";
@@ -1052,8 +1052,20 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
 
   const handleWeekItemPress = (id: string) => {
     if (id.startsWith("int-")) {
+      // A menu, not a straight jump to Discover: Discover only lists the
+      // area you're in now, so a star saved on a trip (Boise, seen back in
+      // Utah) had no listing to un-star it from (TestFlight 1.1.18,
+      // 2026-11-02).
       const a = interestedActivities.find((x) => x.activityKey === id.slice(4));
-      if (a) router.push({ pathname: "/explore", params: { date: toDateKey(new Date(a.startsAt)), activityKey: a.activityKey } });
+      if (!a) return;
+      Alert.alert(a.title, formatEventTime(a.startsAt, false, a.endsAt), [
+        {
+          text: "See in Discover",
+          onPress: () => router.push({ pathname: "/explore", params: { date: toDateKey(new Date(a.startsAt)), activityKey: a.activityKey } }),
+        },
+        { text: "Remove from My Calendar", style: "destructive", onPress: () => handleUnstarInterested(a) },
+        { text: "Cancel", style: "cancel" },
+      ]);
       return;
     }
     if (id.startsWith("ping-")) {
@@ -1235,6 +1247,19 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   // Hidden Pings (see showPingHideOption) are left out here too, which
   // takes them off Week, Month, and Upcoming in one place - the Hidden
   // filter lists them separately (see upcomingListItems).
+  // Moves any reminder whose event has moved since it was set - see
+  // syncRemindersToEventTimes. Waits for the first load so a reminder
+  // isn't matched against an empty list. Repeating phone-calendar items
+  // share one id across occurrences, so they're left out.
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (loading || !userId) return;
+    const personalItems = externalEvents
+      .filter((e) => !e.recurrenceRule)
+      .map((e) => ({ id: e.id, title: e.title, startDate: e.startDate }));
+    syncRemindersToEventTimes(userId, events, personalItems);
+  }, [loading, events, externalEvents, session?.user?.id]);
+
   const declinedFilteredEvents = useMemo(() => {
     return events.filter((e) => {
       if (hiddenEventIds.has(hiddenPingKey(e.id))) return false;
