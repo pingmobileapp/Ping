@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light" />
+<title>Use Ping with AI apps</title>
+<meta name="description" content="Connect Ping to Muse, Claude, ChatGPT and other AI apps, and plan events by just asking." />
+<meta property="og:title" content="Use Ping with AI apps" />
+<meta property="og:description" content="Connect Ping to Muse, Claude, ChatGPT and other AI apps, and plan events by just asking." />
+<meta property="og:image" content="https://pingmobileapp.github.io/Ping/ping-icon.png" />
+<style>
+  html { background: #FFFFFF; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    max-width: 640px; margin: 0 auto; padding: 40px 20px 80px; color: #2B2B2B; background: #FFFFFF; line-height: 1.6;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; }
+  .brand img { width: 40px; height: 40px; border-radius: 10px; }
+  .brand span { font-weight: 700; font-size: 18px; }
+  h1 { font-size: 28px; line-height: 1.2; margin: 0 0 10px; }
+  h2 { font-size: 20px; margin: 36px 0 10px; }
+  h3 { font-size: 16px; margin: 22px 0 6px; }
+  .lead { font-size: 17px; color: #4A4A4A; }
+  .url {
+    display: flex; gap: 8px; align-items: center; background: #FFF8EC; border: 1px solid #E8DCC8; border-radius: 12px;
+    padding: 12px 14px; margin: 14px 0;
+  }
+  .url code { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
+  .url button {
+    border: none; background: #5DADE2; color: #FFFFFF; font-weight: 700; border-radius: 8px; padding: 8px 12px;
+    font-family: inherit; font-size: 14px; cursor: pointer; flex: 0 0 auto;
+  }
+  ol, ul { padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  .card { background: #FFF8EC; border: 1px solid #E8DCC8; border-radius: 14px; padding: 14px 18px; margin: 12px 0; }
+  .say { font-style: italic; }
+  .muted { color: #6B6B6B; font-size: 14px; }
+  a { color: #2E86C1; }
+</style>
+</head>
+<body>
+  <div class="brand"><img src="ping-icon.png" alt="" /><span>Ping</span></div>
+
+  <h1>Use Ping with AI apps</h1>
+  <p class="lead">Connect your Ping account to an AI app like Meta's Muse, Claude or ChatGPT. Then just ask it to check your calendar, make a New Event, invite people and more.</p>
+
+  <p>Connector address:</p>
+  <div class="url"><code id="mcp-url">https://rmooxzkinakbyhvxcivv.supabase.co/functions/v1/mcp</code><button id="copy">Copy</button></div>
+
+  <h2>Things you can ask</h2>
+  <div class="card">
+    <ul>
+      <li class="say">“What's on my calendar Friday?”</li>
+      <li class="say">“Make a New Event for dinner Saturday at 6 and invite my Family group.”</li>
+      <li class="say">“RSVP yes to Team Quarterly Dinner.”</li>
+      <li class="say">“Add chips to What to bring for the barbecue.”</li>
+      <li class="say">“What concerts are on this weekend? Star the one at the Eccles.”</li>
+      <li class="say">“Tell everyone in the camping trip chat we're leaving at 8.”</li>
+    </ul>
+  </div>
+
+  <h2>Connect it</h2>
+
+  <h3>Meta Muse</h3>
+  <p>Ping will show up in Muse's connector list once Meta finishes reviewing it. Then open Muse, find Ping in its connectors, and sign in.</p>
+
+  <h3>Claude</h3>
+  <ol>
+    <li>In Claude, open <strong>Settings → Connectors</strong> and choose <strong>Add custom connector</strong>.</li>
+    <li>Name it <strong>Ping</strong> and paste the connector address above.</li>
+    <li>Choose <strong>Connect</strong>. A Ping page opens. Sign in the way you do in the app.</li>
+    <li>Pick <strong>Full access</strong> or <strong>Read only</strong>, then <strong>Allow</strong>.</li>
+  </ol>
+
+  <h3>ChatGPT and other AI apps</h3>
+  <p>Any AI app that can add a remote MCP connector works the same way: add a connector, paste the address above, then sign in to Ping and allow it. In ChatGPT this is under <strong>Settings → Apps &amp; Connectors</strong> (developer mode).</p>
+
+  <h2>Signing in</h2>
+  <ul>
+    <li><strong>Google or email and password:</strong> use them just like in the app.</li>
+    <li><strong>Signed up with Apple:</strong> choose <strong>Email me a sign-in link</strong> and enter the email on your Apple ID. If you chose “Hide My Email”, use that relay address. The link brings you back to finish connecting.</li>
+  </ul>
+
+  <h2>Full access or Read only</h2>
+  <p><strong>Read only</strong> lets the AI app look at your events, groups, people and Discover, but not change anything.</p>
+  <p><strong>Full access</strong> also lets it make and edit events, Invite People, RSVP, add to What to bring, post in event chats and star things in Discover. Anything that reaches other people (invites, RSVPs, chat messages, canceling an event) is marked so your AI app asks you first.</p>
+  <p>An AI app can never delete your Ping account or pay for anything. Do those in the Ping app.</p>
+
+  <h2>What it can't see</h2>
+  <p>Personal items saved only in your phone's own calendar stay on your phone. The AI app sees your Ping events and the Discover activities you starred. People without the Ping app are added to your guest list, but their invite goes out by text from the Ping app on your phone.</p>
+
+  <h2>Disconnect</h2>
+  <p>In the Ping app, open <strong>Settings → Connected AI</strong> and tap <strong>Disconnect</strong> next to the AI app. It loses access right away. You can also remove the connector in the AI app.</p>
+
+  <p class="muted" style="margin-top:40px">Questions? <a href="support.html">Ping support</a> · <a href="privacy.html">Privacy</a> · <a href="terms.html">Terms</a></p>
+
+  <script>
+    document.getElementById('copy').onclick = async () => {
+      const text = document.getElementById('mcp-url').textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+        document.getElementById('copy').textContent = 'Copied';
+      } catch (e) {
+        /* clipboard blocked - the address is selectable */
+      }
+    };
+  </script>
+</body>
+</html>
