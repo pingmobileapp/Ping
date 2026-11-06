@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light" />
+<meta name="robots" content="noindex" />
+<title>Connect an AI app — Ping</title>
+<!-- The consent page for Ping's AI connector (supabase/functions/mcp).
+     Supabase Auth's OAuth 2.1 server sends the person here (Site URL +
+     Authorization Path) with ?authorization_id=... when an AI app - Meta's
+     Muse, Claude, ChatGPT - asks to use their Ping account. They sign in,
+     pick Full access or Read only, and approve. The choice is saved in
+     ai_connections (supabase/ai_connections.sql) before approving, so the
+     AI app's very first request already knows it. -->
+<style>
+  html { background: #FFFFFF; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    max-width: 440px; margin: 0 auto; padding: 40px 20px 80px;
+    color: #2B2B2B; background: #FFFFFF; line-height: 1.5;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; }
+  .brand img { width: 40px; height: 40px; border-radius: 10px; }
+  .brand span { font-weight: 700; font-size: 18px; }
+  h1 { font-size: 24px; margin: 0 0 8px; line-height: 1.25; }
+  p { margin: 0 0 16px; }
+  .muted { color: #6B6B6B; font-size: 14px; }
+  .card { background: #FFF8EC; border: 1px solid #E8DCC8; border-radius: 16px; padding: 18px; margin-bottom: 20px; }
+  .card ul { margin: 6px 0 0; padding-left: 20px; }
+  .card li { margin-bottom: 4px; }
+  label.choice {
+    display: flex; gap: 12px; align-items: flex-start; border: 1px solid #E8DCC8; border-radius: 12px;
+    padding: 14px; margin-bottom: 10px; cursor: pointer; background: #FFFFFF;
+  }
+  label.choice input { margin-top: 4px; accent-color: #5DADE2; width: 18px; height: 18px; flex: 0 0 18px; }
+  label.choice strong { display: block; }
+  label.choice.selected { border-color: #5DADE2; box-shadow: 0 0 0 1px #5DADE2; }
+  .btn {
+    display: block; width: 100%; box-sizing: border-box; border: none; border-radius: 12px; padding: 14px;
+    font-size: 16px; font-weight: 700; font-family: inherit; cursor: pointer; text-align: center; margin-bottom: 10px;
+    background: #5DADE2; color: #FFFFFF;
+  }
+  .btn.quiet { background: #FFF8EC; color: #2B2B2B; border: 1px solid #E8DCC8; }
+  .btn.dark { background: #000000; }
+  .btn:disabled { opacity: 0.6; cursor: default; }
+  input[type=email], input[type=password] {
+    display: block; width: 100%; box-sizing: border-box; border: 1px solid #E8DCC8; border-radius: 10px;
+    padding: 12px; font-size: 16px; font-family: inherit; background: #FFF8EC; color: #2B2B2B; margin-bottom: 10px;
+  }
+  .or { text-align: center; color: #6B6B6B; font-size: 13px; margin: 14px 0; }
+  .msg { min-height: 22px; font-size: 15px; margin: 6px 0 12px; }
+  .msg.error { color: #C0392B; }
+  .who { font-size: 14px; color: #6B6B6B; margin-top: 18px; text-align: center; }
+  .who button { border: none; background: none; color: #2E86C1; font: inherit; cursor: pointer; padding: 0; }
+  a { color: #2E86C1; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+  <div class="brand"><img src="ping-icon.png" alt="" /><span>Ping</span></div>
+
+  <div id="loading"><p class="muted">Loading…</p></div>
+
+  <!-- Step 1: sign in to Ping -->
+  <section id="signin" hidden>
+    <h1>Sign in to Ping</h1>
+    <p class="muted" id="signin-sub">An AI app wants to connect to your Ping account. Sign in the same way you do in the Ping app.</p>
+    <button class="btn dark" id="apple-btn" hidden>Continue with Apple</button>
+    <button class="btn quiet" id="google-btn">Continue with Google</button>
+    <div class="or">or with email</div>
+    <form id="email-form">
+      <input type="email" id="email" placeholder="Email" autocomplete="email" required />
+      <input type="password" id="password" placeholder="Password" autocomplete="current-password" />
+      <button class="btn" type="submit" id="password-btn">Sign in</button>
+      <button class="btn quiet" type="button" id="link-btn">Email me a sign-in link</button>
+    </form>
+    <p class="muted">Signed up with Apple? Use “Email me a sign-in link” with the email on your Apple ID. If you chose “Hide My Email” when you signed up, use that relay address.</p>
+    <div class="msg" id="signin-msg"></div>
+  </section>
+
+  <!-- Step 2: approve -->
+  <section id="consent" hidden>
+    <h1 id="consent-title">Allow this AI app to use your Ping account?</h1>
+    <p class="muted" id="consent-sub"></p>
+    <div class="card">
+      <strong>It will be able to:</strong>
+      <ul>
+        <li>See your Ping events, guests, RSVPs, What to bring and event chats</li>
+        <li>See your groups and the people you can invite</li>
+        <li>Search Discover</li>
+      </ul>
+      <p class="muted" style="margin:10px 0 0">It can't see personal items kept only in your phone's calendar, delete your account or pay for anything.</p>
+    </div>
+    <label class="choice selected" id="full-label">
+      <input type="radio" name="access" value="full" checked />
+      <span><strong>Full access</strong><span class="muted">Also make New Events, Invite People, RSVP, add to What to bring, post in event chats and star things in Discover. It should ask you before anything that reaches other people.</span></span>
+    </label>
+    <label class="choice" id="ro-label">
+      <input type="radio" name="access" value="ro" />
+      <span><strong>Read only</strong><span class="muted">It can look, but can't change anything.</span></span>
+    </label>
+    <div class="msg" id="consent-msg"></div>
+    <button class="btn" id="approve-btn">Allow</button>
+    <button class="btn quiet" id="deny-btn">Don't allow</button>
+    <p class="muted">You can disconnect it any time in the Ping app: Settings → Connected AI.</p>
+    <div class="who">Signed in as <span id="who-email"></span> · <button id="signout-btn">Not you?</button></div>
+  </section>
+
+  <section id="done" hidden>
+    <h1 id="done-title">All set</h1>
+    <p id="done-text">You can close this page and go back to your AI app.</p>
+  </section>
+
+  <section id="problem" hidden>
+    <h1>Something's not right</h1>
+    <p id="problem-text"></p>
+    <p class="muted">Start again from your AI app. Help: <a href="ai.html">Using Ping with AI apps</a></p>
+  </section>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.0/dist/umd/supabase.js"></script>
+  <script>
+    const SUPABASE_URL = 'https://rmooxzkinakbyhvxcivv.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_O97fJjA2cNuR4vvRumRsvQ_P3RuxrhO';
+    // Sign in with Apple on the web needs an Apple Services ID set up on the
+    // Supabase Apple provider. Until then the button stays hidden and Apple
+    // users sign in with an emailed link.
+    const APPLE_WEB_ENABLED = false;
+
+    const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+      auth: { persistSession: true, detectSessionInUrl: true, flowType: 'pkce' },
+    });
+
+    const params = new URLSearchParams(location.search);
+    const authorizationId = params.get('authorization_id');
+    // Back here after Google or an emailed link, with the same authorization_id.
+    const returnTo = location.origin + location.pathname + '?authorization_id=' + encodeURIComponent(authorizationId || '');
+
+    const $ = (id) => document.getElementById(id);
+    const show = (id) => {
+      for (const s of ['loading', 'signin', 'consent', 'done', 'problem']) $(s).hidden = s !== id;
+    };
+    const problem = (text) => { $('problem-text').textContent = text; show('problem'); };
+    const setMsg = (id, text, isError) => { $(id).textContent = text || ''; $(id).className = 'msg' + (isError ? ' error' : ''); };
+
+    let details = null;
+
+    async function start() {
+      if (!authorizationId) return problem('This page opens from an AI app when you connect Ping. There was no request to approve.');
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) {
+        $('apple-btn').hidden = !APPLE_WEB_ENABLED;
+        show('signin');
+        return;
+      }
+      const { data, error } = await sb.auth.oauth.getAuthorizationDetails(authorizationId);
+      if (error) return problem("This connection request has expired or was already used. (" + error.message + ")");
+      if (data.redirect_url) {
+        // Already approved before - straight back to the AI app.
+        location.assign(data.redirect_url);
+        return;
+      }
+      details = data;
+      const name = (data.client && data.client.name) || 'An AI app';
+      $('consent-title').textContent = 'Allow ' + name + ' to use your Ping account?';
+      $('consent-sub').textContent = name + ' is asking to connect to Ping as you.';
+      $('who-email').textContent = (data.user && data.user.email) || session.user.email || 'you';
+      show('consent');
+    }
+
+    // ---- sign in ----
+    $('google-btn').onclick = async () => {
+      const { error } = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: returnTo } });
+      if (error) setMsg('signin-msg', error.message, true);
+    };
+    $('apple-btn').onclick = async () => {
+      const { error } = await sb.auth.signInWithOAuth({ provider: 'apple', options: { redirectTo: returnTo } });
+      if (error) setMsg('signin-msg', error.message, true);
+    };
+    $('email-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const password = $('password').value;
+      if (!password) return setMsg('signin-msg', 'Enter your password, or use “Email me a sign-in link”.', true);
+      $('password-btn').disabled = true;
+      const { error } = await sb.auth.signInWithPassword({ email: $('email').value.trim(), password });
+      $('password-btn').disabled = false;
+      if (error) return setMsg('signin-msg', error.message === 'Invalid login credentials' ? "That email and password don't match a Ping account." : error.message, true);
+      show('loading');
+      start();
+    };
+    $('link-btn').onclick = async () => {
+      const email = $('email').value.trim();
+      if (!email) return setMsg('signin-msg', 'Enter your email first.', true);
+      $('link-btn').disabled = true;
+      // Existing Ping accounts only - this page never makes a new account.
+      const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: returnTo } });
+      $('link-btn').disabled = false;
+      if (error) return setMsg('signin-msg', /signups not allowed|not found/i.test(error.message) ? "There's no Ping account with that email." : error.message, true);
+      setMsg('signin-msg', 'Check your email and tap the link. It brings you back here.', false);
+    };
+
+    // ---- approve ----
+    for (const input of document.querySelectorAll('input[name=access]')) {
+      input.onchange = () => {
+        $('full-label').classList.toggle('selected', input.value === 'full' && input.checked);
+        $('ro-label').classList.toggle('selected', input.value === 'ro' && input.checked);
+      };
+    }
+    $('approve-btn').onclick = async () => {
+      if (!details) return;
+      $('approve-btn').disabled = $('deny-btn').disabled = true;
+      setMsg('consent-msg', '');
+      const readOnly = document.querySelector('input[name=access]:checked').value === 'ro';
+      const { data: { session } } = await sb.auth.getSession();
+      // Saved first, so the AI app's first request already sees the choice.
+      const { error: saveError } = await sb.from('ai_connections').upsert(
+        {
+          user_id: session.user.id,
+          client_id: details.client.id,
+          client_name: details.client.name || null,
+          read_only: readOnly,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id,client_id' }
+      );
+      if (saveError) {
+        $('approve-btn').disabled = $('deny-btn').disabled = false;
+        return setMsg('consent-msg', "Couldn't save your choice. Try again.", true);
+      }
+      const { data, error } = await sb.auth.oauth.approveAuthorization(authorizationId, { skipBrowserRedirect: true });
+      if (error || !data?.redirect_url) {
+        $('approve-btn').disabled = $('deny-btn').disabled = false;
+        return setMsg('consent-msg', (error && error.message) || 'Something went wrong. Try again.', true);
+      }
+      $('done-title').textContent = 'Connected';
+      $('done-text').textContent = 'Taking you back to ' + (details.client.name || 'your AI app') + '…';
+      show('done');
+      location.assign(data.redirect_url);
+    };
+    $('deny-btn').onclick = async () => {
+      $('approve-btn').disabled = $('deny-btn').disabled = true;
+      const { data } = await sb.auth.oauth.denyAuthorization(authorizationId, { skipBrowserRedirect: true });
+      $('done-title').textContent = 'Not connected';
+      $('done-text').textContent = 'Nothing was shared. You can close this page.';
+      show('done');
+      if (data?.redirect_url) location.assign(data.redirect_url);
+    };
+    $('signout-btn').onclick = async () => {
+      await sb.auth.signOut({ scope: 'local' });
+      show('signin');
+    };
+
+    start();
+  </script>
+</body>
+</html>

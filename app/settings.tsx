@@ -21,6 +21,7 @@ import { normalizePhone } from '../lib/phone';
 import { healInviteLinks } from '../lib/healInvites';
 import { requestAppTourReplay } from '../lib/appTour';
 import CalendarSyncSetting from '../components/CalendarSyncSetting';
+import ConnectedAiSetting from '../components/ConnectedAiSetting';
 import { colors } from '../lib/theme';
 import { fetchConnectStatus, startConnectOnboarding, ConnectAccountState } from '../lib/stripeConnect';
 import { DISCOVER_LISTINGS_ENABLED } from '../lib/features';
@@ -292,6 +293,8 @@ export default function SettingsScreen() {
           </View>
 
           {!!session?.user?.id && <CalendarSyncSetting userId={session.user.id} />}
+
+          {!!session?.user?.id && <ConnectedAiSetting userId={session.user.id} />}
 
           <View style={styles.payoutsSection}>
             <TouchableOpacity
