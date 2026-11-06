@@ -145,10 +145,9 @@
     const params = new URLSearchParams(window.location.search);
     const inviteeId = params.get('i');
     const content = document.getElementById('content');
-    // Flip to true once Ping is live on Google Play - until then an Android
-    // visitor gets a "coming soon" note instead of a link to a Play listing
-    // that doesn't exist yet.
-    const PLAY_STORE_LIVE = false;
+    // Ping is live on Google Play (1.1.18, approved 2026-11-04). Set to false
+    // to show Android visitors a "coming soon" note instead of the Play link.
+    const PLAY_STORE_LIVE = true;
     const IS_ANDROID = /android/i.test(navigator.userAgent);
     const IS_APPLE = /iphone|ipad|ipod|macintosh/i.test(navigator.userAgent);
     const APP_STORE_URL = IS_ANDROID
