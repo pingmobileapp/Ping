@@ -39,6 +39,7 @@ import { containsObjectionableContent } from '../lib/contentFilter';
 import { reportContent } from '../lib/moderation';
 import ImportContactsModal from './ImportContactsModal';
 import ImageCropModal from './ImageCropModal';
+import PhotoGalleryModal from './PhotoGalleryModal';
 import NonAppInviteQueue, { QueueContact } from './NonAppInviteQueue';
 import RecurrencePicker from './RecurrencePicker';
 import StopsEditor from './StopsEditor';
@@ -159,6 +160,10 @@ export default function CreateEventModal({
   const [cropModalVisible, setCropModalVisible] = useState(false);
   const [cropSourceUri, setCropSourceUri] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
+  // A photo picked from Ping's Gallery is already in Ping's storage, so it's
+  // saved as-is (no upload, no crop) - see PhotoGalleryModal.
+  const [galleryImageUrl, setGalleryImageUrl] = useState<string | null>(null);
+  const [galleryVisible, setGalleryVisible] = useState(false);
 
   const [contacts, setContacts] = useState<Contact[]>([]);
   // Materializing a shared group's members into your own contacts (see
@@ -340,25 +345,27 @@ export default function CreateEventModal({
   // been cropped to the exact target frame there's no extra image data
   // left outside it to drag into view, so recropping the previous crop
   // result would have nothing to actually reposition.
+  const openGallery = () => setGalleryVisible(true);
   const handlePhotoTap = async () => {
     if (imageUri) {
+      const fromGallery = imageUri === galleryImageUrl;
       Alert.alert('Photo', undefined, [
-        { text: 'Recrop This Photo', onPress: () => startCrop(originalImageUri || imageUri) },
+        ...(fromGallery ? [] : [{ text: 'Recrop This Photo', onPress: () => startCrop(originalImageUri || imageUri) }]),
         {
           text: 'Choose a Different Photo',
           onPress: async () => {
-            const uri = await pickEventImage();
+            const uri = await pickEventImage(openGallery);
             if (uri) {
               setOriginalImageUri(uri);
               startCrop(uri);
             }
           },
         },
-        { text: 'Cancel', style: 'cancel' },
+        { text: 'Cancel', style: 'cancel' as const },
       ]);
       return;
     }
-    const uri = await pickEventImage();
+    const uri = await pickEventImage(openGallery);
     if (uri) {
       setOriginalImageUri(uri);
       startCrop(uri);
@@ -504,6 +511,7 @@ export default function CreateEventModal({
     setCapacity('');
     setPrice('');
     setImageUri(null);
+    setGalleryImageUrl(null);
     setOriginalImageUri(null);
     setItems([]);
     setBringOpen(false);
@@ -882,7 +890,10 @@ export default function CreateEventModal({
 
     let imageUrl: string | null = null;
     let imageUrlFull: string | null = null;
-    if (imageUri) {
+    if (imageUri && imageUri === galleryImageUrl) {
+      imageUrl = galleryImageUrl;
+      imageUrlFull = galleryImageUrl;
+    } else if (imageUri) {
       setUploadingImage(true);
       try {
         [imageUrl, imageUrlFull] = await Promise.all([
@@ -1546,7 +1557,19 @@ export default function CreateEventModal({
         onCancel={() => setCropModalVisible(false)}
         onCropped={(uri) => {
           setImageUri(uri);
+          setGalleryImageUrl(null);
           setCropModalVisible(false);
+        }}
+      />
+
+      <PhotoGalleryModal
+        visible={galleryVisible}
+        onClose={() => setGalleryVisible(false)}
+        onPick={(url) => {
+          setGalleryVisible(false);
+          setGalleryImageUrl(url);
+          setOriginalImageUri(null);
+          setImageUri(url);
         }}
       />
     </SheetModal>

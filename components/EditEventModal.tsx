@@ -47,6 +47,7 @@ import { deviceTimeZone, instantFromWallClock, timeZoneForLocation, wallClockIn 
 import { EventStop, cleanStops, parseStops, shiftStops, stopDays } from '../lib/stops';
 import ImportContactsModal from './ImportContactsModal';
 import ImageCropModal from './ImageCropModal';
+import PhotoGalleryModal from './PhotoGalleryModal';
 import NonAppInviteQueue, { QueueContact } from './NonAppInviteQueue';
 import { useRegisterModal } from '../lib/modalPresence';
 
@@ -141,6 +142,9 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
   const [originalImageUri, setOriginalImageUri] = useState<string | null>(null);
   const [existingImageUrl, setExistingImageUrl] = useState<string | null>(null);
   const [existingImageUrlFull, setExistingImageUrlFull] = useState<string | null>(null);
+  // Ping's Gallery (PhotoGalleryModal): a pick is already in Ping's
+  // storage, so it becomes the saved photo directly - nothing to upload.
+  const [galleryVisible, setGalleryVisible] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [cropModalVisible, setCropModalVisible] = useState(false);
   const [cropSourceUri, setCropSourceUri] = useState<string | null>(null);
@@ -550,7 +554,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
         {
           text: 'Choose a Different Photo',
           onPress: async () => {
-            const uri = await pickEventImage();
+            const uri = await pickEventImage(() => setGalleryVisible(true));
             if (uri) {
               setOriginalImageUri(uri);
               startCrop(uri);
@@ -561,7 +565,7 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
       ]);
       return;
     }
-    const uri = await pickEventImage();
+    const uri = await pickEventImage(() => setGalleryVisible(true));
     if (uri) {
       setOriginalImageUri(uri);
       startCrop(uri);
@@ -1698,6 +1702,18 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
         onCropped={(uri) => {
           setImageUri(uri);
           setCropModalVisible(false);
+        }}
+      />
+
+      <PhotoGalleryModal
+        visible={galleryVisible}
+        onClose={() => setGalleryVisible(false)}
+        onPick={(url) => {
+          setGalleryVisible(false);
+          setExistingImageUrl(url);
+          setExistingImageUrlFull(url);
+          setImageUri(null);
+          setOriginalImageUri(null);
         }}
       />
     </SheetModal>

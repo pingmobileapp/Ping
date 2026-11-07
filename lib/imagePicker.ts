@@ -1,12 +1,29 @@
 import { Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 
-async function pickImage(allowsEditing: boolean, aspect?: [number, number]): Promise<string | null> {
+async function pickImage(
+  allowsEditing: boolean,
+  aspect?: [number, number],
+  onGallery?: () => void
+): Promise<string | null> {
   return new Promise((resolve) => {
     Alert.alert(
       'Add Photo',
       undefined,
       [
+        // Ping's Gallery of free photos (components/PhotoGalleryModal) -
+        // event photos only. The caller opens it; nothing is returned here.
+        ...(onGallery
+          ? [
+              {
+                text: 'Choose from Gallery',
+                onPress: () => {
+                  resolve(null);
+                  onGallery();
+                },
+              },
+            ]
+          : []),
         {
           text: 'Take Photo',
           onPress: async () => {
@@ -53,8 +70,8 @@ async function pickImage(allowsEditing: boolean, aspect?: [number, number]): Pro
 // goes through ImageCropModal instead, which is also how re-cropping an
 // already-selected photo works (that flow has no "picking" step at all, so
 // it could never have gone through the OS crop anyway).
-export async function pickEventImage(): Promise<string | null> {
-  return pickImage(false);
+export async function pickEventImage(onGallery?: () => void): Promise<string | null> {
+  return pickImage(false, undefined, onGallery);
 }
 
 export async function pickProfileImage(): Promise<string | null> {

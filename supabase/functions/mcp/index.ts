@@ -21,9 +21,14 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2.112.0';
 import { TOOLS, ToolError, toolListing, type Ctx } from './tools.ts';
+import { ADMIN_USER_ID } from './pingRules.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!;
+// Only for the shared photo library (see tools.ts saveToLibrary).
+const libraryClient = createClient(SUPABASE_URL, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
 // The public address of this function. Behind the edge gateway req.url
 // isn't always the public one, so it's built from SUPABASE_URL (overridable
 // for local testing).
@@ -32,12 +37,14 @@ const AUTH_SERVER = `${SUPABASE_URL}/auth/v1`;
 const HELP_URL = 'https://pingmobileapp.github.io/Ping/ai.html';
 
 const SUPPORTED_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
-const SERVER_INFO = { name: 'ping', title: 'Ping', version: '1.0.0', websiteUrl: HELP_URL };
+const SERVER_INFO = { name: 'ping', title: 'Ping', version: '1.1.0', websiteUrl: HELP_URL };
 const INSTRUCTIONS = [
   "Ping is a shared calendar for events with friends and family. Words to use with the person: \"New Event\", \"Invite People\", \"What to bring\", \"Discover\", \"Shared Events\".",
   'Event times: pass the person\'s IANA time_zone when you know it.',
   "Ping can't see personal items kept only in the phone's own calendar.",
-  'Tools marked Sensitive write notify or affect other people - confirm with the person before each one. cancel_event cannot be undone.',
+  'Tools marked Sensitive write notify or affect other people - confirm with the person before each one. cancel_event and delete_group cannot be undone.',
+  'set_reminder reminds only the person, with a Ping notification on their phone.',
+  'When the person makes a New Event, offer to add a fitting photo (find_event_photos, then set_event_photo).',
   'People without the Ping app get invites by text from the person\'s phone; tell them to send those from the app.',
 ].join(' ');
 
@@ -132,7 +139,8 @@ Deno.serve(async (req) => {
       .maybeSingle();
     readOnly = conn ? conn.read_only : true;
   }
-  const visibleTools = TOOLS.filter((t) => !readOnly || t.cls === 'read');
+  const isAdmin = user.id === ADMIN_USER_ID;
+  const visibleTools = TOOLS.filter((t) => (!readOnly || t.cls === 'read') && (!t.adminOnly || isAdmin));
 
   const ctx: Ctx = {
     db,
@@ -140,6 +148,7 @@ Deno.serve(async (req) => {
     userEmail: user.email ?? null,
     userMeta: (user.user_metadata ?? {}) as Ctx['userMeta'],
     push: { url: SUPABASE_URL, token, apikey: ANON_KEY },
+    library: libraryClient,
   };
 
   // ---- JSON-RPC ----
@@ -177,7 +186,7 @@ Deno.serve(async (req) => {
       case 'tools/call': {
         const name = String(msg.params?.name ?? '');
         const args = (msg.params?.arguments ?? {}) as Record<string, unknown>;
-        const tool = TOOLS.find((t) => t.name === name);
+        const tool = visibleTools.find((t) => t.name === name) ?? TOOLS.find((t) => t.name === name && !t.adminOnly);
         if (!tool) return rpcError(msg.id, -32602, `Unknown tool: ${name}`);
         if (readOnly && tool.cls !== 'read') {
           return rpcResult(msg.id, {

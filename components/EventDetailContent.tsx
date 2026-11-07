@@ -737,7 +737,10 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
 
     const { error } = await supabase
       .from('invitees')
-      .update({ reminder_minutes_before: minutesBefore })
+      // reminder_push false: the phone handles this reminder now, so a
+      // reminder set earlier from an AI app (supabase/ai_reminders.sql)
+      // isn't also sent by the server.
+      .update({ reminder_minutes_before: minutesBefore, reminder_push: false })
       .eq('id', inviteeId);
     if (error) {
       console.error('Error updating reminder:', error);

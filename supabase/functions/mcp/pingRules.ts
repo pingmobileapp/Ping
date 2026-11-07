@@ -271,7 +271,7 @@ export async function notify(
 
 // ---------- lib/timeZones.ts ----------
 
-function partsIn(instant: Date, timeZone: string) {
+export function partsIn(instant: Date, timeZone: string) {
   const parts = Object.fromEntries(
     new Intl.DateTimeFormat('en-US', {
       timeZone,
@@ -468,7 +468,7 @@ export async function flagIfObjectionable(
 const OBJECTIONABLE_TERMS = [
   'nigger', 'nigga', 'faggot', 'retard', 'cunt', 'kike', 'spic', 'chink', 'tranny', 'rape', 'kill yourself', 'kys',
 ];
-function containsObjectionableContent(text: string | null | undefined): boolean {
+export function containsObjectionableContent(text: string | null | undefined): boolean {
   if (!text) return false;
   const normalized = text.toLowerCase();
   return OBJECTIONABLE_TERMS.some((term) => normalized.includes(term));
