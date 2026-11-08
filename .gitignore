@@ -46,3 +46,4 @@ app-example
 supabase/.temp/
 
 .claude/settings.local.json
+deno.lock
