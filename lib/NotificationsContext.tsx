@@ -58,6 +58,7 @@ const NotificationsContext = createContext<NotificationsContextType>({
   unreadCount: 0,
   unreadMessageCount: 0,
   unreadOtherCount: 0,
+  missedCount: 0,
   loading: true,
   refresh: noopAsync,
   markRead: noopAsync,

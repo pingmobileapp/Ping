@@ -1,76 +1,26 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { View, Image, TouchableOpacity, StyleSheet, Modal, Pressable, Text, Animated, AccessibilityInfo } from 'react-native';
+import React, { useRef, useState } from 'react';
+import { View, Image, TouchableOpacity, StyleSheet, Modal, Pressable, Text } from 'react-native';
 import { useRouter } from 'expo-router';
 import { colors } from '../lib/theme';
 
 const MENU_WIDTH = 200;
 
-// The app-icon mark (blue = nothing new, red = something new), trimmed and
-// made transparent from assets/images/splash-icon.png and "icon red.png" so
-// it sits cleanly on the header instead of inside a pale square. The blue
-// one is tinted to colors.primary so it matches Create/Groups beside it
-// (TestFlight feedback: "change it out for the icon that matches the color
-// of this page").
+// The app-icon mark, trimmed and made transparent from
+// assets/images/splash-icon.png and tinted to colors.primary so it matches
+// Create/Groups beside it (TestFlight feedback: "change it out for the icon
+// that matches the color of this page").
+//
+// It stays blue all the time. Anything missed shows as a red badge with the
+// count instead of the old red mark that slowly "pinged" (TestFlight
+// feedback 83: easier to understand at a glance).
 const logoBlue = require('../assets/images/ping-mark-app-blue.png');
-// The red mark split into its three shapes (same canvas, so they stack
-// exactly), for the "sending a signal" animation below.
-const redDot = require('../assets/images/ping-mark-red-dot.png');
-const redMid = require('../assets/images/ping-mark-red-mid.png');
-const redOuter = require('../assets/images/ping-mark-red-outer.png');
 
-// When something's new, the red mark slowly "pings": just the dot, then the
-// dot and middle arc, then the full mark, then back to the dot - like it's
-// sending out a signal. Static for anyone with Reduce Motion turned on.
-const PHASE_MS = 650;
-const FADE_MS = 220;
-
-function SignalingRedMark() {
-  const mid = useRef(new Animated.Value(0)).current;
-  const outer = useRef(new Animated.Value(0)).current;
-  const [reduceMotion, setReduceMotion] = useState(false);
-
-  useEffect(() => {
-    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion).catch(() => {});
-    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
-    return () => sub.remove();
-  }, []);
-
-  useEffect(() => {
-    if (reduceMotion) {
-      mid.setValue(1);
-      outer.setValue(1);
-      return;
-    }
-    mid.setValue(0);
-    outer.setValue(0);
-    const fade = (v: Animated.Value, to: number) =>
-      Animated.timing(v, { toValue: to, duration: FADE_MS, useNativeDriver: true });
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.delay(PHASE_MS), // 1: dot
-        fade(mid, 1),
-        Animated.delay(PHASE_MS), // 2: dot + middle
-        fade(outer, 1),
-        Animated.delay(PHASE_MS * 1.4), // 3: full mark, held a little longer
-        Animated.parallel([fade(mid, 0), fade(outer, 0)]),
-      ])
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [reduceMotion, mid, outer]);
-
-  return (
-    <View style={styles.logo}>
-      <Image source={redDot} style={styles.layer} resizeMode="contain" />
-      <Animated.Image source={redMid} style={[styles.layer, { opacity: mid }]} resizeMode="contain" />
-      <Animated.Image source={redOuter} style={[styles.layer, { opacity: outer }]} resizeMode="contain" />
-    </View>
-  );
-}
+export const badgeLabel = (count: number) => (count > 99 ? '99+' : String(count));
 
 type Props = {
-  // Anything unread at all - turns the logo red and starts its signal.
-  hasNotifications?: boolean;
+  // Every missed message and update (see lib/useNotifications.ts
+  // missedCount) - the number in the red badge. 0 hides the badge.
+  missedCount?: number;
   // Unread chat messages - red dot on the Messages item.
   hasUnreadMessages?: boolean;
   // Unread everything-else (invites, RSVPs, updates) - red dot on
@@ -79,7 +29,7 @@ type Props = {
 };
 
 export default function PingLogoMenu({
-  hasNotifications = false,
+  missedCount = 0,
   hasUnreadMessages = false,
   hasUnreadNotifications = false,
 }: Props) {
@@ -113,12 +63,21 @@ export default function PingLogoMenu({
 
   return (
     <>
-      <TouchableOpacity ref={buttonRef} onPress={openMenu} activeOpacity={0.8}>
+      <TouchableOpacity
+        ref={buttonRef}
+        onPress={openMenu}
+        activeOpacity={0.8}
+        accessibilityRole="button"
+        accessibilityLabel={missedCount > 0 ? `Messages and notifications, ${missedCount} new` : 'Messages and notifications'}
+      >
         <View style={styles.logoWrap}>
-          {hasNotifications ? (
-            <SignalingRedMark />
-          ) : (
-            <Image source={logoBlue} style={styles.logo} resizeMode="contain" />
+          <Image source={logoBlue} style={styles.logo} resizeMode="contain" />
+          {missedCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText} numberOfLines={1}>
+                {badgeLabel(missedCount)}
+              </Text>
+            </View>
           )}
         </View>
       </TouchableOpacity>
@@ -143,11 +102,24 @@ export default function PingLogoMenu({
 }
 
 const styles = StyleSheet.create({
-  // Both marks share one square size, so the blue/red swap never nudges the
-  // header layout.
   logo: { width: 28, height: 28 },
-  layer: { position: 'absolute', top: 0, left: 0, width: 28, height: 28 },
   logoWrap: { position: 'relative' },
+  // Sits on the mark's top-right corner, like an app-icon badge.
+  badge: {
+    position: 'absolute',
+    top: -6,
+    right: -10,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    backgroundColor: colors.danger,
+    borderWidth: 1.5,
+    borderColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: { color: colors.white, fontSize: 11, fontWeight: '800', lineHeight: 13 },
   backdrop: { flex: 1 },
   menu: {
     position: 'absolute',

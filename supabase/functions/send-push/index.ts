@@ -34,14 +34,19 @@ serve(async (req) => {
     // this push is for is already committed and counted here.
     const { data: unreadRows, error: unreadError } = await supabase
       .from('notifications')
-      .select('recipient_id')
+      .select('recipient_id, unread_count')
       .in('recipient_id', user_ids)
-      .is('read_at', null);
+      .is('read_at', null)
+      // Reminders set in the app are saved ahead, dated when they're due.
+      .lte('created_at', new Date().toISOString());
     if (unreadError) console.error('Error counting unread notifications:', unreadError);
 
+    // Same total as the Ping logo's badge (lib/useNotifications.ts
+    // missedCount): a merged row counts every message or update it stands
+    // for since it was last read (supabase/notification_unread_count.sql).
     const unreadCounts = new Map<string, number>();
     (unreadRows || []).forEach((r) => {
-      unreadCounts.set(r.recipient_id, (unreadCounts.get(r.recipient_id) || 0) + 1);
+      unreadCounts.set(r.recipient_id, (unreadCounts.get(r.recipient_id) || 0) + Math.max(r.unread_count ?? 1, 1));
     });
 
     const messages = profiles.map((p) => ({

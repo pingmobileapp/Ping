@@ -53,6 +53,7 @@ import ScheduleReviewModal from "../../components/ScheduleReviewModal";
 import WeekGrid, { DaysVisible, WeekGridHandle } from "../../components/WeekGrid";
 import { useAuth } from "../../lib/AuthContext";
 import { useNotificationsContext } from "../../lib/NotificationsContext";
+import { unreadWeight } from "../../lib/useNotifications";
 import { colors } from "../../lib/theme";
 import { formatDayRangeLabel, formatEventTime } from "../../lib/eventDate";
 import { buildDayColumns, buildAllDayColumns, buildMonthDayBars, MonthDayBar } from "../../lib/weekTimeline";
@@ -518,9 +519,9 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
 
   const {
     notifications,
-    unreadCount,
     unreadMessageCount,
     unreadOtherCount,
+    missedCount,
     refresh: refreshNotifications,
     pendingEventModal,
     clearEventModal,
@@ -541,10 +542,16 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
   // (by any path - this icon, a swipe, a push tap), and that update flows
   // back into `notifications` via useNotifications' own realtime
   // subscription, so this recomputes on its own with no extra wiring here.
-  const unreadMessageEventIds = useMemo(
-    () => new Set(notifications.filter((n) => n.type === 'message' && n.event_id && !n.read_at).map((n) => n.event_id!)),
-    [notifications]
-  );
+  // Per event, how many chat messages arrived since the chat was last
+  // opened - the number on the card's chat bubble (TestFlight feedback 83).
+  const unreadMessagesByEvent = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const n of notifications) {
+      if (n.type !== 'message' || !n.event_id || n.read_at) continue;
+      map.set(n.event_id, (map.get(n.event_id) ?? 0) + unreadWeight(n));
+    }
+    return map;
+  }, [notifications]);
 
   // visibleEvents' "is this event in the past" cutoff reads this instead of
   // calling Date.now() directly inside that useMemo - a plain Date.now()
@@ -1923,7 +1930,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
         weather={weatherByEventId[item.event.id]}
         bringing={myBringingByEvent[item.event.id]}
         onPressChat={(e) => openEvent(e, { startOnMessages: true })}
-        hasUnreadMessages={unreadMessageEventIds.has(item.event.id)}
+        unreadMessageCount={unreadMessagesByEvent.get(item.event.id) ?? 0}
       />
     ) : item.kind === "interested" ? (
       <InterestedActivityCard
@@ -2005,7 +2012,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
         <View style={styles.headerRow}>
           <View ref={tourRefs.logo} collapsable={false}>
             <PingLogoMenu
-              hasNotifications={unreadCount > 0}
+              missedCount={missedCount}
               hasUnreadMessages={unreadMessageCount > 0}
               hasUnreadNotifications={unreadOtherCount > 0}
             />

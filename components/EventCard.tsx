@@ -51,7 +51,9 @@ type Props = {
   // Jumps straight to this event's message thread instead of opening on
   // the normal detail face - see EventDetailModal's startOnMessages.
   onPressChat?: (event: PingEvent) => void;
-  hasUnreadMessages?: boolean;
+  // Chat messages since this event's chat was last opened - shown as a red
+  // count on the chat bubble. 0 hides it.
+  unreadMessageCount?: number;
   onLongPress?: (event: PingEvent) => void;
   // What you've signed up to bring, already formatted - see index.tsx's
   // fetchMyBringing. Omitted when you haven't claimed anything.
@@ -65,7 +67,7 @@ export default function EventCard({
   rsvpStatus,
   weather,
   onPressChat,
-  hasUnreadMessages,
+  unreadMessageCount = 0,
   onLongPress,
   bringing,
 }: Props) {
@@ -130,9 +132,21 @@ export default function EventCard({
                   onPress={() => onPressChat(event)}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   style={styles.chatButton}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    unreadMessageCount > 0
+                      ? `Chat, ${unreadMessageCount} new message${unreadMessageCount === 1 ? '' : 's'}`
+                      : 'Chat'
+                  }
                 >
                   <Text style={styles.chatIcon}>💬</Text>
-                  {!!hasUnreadMessages && <View style={styles.unreadDot} />}
+                  {unreadMessageCount > 0 && (
+                    <View style={styles.unreadBadge}>
+                      <Text style={styles.unreadBadgeText} numberOfLines={1}>
+                        {unreadMessageCount > 99 ? '99+' : unreadMessageCount}
+                      </Text>
+                    </View>
+                  )}
                 </TouchableOpacity>
               )}
             </View>
@@ -197,17 +211,23 @@ const styles = StyleSheet.create({
   bringingText: { color: colors.primary, fontSize: 13, fontWeight: '600', marginTop: 4 },
   bringingItems: { fontWeight: '800' },
   weatherText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
-  chatButton: { position: 'relative' },
-  chatIcon: { fontSize: 15 },
-  unreadDot: {
+  // Bigger than the old 15pt so it reads as something to tap
+  // (TestFlight feedback 83).
+  chatButton: { position: 'relative', paddingHorizontal: 2 },
+  chatIcon: { fontSize: 24, lineHeight: 30 },
+  unreadBadge: {
     position: 'absolute',
-    top: -2,
-    right: -2,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    top: -6,
+    right: -8,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
     backgroundColor: colors.danger,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: colors.surfaceLight,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
+  unreadBadgeText: { color: colors.white, fontSize: 11, fontWeight: '800', lineHeight: 13 },
 });

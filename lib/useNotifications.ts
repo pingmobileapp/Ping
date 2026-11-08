@@ -13,7 +13,15 @@ export type NotificationRow = {
   body: string;
   created_at: string;
   read_at: string | null;
+  // How many messages/updates this merged row stands for since it was last
+  // read (supabase/notification_unread_count.sql). Missing on rows loaded
+  // before that column existed - count those as one.
+  unread_count?: number;
 };
+
+// What one unread row adds to the badge numbers.
+export const unreadWeight = (n: { read_at: string | null; unread_count?: number }) =>
+  n.read_at ? 0 : Math.max(n.unread_count ?? 1, 1);
 
 // Chat messages (event and group) live in Messages, with a red dot there,
 // not in the Notifications list (TestFlight feedback, build 113). They still
@@ -188,6 +196,9 @@ export function useNotifications(userId?: string | null) {
   const unreadCount = notifications.filter((n) => !n.read_at).length + pendingInvites.length;
   const unreadMessageCount = notifications.filter((n) => !n.read_at && isMessageNotification(n)).length;
   const unreadOtherCount = unreadCount - unreadMessageCount;
+  // Every missed message and update, not just rows - the number on the Ping
+  // logo and the app icon (TestFlight feedback 83). Matches send-push.
+  const missedCount = notifications.reduce((sum, n) => sum + unreadWeight(n), 0) + pendingInvites.length;
 
   // Pushes carry their own badge number (see supabase/functions/send-push),
   // but that only ever grows a stale number until the next push - reading
@@ -206,14 +217,14 @@ export function useNotifications(userId?: string | null) {
     if (!userId) return;
     if (badgeTimeoutRef.current) clearTimeout(badgeTimeoutRef.current);
     badgeTimeoutRef.current = setTimeout(() => {
-      Notifications.setBadgeCountAsync(unreadCount).catch((err) =>
+      Notifications.setBadgeCountAsync(missedCount).catch((err) =>
         console.error('Error setting badge count:', err)
       );
     }, 400);
     return () => {
       if (badgeTimeoutRef.current) clearTimeout(badgeTimeoutRef.current);
     };
-  }, [userId, unreadCount]);
+  }, [userId, missedCount]);
 
   return {
     notifications,
@@ -221,6 +232,7 @@ export function useNotifications(userId?: string | null) {
     unreadCount,
     unreadMessageCount,
     unreadOtherCount,
+    missedCount,
     loading,
     refresh: fetchAll,
     markRead,
