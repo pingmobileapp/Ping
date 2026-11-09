@@ -70,10 +70,15 @@ export default function NotificationsScreen() {
     }
   };
 
-  // Chat messages are shown in Messages instead (see isMessageNotification).
+  // Read chat messages live in Messages (see isMessageNotification), but an
+  // unread one counts on the Ping logo and app icon badge, so it has to be
+  // here too - otherwise the badge shows a number this screen can't explain
+  // and "Mark all read" can't clear (owner report, 2026-11-09). Opening one
+  // goes to its chat, which is what marks it read.
+  const unreadChats = allNotifications.filter((n) => isMessageNotification(n) && !n.read_at);
   const notifications = allNotifications.filter((n) => !isMessageNotification(n));
   const hasUnread = notifications.some((n) => !n.read_at);
-  const isEmpty = !loading && pendingInvites.length === 0 && notifications.length === 0;
+  const isEmpty = !loading && pendingInvites.length === 0 && unreadChats.length === 0 && notifications.length === 0;
 
   return (
     <View style={styles.container}>
@@ -110,6 +115,17 @@ export default function NotificationsScreen() {
                     if (router.canDismiss()) router.dismissTo('/');
                   }}
                 />
+              ))}
+            </View>
+          )}
+
+          {unreadChats.length > 0 && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.sectionTitle}>New messages</Text>
+              </View>
+              {unreadChats.map((n) => (
+                <NotificationRow key={n.id} notification={n} onPress={openNotification} />
               ))}
             </View>
           )}

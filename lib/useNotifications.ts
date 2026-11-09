@@ -24,8 +24,9 @@ export const unreadWeight = (n: { read_at: string | null; unread_count?: number 
   n.read_at ? 0 : Math.max(n.unread_count ?? 1, 1);
 
 // Chat messages (event and group) live in Messages, with a red dot there,
-// not in the Notifications list (TestFlight feedback, build 113). They still
-// turn the Ping logo red and count toward the app icon badge.
+// rather than in the Notifications list's Recent section (TestFlight
+// feedback, build 113). They still count on the Ping logo and app icon
+// badge, so Notifications lists them under New messages while unread.
 export const isMessageNotification = (n: { type: string }) => n.type === 'message' || n.type === 'group_message';
 
 export type PendingInvite = {
@@ -172,8 +173,7 @@ export function useNotifications(userId?: string | null) {
   }, []);
 
   const markAllRead = useCallback(async () => {
-    // Only what the Notifications list shows - message notifications clear
-    // when their conversation is opened.
+    // Not chat messages - those clear when their conversation is opened.
     const unreadIds = notifications.filter((n) => !n.read_at && !isMessageNotification(n)).map((n) => n.id);
     if (unreadIds.length === 0) return;
     const now = new Date().toISOString();
