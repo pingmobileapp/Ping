@@ -108,7 +108,7 @@ serve(async (req) => {
         stops: Array.isArray(event.stops)
           ? event.stops
               .filter((s: any) => s && typeof s.day === 'string')
-              .map((s: any) => ({ day: s.day, name: s.name || '', address: s.address || '' }))
+              .map((s: any) => ({ day: s.day, name: s.name || '', address: s.address || '', note: s.note || '' }))
           : [],
         hostName,
         rsvpStatus: invitee.rsvp_status,

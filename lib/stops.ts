@@ -10,6 +10,7 @@ export type EventStop = {
   day: string; // YYYY-MM-DD, local
   name: string;
   address: string;
+  note: string;
 };
 
 export const MAX_STOPS = 60; // matches the events_stops_is_small_array check
@@ -22,7 +23,7 @@ export const toDayKey = (date: Date) => {
 };
 
 export function newStop(day: string): EventStop {
-  return { id: Crypto.randomUUID(), day, name: '', address: '' };
+  return { id: Crypto.randomUUID(), day, name: '', address: '', note: '' };
 }
 
 // Every day a stop can land on - the event's own date range.
@@ -41,8 +42,8 @@ export function cleanStops(stops: EventStop[], days: string[]): EventStop[] {
   const first = days[0];
   const last = days[days.length - 1];
   return stops
-    .map((s) => ({ ...s, name: s.name.trim(), address: s.address.trim() }))
-    .filter((s) => s.name || s.address)
+    .map((s) => ({ ...s, name: s.name.trim(), address: s.address.trim(), note: s.note.trim() }))
+    .filter((s) => s.name || s.address || s.note)
     .map((s) => ({ ...s, day: s.day < first ? first : s.day > last ? last : s.day }))
     .map((s, i) => ({ s, i }))
     .sort((a, b) => (a.s.day === b.s.day ? a.i - b.i : a.s.day < b.s.day ? -1 : 1))
@@ -74,6 +75,7 @@ export function parseStops(value: unknown): EventStop[] {
       day: s.day,
       name: typeof s.name === 'string' ? s.name : '',
       address: typeof s.address === 'string' ? s.address : '',
+      note: typeof s.note === 'string' ? s.note : '',
     }));
 }
 

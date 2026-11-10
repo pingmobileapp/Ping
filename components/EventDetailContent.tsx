@@ -1112,6 +1112,7 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
                         <Text style={[styles.meta, styles.locationLink]}>{stop.address}</Text>
                       </TouchableOpacity>
                     )}
+                    {!!stop.note && <Text style={styles.itineraryStopNote}>{stop.note}</Text>}
                   </View>
                 ))}
               </View>
@@ -1617,6 +1618,7 @@ const styles = StyleSheet.create({
   itineraryDayLabel: { color: colors.textPrimary, fontSize: 15, fontWeight: '700', marginBottom: 4 },
   itineraryStop: { paddingLeft: 12, borderLeftWidth: 2, borderLeftColor: colors.border, marginBottom: 6 },
   itineraryStopName: { color: colors.textPrimary, fontSize: 15, marginBottom: 2 },
+  itineraryStopNote: { color: colors.textSecondary, fontSize: 14, marginTop: 2 },
   dateTimeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
   weatherText: { color: colors.textSecondary, fontSize: 15, fontWeight: '600' },
   description: { color: colors.textPrimary, fontSize: 15, lineHeight: 21, marginTop: 10 },

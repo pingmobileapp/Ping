@@ -265,7 +265,7 @@ function pickByName<T extends { id: string; name: string }>(items: T[], query: s
 
 // ---------- stops along the way (lib/stops.ts) ----------
 
-type Stop = { id: string; day: string; name: string; address: string };
+type Stop = { id: string; day: string; name: string; address: string; note?: string };
 const MAX_STOPS = 60; // matches the events_stops_is_small_array check
 const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -274,7 +274,7 @@ function parseStopArgs(raw: unknown[]): Stop[] {
   return raw.map((s: any, i) => {
     const day = str(s?.day);
     if (!day || !DAY_KEY.test(day)) throw new ToolError(`Stop ${i + 1} needs a day as YYYY-MM-DD.`);
-    return { id: crypto.randomUUID(), day, name: str(s?.name) ?? '', address: str(s?.address) ?? '' };
+    return { id: crypto.randomUUID(), day, name: str(s?.name) ?? '', address: str(s?.address) ?? '', note: str(s?.note) ?? '' };
   });
 }
 
@@ -285,7 +285,7 @@ function cleanStops(stops: Stop[], start: Date, end: Date | null, tz: string): S
   const first = dayKey(start);
   const last = end && dayKey(end) > first ? dayKey(end) : first;
   return stops
-    .filter((s) => typeof s.day === 'string' && (s.name?.trim() || s.address?.trim()))
+    .filter((s) => typeof s.day === 'string' && (s.name?.trim() || s.address?.trim() || s.note?.trim()))
     .map((s, i) => ({ s: { ...s, day: s.day < first ? first : s.day > last ? last : s.day }, i }))
     .sort((a, b) => (a.s.day === b.s.day ? a.i - b.i : a.s.day < b.s.day ? -1 : 1))
     .map(({ s }) => s)
@@ -465,7 +465,7 @@ const getEvent: Tool = {
       lines.push('', 'Stops along the way:');
       // deno-lint-ignore no-explicit-any
       for (const s of stops as any[]) {
-        lines.push(`- ${[s.day, s.time, s.name || s.title, s.location || s.address].filter(Boolean).join(' · ')}`);
+        lines.push(`- ${[s.day, s.time, s.name || s.title, s.location || s.address, s.note].filter(Boolean).join(' · ')}`);
       }
     }
 
@@ -756,6 +756,7 @@ const editEvent: Tool = {
             day: { type: 'string', description: 'YYYY-MM-DD.' },
             name: { type: 'string', description: 'Like "Holiday Inn Moab".' },
             address: { type: 'string' },
+            note: { type: 'string', description: 'Anything guests should know about this stop, like "check-in after 3 PM".' },
           },
           required: ['day'],
         },

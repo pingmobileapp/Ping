@@ -85,6 +85,15 @@ export default function StopsEditor({ stops, onChange, days }: Props) {
             value={stop.address}
             onChangeText={(address) => update(stop.id, { address })}
           />
+          <TextInput
+            style={[styles.input, styles.noteInput]}
+            placeholder="Note (optional), like check-in after 3 PM"
+            placeholderTextColor={colors.textMuted}
+            value={stop.note}
+            onChangeText={(note) => update(stop.id, { note })}
+            multiline
+            maxLength={500}
+          />
         </View>
       ))}
 
@@ -131,6 +140,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     backgroundColor: colors.surface,
   },
+  noteInput: { marginTop: 8, minHeight: 72, textAlignVertical: 'top' },
   addButton: { paddingVertical: 10 },
   addText: { color: colors.primary, fontSize: 15, fontWeight: '600' },
 });

@@ -98,6 +98,7 @@
   .itinerary-day { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
   .itinerary-stop { border-left: 2px solid #E8DCC8; padding-left: 12px; margin: 0 0 8px; font-size: 15px; }
   .itinerary-stop a { color: #2E86C1; }
+  .itinerary-note { color: #6B6B6B; font-size: 14px; margin-top: 2px; white-space: pre-wrap; }
   .itinerary-group { margin-bottom: 12px; }
   .row a { color: #2E86C1; text-decoration: none; }
   .note { margin-top: 12px; padding-top: 12px; border-top: 1px solid #E8DCC8; font-size: 15px; white-space: pre-wrap; }
@@ -209,6 +210,7 @@
                   <div class="itinerary-stop">
                     ${s.name ? `<div>${escapeHtml(s.name)}</div>` : ''}
                     ${s.address ? `<a href="${escapeHtml(mapsUrl(s.address))}">${escapeHtml(s.address)}</a>` : ''}
+                    ${s.note ? `<div class="itinerary-note">${escapeHtml(s.note)}</div>` : ''}
                   </div>`).join('')}
               </div>`;
           }).join('')}
