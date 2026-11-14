@@ -48,6 +48,7 @@ import FilterMenu, { HomeView, ListFilter, VIEW_LABELS } from "../../components/
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import AppTour, { Rect, TourStep } from "../../components/AppTour";
 import { useAnyModalOpen } from "../../lib/modalPresence";
+import { onInvitesLinked } from "../../lib/healInvites";
 import { AppTourMode, getAppTourMode, markAppTourDone } from "../../lib/appTour";
 import ScheduleReviewModal from "../../components/ScheduleReviewModal";
 import WeekGrid, { DaysVisible, WeekGridHandle } from "../../components/WeekGrid";
@@ -741,6 +742,11 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
       fetchEvents().finally(() => setLoading(false));
     }, [fetchEvents]),
   );
+
+  // An invite linked to this account after Home already loaded (a phone
+  // number saved in Settings, or the launch-time heal finishing late) -
+  // see lib/healInvites.ts.
+  useEffect(() => onInvitesLinked(() => { fetchEvents(); }), [fetchEvents]);
 
   // Wide enough to cover anything the Upcoming list's own month/day
   // scoping might show - the memo below does the actual narrowing, same

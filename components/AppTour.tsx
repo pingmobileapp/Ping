@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Modal, View, Text, TouchableOpacity, StyleSheet, useWindowDimensions } from 'react-native';
+import { Modal, View, Text, TouchableOpacity, StyleSheet, useWindowDimensions, Platform, StatusBar } from 'react-native';
 import { colors } from '../lib/theme';
 import { useRegisterModal } from '../lib/modalPresence';
 
@@ -71,12 +71,19 @@ export default function AppTour({ visible, steps, onFinish, firstSkipLabel }: Pr
   const isLast = index === steps.length - 1;
   // Padded around the target, then clipped to the screen so the ring never
   // runs off an edge (e.g. the Discover tab sits flush with the right side).
+  // On Android, measureInWindow reports y from the bottom of the status bar,
+  // but this Modal (statusBarTranslucent, and the app is edge-to-edge)
+  // draws from the very top of the screen - so every highlight landed one
+  // status bar too high: step 6 ringed the clock and battery instead of
+  // Create (Android friend, 2026-11-14). iOS reports true window coordinates.
+  const topOffset = Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0;
   const hole = (() => {
     if (!rect) return null;
+    const ry = rect.y + topOffset;
     const x = Math.max(2, rect.x - PAD);
-    const y = Math.max(2, rect.y - PAD);
+    const y = Math.max(2, ry - PAD);
     const right = Math.min(winW - 2, rect.x + rect.width + PAD);
-    const bottom = Math.min(winH - 2, rect.y + rect.height + PAD);
+    const bottom = Math.min(winH - 2, ry + rect.height + PAD);
     return { x, y, width: right - x, height: bottom - y };
   })();
 

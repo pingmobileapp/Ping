@@ -113,7 +113,7 @@ serve(async (req) => {
     }
 
     const { data: healedInvitees, error: inviteesError } = toLink.length
-      ? await admin.from('invitees').update({ user_id: user.id }).in('id', toLink).select('event_id, events(title)')
+      ? await admin.from('invitees').update({ user_id: user.id }).in('id', toLink).select('event_id, rsvp_status, events(title)')
       : { data: [], error: null };
     if (inviteesError) throw new Error(`heal invitees: ${inviteesError.message}`);
 
@@ -121,17 +121,29 @@ serve(async (req) => {
 
     // Same consolidated-notification shape as notify() in lib/notify.ts -
     // one row per event thread, bumped to unread.
+    // A row can already be answered: someone who RSVP'd on the web invite
+    // page (invite-rsvp) before installing the app. Telling them "tap to
+    // RSVP" (type 'invite', which also pops the RSVP sheet) asked again for
+    // an answer they'd already given (Android friend, 2026-11-14) - say
+    // where it stands instead.
+    const answered = (status?: string | null) => !!status && status !== 'pending';
     for (const row of rows) {
       const title = (row.events as { title?: string } | null)?.title || 'an event';
+      const status = (row as { rsvp_status?: string | null }).rsvp_status;
+      const done = answered(status);
       const { error: notifyError } = await admin.from('notifications').upsert(
         {
           recipient_id: user.id,
           notif_group: 'event_activity',
-          type: 'invite',
+          type: done ? 'event_updated' : 'invite',
           event_id: row.event_id,
           thread_key: row.event_id,
-          title: "You're invited! 🎉",
-          body: `${title} — tap to view and RSVP`,
+          title: !done ? "You're invited! 🎉" : status === 'accepted' ? "You're going! 🎉" : 'Your RSVP is saved',
+          body: !done
+            ? `${title} — tap to view and RSVP`
+            : status === 'accepted'
+              ? `${title} is on your calendar`
+              : `${title} — tap to view`,
           created_at: new Date().toISOString(),
           read_at: null,
         },
@@ -140,19 +152,22 @@ serve(async (req) => {
       if (notifyError) console.error('Error upserting healed-invite notification:', notifyError);
     }
 
-    if (rows.length > 0) {
-      const lastTitle = (rows[rows.length - 1].events as { title?: string } | null)?.title || 'an event';
+    // Push only for invites still waiting on an answer - an already-answered
+    // one just shows up on their calendar and in Notifications.
+    const waitingRows = rows.filter((r) => !answered((r as { rsvp_status?: string | null }).rsvp_status));
+    if (waitingRows.length > 0) {
+      const lastTitle = (waitingRows[waitingRows.length - 1].events as { title?: string } | null)?.title || 'an event';
       const pushBody =
-        rows.length === 1
+        waitingRows.length === 1
           ? `${lastTitle} — tap to view and RSVP`
-          : `${rows.length} events are waiting for your RSVP, including ${lastTitle}`;
+          : `${waitingRows.length} events are waiting for your RSVP, including ${lastTitle}`;
       await admin.functions
         .invoke('send-push', {
           body: {
             user_ids: [user.id],
             title: "You're invited! 🎉",
             body: pushBody,
-            data: { eventId: rows[0].event_id, type: 'invite' },
+            data: { eventId: waitingRows[0].event_id, type: 'invite' },
           },
         })
         .catch((err) => console.error('Push notification failed:', err));
