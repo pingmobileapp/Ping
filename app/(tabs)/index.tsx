@@ -72,7 +72,7 @@ import { notify } from "../../lib/notify";
 import { parseStops, shiftStops } from "../../lib/stops";
 import { refreshSyncedCopy } from "../../lib/pingCalendarSync";
 import { getHiddenEventIds, hideEvent, hiddenKeyFor, hiddenPingKey, isHidden, onHiddenEventsChange, unhideEvent } from "../../lib/hiddenEvents";
-import { getAllImportantItemIds, syncRemindersToEventTimes } from "../../lib/eventReminders";
+import { getAllImportantItemIds, isImportantOccurrence, syncRemindersToEventTimes } from "../../lib/eventReminders";
 import { fetchDayNotes, saveDayNote } from "../../lib/dayNotes";
 import { DailyWeather, fetchWeatherForEvents } from "../../lib/eventWeather";
 import InterestedActivityCard from "../../components/InterestedActivityCard";
@@ -1389,7 +1389,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     // <View> bar (drawn by MonthDayCell, see `marking.important`) renders
     // far more reliably/visibly than CSS underline-on-a-number-glyph did.
     externalEvents.forEach((e) => {
-      if (isHidden(e, hiddenEventIds) || !importantItemIds.has(e.id)) return;
+      if (isHidden(e, hiddenEventIds) || !isImportantOccurrence(e, importantItemIds)) return;
       const key = toDateKey(e.startDate);
       marks[key] = { ...(marks[key] || {}), important: true };
     });
@@ -1531,7 +1531,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
     // checkbox), never a Ping, so there's nothing to mix in from pingItems.
     if (showImportantOnly) {
       return externalEvents
-        .filter((e) => importantItemIds.has(e.id))
+        .filter((e) => isImportantOccurrence(e, importantItemIds))
         .map((e) => ({
           kind: "external" as const,
           key: `ext-${hiddenKeyFor(e)}`,
@@ -1855,7 +1855,7 @@ const portrait = () => ScreenOrientation.lockAsync(ScreenOrientation.Orientation
         ? events.some((e) => myRsvpByEvent[e.id] === "declined")
         : view === "hidden"
           ? hiddenEventIds.size > 0
-          : importantItemIds.size > 0,
+          : [...importantItemIds].some((k) => !k.startsWith('!')),
   );
 
   const renderListHeader = (defaultTitle: string) => (

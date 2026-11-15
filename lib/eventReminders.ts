@@ -2,6 +2,7 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../supabase';
+import { hiddenKeyFor } from './hiddenEvents';
 
 // Shared by EventDetailContent's RSVP'd-Ping reminder picker and
 // AddPersonalItemModal's personal-item one, so both offer the same choices.
@@ -225,6 +226,43 @@ export async function setPersonalItemImportant(itemId: string, important: boolea
   const set = await getImportantDateSet();
   if (important) set[itemId] = true;
   else delete set[itemId];
+  // A whole-series choice replaces any single-occurrence choices made earlier.
+  for (const key of Object.keys(set)) {
+    if (key.startsWith(`${itemId}::`) || key.startsWith(`!${itemId}::`)) delete set[key];
+  }
+  await saveImportantDateSet(set);
+}
+
+type Occurrence = { id: string; recurrenceRule?: unknown; startDate: Date };
+
+// Per-occurrence overrides for a repeating item, keyed the same way as
+// hidden events (hiddenKeyFor): "<id>::<start ISO>" marks just that
+// occurrence important, "!<id>::<start ISO>" un-marks just that occurrence
+// of a series that is important as a whole. Without these, ticking
+// Important while editing "This event only" marked every repeat.
+export function isImportantOccurrence(event: Occurrence, ids: Set<string>): boolean {
+  const key = hiddenKeyFor(event);
+  if (ids.has(`!${key}`)) return false;
+  return ids.has(key) || ids.has(event.id);
+}
+
+export async function isOccurrenceImportant(event: Occurrence): Promise<boolean> {
+  return isImportantOccurrence(event, await getAllImportantItemIds());
+}
+
+// "This event only" edit of a repeating item. `previousStart` is the
+// occurrence's start before the edit, in case the edit moved it.
+export async function setOccurrenceImportant(event: Occurrence, important: boolean, previousStart?: Date): Promise<void> {
+  const set = await getImportantDateSet();
+  const key = hiddenKeyFor(event);
+  const oldKey = previousStart ? hiddenKeyFor({ ...event, startDate: previousStart }) : key;
+  for (const k of [key, oldKey]) {
+    delete set[k];
+    delete set[`!${k}`];
+  }
+  const seriesImportant = !!set[event.id];
+  if (important && !seriesImportant) set[key] = true;
+  if (!important && seriesImportant) set[`!${key}`] = true;
   await saveImportantDateSet(set);
 }
 

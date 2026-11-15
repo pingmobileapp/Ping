@@ -20,7 +20,8 @@ import {
   cancelPersonalItemReminder,
   getPersonalItemReminderMinutes,
   setPersonalItemImportant,
-  isPersonalItemImportant,
+  isOccurrenceImportant,
+  setOccurrenceImportant,
   forgetPersonalItem,
 } from '../lib/eventReminders';
 import { useRegisterModal } from '../lib/modalPresence';
@@ -127,7 +128,7 @@ export default function AddPersonalItemModal({ visible, initialDate, initialMinu
       // event's own native alarm, which this deliberately never sets (see
       // schedulePersonalItemReminder). The real selection lives here instead.
       getPersonalItemReminderMinutes(editingEvent.id).then(setReminderMinutes);
-      isPersonalItemImportant(editingEvent.id).then(setIsImportantDate);
+      isOccurrenceImportant({ ...editingEvent, startDate: new Date(editingEvent.startDate) }).then(setIsImportantDate);
       setStartDate(new Date(editingEvent.startDate));
       // All-day events store an EXCLUSIVE end (the calendar API's own
       // convention - "ends at midnight of the day after the last day"),
@@ -310,7 +311,16 @@ export default function AddPersonalItemModal({ visible, initialDate, initialMinu
       } else {
         await cancelPersonalItemReminder(calendarEventId);
       }
-      await setPersonalItemImportant(calendarEventId, isImportantDate);
+      if (editingEvent && isExistingRecurring && futureEvents === false) {
+        // "This event only": just this occurrence, not every repeat.
+        await setOccurrenceImportant(
+          { id: calendarEventId, recurrenceRule: editingEvent.recurrenceRule, startDate: start },
+          isImportantDate,
+          new Date(editingEvent.startDate)
+        );
+      } else {
+        await setPersonalItemImportant(calendarEventId, isImportantDate);
+      }
 
       onSaved();
     } catch (err) {
