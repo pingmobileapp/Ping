@@ -38,6 +38,7 @@ import { DailyWeather, fetchWeatherForEvents } from '../lib/eventWeather';
 import { formatPrice } from '../lib/pricing';
 import { startEventCheckout } from '../lib/discoverCheckout';
 import { reportContent, blockUser } from '../lib/moderation';
+import { goodMoment } from '../lib/review';
 import { getHiddenEventIds, hiddenPingKey, hideEvent, unhideEvent } from '../lib/hiddenEvents';
 import { toListingActivity, activityKey, fetchInterestedKeys, toggleInterest } from '../lib/discoverActivities';
 import TicketModal from './TicketModal';
@@ -720,6 +721,8 @@ export default function EventDetailContent({ eventId, onClose, variant = 'modal'
 
     await fetchData();
     setUpdating(false);
+    // Saying you're going is a good moment to ask for a rating.
+    if (status === 'accepted') void goodMoment(2000);
   };
 
   const handleSetReminder = async (minutesBefore: number | null) => {
