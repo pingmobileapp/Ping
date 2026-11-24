@@ -557,9 +557,11 @@ export default function CreateEventModal({
     const next = new Date(eventDate);
     next.setFullYear(day.year, day.month - 1, day.day);
     setEventDate(next);
-    // Keep the end date from silently trailing behind a start date that
-    // just got moved past it.
-    if (endDate && endDate.getTime() < next.getTime()) setEndDate(next);
+    // Move the end along with the start so the event keeps its length.
+    // Snapping the end onto the start (as before) made a 5-6:30 PM event
+    // moved to a later day save as 24 hours, since resolveEndDate rolls an
+    // end at the start time over to the next day (seen 2026-11-24).
+    if (endDate) setEndDate(new Date(endDate.getTime() + (next.getTime() - eventDate.getTime())));
     setShowPicker(false);
   };
 

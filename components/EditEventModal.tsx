@@ -669,9 +669,9 @@ export default function EditEventModal({ visible, event, onClose, onSaved, onDel
     const next = new Date(eventDate);
     next.setFullYear(day.year, day.month - 1, day.day);
     setEventDate(next);
-    // Keep the end date from silently trailing behind a start date that
-    // just got moved past it.
-    if (endDate && endDate.getTime() < next.getTime()) setEndDate(next);
+    // Move the end along with the start so the event keeps its length
+    // (same fix as CreateEventModal, 2026-11-24).
+    if (endDate) setEndDate(new Date(endDate.getTime() + (next.getTime() - eventDate.getTime())));
     setShowPicker(false);
   };
 
